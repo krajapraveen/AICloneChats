@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import api from "../lib/api";
 import MarqueeDisclaimer from "../components/MarqueeDisclaimer";
 import ChatBubble from "../components/ChatBubble";
+import ShareCardModal from "../components/ShareCardModal";
 
 function getOrCreateVisitorId() {
   let id = localStorage.getItem("visitor_id");
@@ -13,6 +14,8 @@ function getOrCreateVisitorId() {
   }
   return id;
 }
+
+const SHARE_WORTHY_THRESHOLD = 80;
 
 export default function PublicClone() {
   const { slug } = useParams();
@@ -24,6 +27,7 @@ export default function PublicClone() {
   const [conversationId, setConversationId] = useState(null);
   const [visitorName, setVisitorName] = useState(localStorage.getItem("visitor_name") || "");
   const [showNamePrompt, setShowNamePrompt] = useState(!localStorage.getItem("visitor_name"));
+  const [shareTarget, setShareTarget] = useState(null); // { reply, question }
   const visitorId = useRef(getOrCreateVisitorId());
   const scrollRef = useRef(null);
 
@@ -47,7 +51,7 @@ export default function PublicClone() {
     const text = input.trim();
     if (!text || !clone || sending) return;
     setInput("");
-    const newMsg = { sender: "visitor", text, _local: true, key: Date.now() };
+    const newMsg = { sender: "visitor", text, key: Date.now() };
     setMessages((m) => [...m, newMsg]);
     setSending(true);
     try {
@@ -58,10 +62,10 @@ export default function PublicClone() {
         conversation_id: conversationId,
       });
       setConversationId(data.conversation_id);
-      setMessages((m) => [...m, { sender: "clone", text: data.reply, key: Date.now() + 1 }]);
+      setMessages((m) => [...m, { sender: "clone", text: data.reply, key: Date.now() + 1, prevQuestion: text }]);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Couldn't send");
-      setMessages((m) => [...m, { sender: "clone", text: "(Hmm, I couldn't reply just now. Try again?)", key: Date.now() + 1 }]);
+      setMessages((m) => [...m, { sender: "clone", text: "(Hmm, I couldn't reply just now. Try again?)", key: Date.now() + 1, prevQuestion: text }]);
     } finally {
       setSending(false);
     }
@@ -78,21 +82,27 @@ export default function PublicClone() {
   const copyShare = () => {
     navigator.clipboard.writeText(window.location.href);
     toast.success("Share link copied!");
+    api.post("/analytics/event", { event_name: "clone_shared", clone_id: clone?.clone_id, metadata: { channel: "link" } }).catch(() => {});
+  };
+
+  const openShareCard = (msg) => {
+    setShareTarget({ reply: msg.text, question: msg.prevQuestion });
   };
 
   if (error) {
     return (
-      <div className="min-h-screen bg-cream flex items-center justify-center px-5">
-        <div className="brutal-card p-10 text-center max-w-md" data-testid="clone-not-found">
+      <div className="page-bg flex items-center justify-center px-5 min-h-screen">
+        <div className="orb orb-violet w-[400px] h-[400px] top-1/4 left-1/4 animate-orb" aria-hidden />
+        <div className="glass-card p-10 text-center max-w-md relative" data-testid="clone-not-found">
           <h1 className="heading-display text-3xl mb-2">404 — no clone here</h1>
-          <p className="text-muted-foreground font-medium">{error}</p>
+          <p className="text-muted font-medium">{error}</p>
         </div>
       </div>
     );
   }
 
   if (!clone) {
-    return <div className="min-h-screen bg-cream flex items-center justify-center font-display">Loading clone…</div>;
+    return <div className="page-bg flex items-center justify-center font-display min-h-screen text-ink">Loading clone…</div>;
   }
 
   const avatarSrc = clone.avatar_url
@@ -100,43 +110,53 @@ export default function PublicClone() {
     : null;
 
   return (
-    <div className="min-h-screen bg-cream flex flex-col">
+    <div className="page-bg flex flex-col min-h-screen">
       <MarqueeDisclaimer />
+
+      <div className="orb orb-amber w-[380px] h-[380px] top-20 -right-20 opacity-30 animate-orb" aria-hidden />
+      <div className="orb orb-violet w-[420px] h-[420px] bottom-10 -left-32 opacity-25 animate-orb" style={{ animationDelay: "3s" }} aria-hidden />
 
       <div className="max-w-3xl w-full mx-auto px-5 md:px-8 py-8 flex-1 flex flex-col" data-testid="public-clone-page">
         {/* Header */}
-        <div className="brutal-card p-6 mb-5" data-testid="clone-header">
+        <div className="glass-card p-6 mb-5" data-testid="clone-header">
           <div className="flex items-start gap-4">
             {avatarSrc ? (
-              <img src={avatarSrc} alt={clone.display_name} className="w-20 h-20 rounded-full border-2 border-ink object-cover" />
+              <img src={avatarSrc} alt={clone.display_name} className="w-20 h-20 rounded-full border border-white/15 object-cover shadow-glow-amber" />
             ) : (
-              <div className="w-20 h-20 rounded-full border-2 border-ink bg-lilac flex items-center justify-center font-display font-black text-3xl">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber to-violet flex items-center justify-center font-display font-black text-bg text-3xl shadow-glow-amber">
                 {clone.display_name?.[0]?.toUpperCase()}
               </div>
             )}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap mb-1">
                 <h1 className="heading-display text-3xl truncate">{clone.display_name}</h1>
-                <span className="tag bg-bubblegum">AI CLONE</span>
+                <span className="tag tag-amber">AI CLONE</span>
               </div>
-              <p className="font-mono text-xs text-muted-foreground">/{clone.slug}</p>
-              {clone.bio && <p className="mt-2 text-sm font-medium">{clone.bio}</p>}
+              <p className="font-mono text-xs text-muted">cloneme.ai/{clone.slug}</p>
+              {clone.bio && <p className="mt-2 text-sm font-medium text-ink/80 leading-relaxed">{clone.bio}</p>}
             </div>
-            <button onClick={copyShare} className="btn-ghost text-xs py-1.5 hidden md:inline-flex" data-testid="share-btn">Share ↗</button>
+            <button onClick={copyShare} className="btn-ghost text-xs hidden md:inline-flex" data-testid="share-btn">Share ↗</button>
           </div>
         </div>
 
         {/* Chat */}
-        <div className="brutal-card p-0 flex-1 flex flex-col min-h-[400px] overflow-hidden">
+        <div className="glass-card p-0 flex-1 flex flex-col min-h-[400px] overflow-hidden">
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4" data-testid="chat-scroll">
             {messages.length === 0 && (
               <div className="text-center py-10">
-                <p className="font-display text-xl mb-1">Say hi to {clone.display_name}.</p>
-                <p className="text-sm text-muted-foreground font-medium">This is an AI clone — not the real {clone.display_name}.</p>
+                <p className="font-display text-xl mb-1.5 text-ink">Say hi to {clone.display_name}.</p>
+                <p className="text-sm text-muted font-medium">This is an AI clone — not the real {clone.display_name}.</p>
               </div>
             )}
             {messages.map((m) => (
-              <ChatBubble key={m.key} sender={m.sender} text={m.text} name={m.sender === "visitor" ? (visitorName || "you") : clone.display_name} />
+              <ChatBubble
+                key={m.key}
+                sender={m.sender}
+                text={m.text}
+                name={m.sender === "visitor" ? (visitorName || "you") : clone.display_name}
+                onShare={m.sender === "clone" ? () => openShareCard(m) : undefined}
+                shareWorthy={m.sender === "clone" && (m.text || "").length >= SHARE_WORTHY_THRESHOLD}
+              />
             ))}
             {sending && (
               <div className="flex justify-start">
@@ -150,22 +170,30 @@ export default function PublicClone() {
           </div>
 
           {showNamePrompt ? (
-            <form onSubmit={submitName} className="border-t-2 border-ink p-4 flex gap-2 bg-lemon/40" data-testid="visitor-name-form">
+            <form onSubmit={submitName} className="border-t border-white/10 p-4 flex gap-2 bg-amber/5" data-testid="visitor-name-form">
               <input className="input-brutal flex-1" required maxLength={40} value={visitorName} onChange={(e) => setVisitorName(e.target.value)} placeholder="What should they call you? (e.g. Sam)" data-testid="visitor-name-input" />
               <button type="submit" className="btn-brutal" data-testid="visitor-name-submit">Start chatting →</button>
             </form>
           ) : (
-            <form onSubmit={send} className="border-t-2 border-ink p-4 flex gap-2 bg-cream" data-testid="chat-form">
+            <form onSubmit={send} className="border-t border-white/10 p-4 flex gap-2" data-testid="chat-form">
               <input className="input-brutal flex-1" required disabled={sending} maxLength={2000} value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Message ${clone.display_name}…`} data-testid="chat-input" />
               <button type="submit" disabled={sending || !input.trim()} className="btn-brutal" data-testid="chat-send-btn">Send</button>
             </form>
           )}
         </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-5 font-mono uppercase tracking-widest">
-          Built on CloneMe AI · <a href="/" className="underline">Make your own →</a>
+        <p className="text-center text-xs text-muted mt-5 font-mono uppercase tracking-widest">
+          Built on CloneMe AI · <a href="/" className="underline hover:text-amber-soft">Make your own →</a>
         </p>
       </div>
+
+      <ShareCardModal
+        open={!!shareTarget}
+        onClose={() => setShareTarget(null)}
+        clone={clone}
+        message={shareTarget?.reply || ""}
+        visitorMessage={shareTarget?.question}
+      />
     </div>
   );
 }

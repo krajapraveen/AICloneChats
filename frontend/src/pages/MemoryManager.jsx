@@ -89,16 +89,17 @@ export default function MemoryManager() {
   };
 
   if (authLoading || !user || loading) {
-    return <div className="min-h-screen bg-cream flex items-center justify-center font-display">Loading…</div>;
+    return <div className="page-bg flex items-center justify-center font-display text-ink min-h-screen">Loading…</div>;
   }
 
   return (
-    <div className="min-h-screen bg-cream">
+    <div className="page-bg min-h-screen">
       <Navbar />
-      <div className="max-w-4xl mx-auto px-5 md:px-8 py-10" data-testid="memory-manager">
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-2">MEMORY MANAGER</p>
+      <div className="orb orb-amber w-[380px] h-[380px] -top-16 -right-20 opacity-25 animate-orb" aria-hidden />
+      <div className="max-w-4xl mx-auto px-5 md:px-8 py-10 relative" data-testid="memory-manager">
+        <p className="font-mono text-xs uppercase tracking-widest text-muted mb-2">MEMORY MANAGER</p>
         <h1 className="heading-display text-4xl md:text-5xl">{clone?.display_name}'s memories</h1>
-        <p className="mt-2 text-muted-foreground font-medium">
+        <p className="mt-2 text-muted font-medium">
           Add facts, preferences, relationships. Your clone will use these in conversations.
         </p>
 

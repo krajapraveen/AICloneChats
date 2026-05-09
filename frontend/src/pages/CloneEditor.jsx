@@ -146,14 +146,15 @@ export default function CloneEditor() {
   };
 
   if (authLoading || !user || loading) {
-    return <div className="min-h-screen bg-cream flex items-center justify-center font-display">Loading…</div>;
+    return <div className="page-bg flex items-center justify-center font-display text-ink min-h-screen">Loading…</div>;
   }
 
   return (
-    <div className="min-h-screen bg-cream">
+    <div className="page-bg min-h-screen">
       <Navbar />
-      <form onSubmit={submit} className="max-w-3xl mx-auto px-5 md:px-8 py-10" data-testid="clone-editor-form">
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-2">{isEdit ? "EDITING" : "NEW CLONE"}</p>
+      <div className="orb orb-violet w-[400px] h-[400px] -top-20 -right-20 opacity-25 animate-orb" aria-hidden />
+      <form onSubmit={submit} className="max-w-3xl mx-auto px-5 md:px-8 py-10 relative" data-testid="clone-editor-form">
+        <p className="font-mono text-xs uppercase tracking-widest text-muted mb-2">{isEdit ? "EDITING" : "NEW CLONE"}</p>
         <h1 className="heading-display text-4xl md:text-5xl mb-8">{isEdit ? "Tune your clone." : "Build your clone."}</h1>
 
         {/* Identity */}
@@ -162,9 +163,9 @@ export default function CloneEditor() {
 
           <div className="flex items-center gap-5 mb-5">
             {form.avatar_url ? (
-              <img src={form.avatar_url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${form.avatar_url}` : form.avatar_url} alt="avatar" className="w-20 h-20 rounded-full border-2 border-ink object-cover" />
+              <img src={form.avatar_url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${form.avatar_url}` : form.avatar_url} alt="avatar" className="w-20 h-20 rounded-full border border-white/15 object-cover" />
             ) : (
-              <div className="w-20 h-20 rounded-full border-2 border-ink bg-lilac flex items-center justify-center font-display font-black text-2xl">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-violet to-amber flex items-center justify-center font-display font-black text-bg text-2xl">
                 {form.display_name?.[0]?.toUpperCase() || "?"}
               </div>
             )}
@@ -173,7 +174,7 @@ export default function CloneEditor() {
               <button type="button" onClick={() => fileRef.current?.click()} className="btn-ghost text-sm" disabled={uploading} data-testid="avatar-upload-btn">
                 {uploading ? "Uploading…" : form.avatar_url ? "Change avatar" : "Upload avatar"}
               </button>
-              <p className="text-xs text-muted-foreground mt-2">PNG / JPG / WebP, max 5MB</p>
+              <p className="text-xs text-muted mt-2">PNG / JPG / WebP, max 5MB</p>
             </div>
           </div>
 
@@ -181,7 +182,7 @@ export default function CloneEditor() {
             <div>
               <label className="label-brutal block mb-1.5">Public slug</label>
               <input className="input-brutal" required disabled={isEdit} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") })} placeholder="raja-ai" data-testid="clone-slug-input" />
-              <p className="text-xs text-muted-foreground mt-1">cloneme.ai/<span className="font-bold">{form.slug || "your-slug"}</span></p>
+              <p className="text-xs text-muted mt-1">cloneme.ai/<span className="font-bold text-amber-soft">{form.slug || "your-slug"}</span></p>
             </div>
             <div>
               <label className="label-brutal block mb-1.5">Display name</label>
@@ -205,7 +206,7 @@ export default function CloneEditor() {
         {/* Personality */}
         <div className="brutal-card p-6 md:p-8 mb-6">
           <h2 className="heading-display text-2xl mb-1">2. Personality</h2>
-          <p className="text-sm text-muted-foreground mb-6 font-medium">Slide it. Make your clone sound like you, not Cortana.</p>
+          <p className="text-sm text-muted mb-6 font-medium">Slide it. Make your clone sound like you, not Cortana.</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
             <PersonalitySlider testId="slider-humor" label="Humor" leftLabel="Serious" rightLabel="Funny" value={form.personality.humor_level} onChange={(v) => setPersonality("humor_level", v)} />
@@ -250,7 +251,7 @@ export default function CloneEditor() {
         {/* Topics */}
         <div className="brutal-card p-6 md:p-8 mb-6">
           <h2 className="heading-display text-2xl mb-1">3. Topics & rules</h2>
-          <p className="text-sm text-muted-foreground mb-5 font-medium">Optional. Define what your clone will and won't talk about.</p>
+          <p className="text-sm text-muted mb-5 font-medium">Optional. Define what your clone will and won't talk about.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label-brutal block mb-1.5">Allowed topics (comma separated)</label>

@@ -15,6 +15,7 @@ import clones  # noqa: E402
 import memories  # noqa: E402
 import chat  # noqa: E402
 import storage  # noqa: E402
+import analytics  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -37,6 +38,7 @@ app.include_router(clones.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
 app.include_router(storage.router)
+app.include_router(analytics.router)
 
 app.add_middleware(
     CORSMiddleware,

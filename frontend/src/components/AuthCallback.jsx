@@ -35,10 +35,11 @@ export default function AuthCallback() {
   }, []);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-cream">
-      <div className="brutal-card p-8 text-center">
-        <p className="font-display font-extrabold text-2xl">Signing you in…</p>
-        <p className="text-sm text-muted-foreground mt-2">Hold tight, building your clone HQ.</p>
+    <div className="page-bg min-h-screen flex items-center justify-center">
+      <div className="orb orb-amber w-[300px] h-[300px] top-1/4 left-1/4 animate-orb" aria-hidden />
+      <div className="brutal-card p-8 text-center relative">
+        <p className="font-display font-extrabold text-2xl text-ink">Signing you in…</p>
+        <p className="text-sm text-muted mt-2">Hold tight, building your clone HQ.</p>
       </div>
     </div>
   );

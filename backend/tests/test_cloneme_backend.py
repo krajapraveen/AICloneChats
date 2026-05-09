@@ -325,6 +325,65 @@ class TestStorage:
         assert r.status_code == 400
 
 
+# ---------------- Analytics (NEW) ----------------
+class TestAnalytics:
+    def test_event_no_auth(self, state):
+        r = requests.post(f"{API}/analytics/event", json={
+            "event_name": "share_card_downloaded",
+            "clone_id": state["clone_id"],
+            "metadata": {"mood": "funny"},
+        }, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+
+    def test_event_with_auth(self, state):
+        h = {"Authorization": f"Bearer {state['token']}"}
+        r = requests.post(f"{API}/analytics/event", headers=h, json={
+            "event_name": "clone_shared",
+            "clone_id": state["clone_id"],
+        }, timeout=15)
+        assert r.status_code == 200
+        assert r.json().get("ok") is True
+
+    def test_event_minimal_payload(self):
+        # No clone_id, no metadata, no auth
+        r = requests.post(f"{API}/analytics/event", json={"event_name": "page_view"}, timeout=15)
+        assert r.status_code == 200
+        assert r.json().get("ok") is True
+
+    def test_event_missing_name_validation(self):
+        r = requests.post(f"{API}/analytics/event", json={"clone_id": "x"}, timeout=15)
+        assert r.status_code == 422
+
+    def test_clone_analytics_owner_aggregation(self, state):
+        # Post a couple more events for same clone
+        for _ in range(2):
+            requests.post(f"{API}/analytics/event", json={
+                "event_name": "share_card_downloaded",
+                "clone_id": state["clone_id"],
+            }, timeout=15)
+        h = {"Authorization": f"Bearer {state['token']}"}
+        r = requests.get(f"{API}/analytics/clone/{state['clone_id']}", headers=h, timeout=15)
+        assert r.status_code == 200
+        events = r.json().get("events", {})
+        assert isinstance(events, dict)
+        # At least the two events we posted should be aggregated
+        assert events.get("share_card_downloaded", 0) >= 1
+        assert events.get("clone_shared", 0) >= 1
+
+    def test_clone_analytics_non_owner_returns_empty(self, state):
+        h = {"Authorization": f"Bearer {state['token2']}"}
+        r = requests.get(f"{API}/analytics/clone/{state['clone_id']}", headers=h, timeout=15)
+        assert r.status_code == 200
+        # Non-owner gets empty events
+        assert r.json() == {"events": {}}
+
+    def test_clone_analytics_unauthed_returns_empty(self, state):
+        r = requests.get(f"{API}/analytics/clone/{state['clone_id']}", timeout=15)
+        assert r.status_code == 200
+        assert r.json() == {"events": {}}
+
+
 # ---------------- Cleanup / Cascade ----------------
 class TestZCleanup:
     def test_delete_clone_cascade(self, state):

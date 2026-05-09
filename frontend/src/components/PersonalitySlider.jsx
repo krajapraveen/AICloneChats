@@ -14,7 +14,7 @@ export default function PersonalitySlider({ label, leftLabel, rightLabel, value,
         onChange={(e) => onChange(parseInt(e.target.value, 10))}
         className="range-brutal"
       />
-      <div className="flex items-center justify-between text-[11px] font-display font-bold uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center justify-between text-[11px] font-display font-bold uppercase tracking-wider text-muted">
         <span>← {leftLabel}</span>
         <span>{rightLabel} →</span>
       </div>
