@@ -13,7 +13,7 @@ export default function Navbar() {
             C
           </div>
           <span className="font-display font-black text-lg sm:text-xl tracking-tight text-ink truncate">
-            CloneMe<span className="text-amber">.</span>AI
+            aiclonechats<span className="text-amber">.</span>com
           </span>
         </Link>
 

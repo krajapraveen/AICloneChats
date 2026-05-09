@@ -172,7 +172,7 @@ export default function ShareCardModal({ open, onClose, clone, message, visitorM
                 )}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ color: "#fff", fontWeight: 800, fontSize: 16, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{clone?.display_name || "CloneMe"}</div>
-                  <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>cloneme.ai/{clone?.slug || "you"}</div>
+                  <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>aiclonechats.com/{clone?.slug || "you"}</div>
                 </div>
                 <div style={{
                   marginLeft: "auto",
@@ -234,7 +234,7 @@ export default function ShareCardModal({ open, onClose, clone, message, visitorM
                   Talk to my AI clone
                 </div>
                 <div style={{ color: "#fff", fontWeight: 900, fontSize: 16, letterSpacing: "-0.02em" }}>
-                  cloneme.ai<span style={{ color: moodObj.from }}>/</span>{clone?.slug || "you"}
+                  aiclonechats.com<span style={{ color: moodObj.from }}>/</span>{clone?.slug || "you"}
                 </div>
               </div>
               <div style={{

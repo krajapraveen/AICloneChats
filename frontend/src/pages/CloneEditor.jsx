@@ -182,7 +182,7 @@ export default function CloneEditor() {
             <div>
               <label className="label-brutal block mb-1.5">Public slug</label>
               <input className="input-brutal" required disabled={isEdit} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") })} placeholder="raja-ai" data-testid="clone-slug-input" />
-              <p className="text-xs text-muted mt-1">cloneme.ai/<span className="font-bold text-amber-soft">{form.slug || "your-slug"}</span></p>
+              <p className="text-xs text-muted mt-1">aiclonechats.com/<span className="font-bold text-amber-soft">{form.slug || "your-slug"}</span></p>
             </div>
             <div>
               <label className="label-brutal block mb-1.5">Display name</label>

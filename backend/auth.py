@@ -7,13 +7,17 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Header
 from typing import Optional
 
 from db import db
-from models import RegisterRequest, LoginRequest, GoogleSessionRequest, User, now_iso
+from models import RegisterRequest, LoginRequest, GoogleSessionRequest, GoogleCallbackRequest, User, now_iso
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 SESSION_TTL_DAYS = 7
-EMERGENT_AUTH_DATA_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+
+# Custom Google OAuth (replaces Emergent-managed flow)
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 # ----- helpers -----
@@ -187,44 +191,80 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     }
 
 
-@router.post("/google/session")
-async def google_session(payload: GoogleSessionRequest, request: Request, response: Response):
-    """Exchange Emergent session_id for our session_token."""
+@router.post("/google/callback")
+async def google_callback(payload: GoogleCallbackRequest, request: Request, response: Response):
+    """
+    Custom Google OAuth (auth code flow).
+    Frontend completes Google sign-in via @react-oauth/google and POSTs us the auth code.
+    We exchange it for tokens, verify the ID token, and create/match a user by email.
+
+    REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    """
     from admin import record_login_event, ensure_admin_role
 
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+
+    # 1. Exchange code for tokens
     try:
-        r = requests.get(
-            EMERGENT_AUTH_DATA_URL,
-            headers={"X-Session-ID": payload.session_id},
+        token_resp = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": payload.code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": payload.redirect_uri,
+                "grant_type": "authorization_code",
+            },
             timeout=15,
         )
-        if r.status_code != 200:
-            await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="invalid_emergent_session")
-            raise HTTPException(status_code=401, detail="Invalid Emergent session")
-        data = r.json()
     except requests.RequestException:
-        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="auth_provider_unreachable")
-        raise HTTPException(status_code=502, detail="Auth service unreachable")
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="token_endpoint_unreachable")
+        raise HTTPException(status_code=502, detail="Google token endpoint unreachable")
 
-    email = (data.get("email") or "").lower()
-    name = data.get("name", "")
-    picture = data.get("picture", "")
-    emergent_token = data.get("session_token") or new_session_token()
+    if token_resp.status_code != 200:
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason=f"token_exchange_failed_{token_resp.status_code}")
+        raise HTTPException(status_code=401, detail="Google token exchange failed")
 
-    if not email:
-        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="no_email_from_provider")
-        raise HTTPException(status_code=400, detail="No email from auth provider")
+    tokens = token_resp.json()
+    id_token_str = tokens.get("id_token")
+    if not id_token_str:
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="no_id_token")
+        raise HTTPException(status_code=401, detail="No ID token from Google")
 
+    # 2. Verify ID token signature + claims (aud, iss, exp)
+    try:
+        from google.oauth2 import id_token as g_id_token
+        from google.auth.transport import requests as g_requests
+        idinfo = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID)
+    except ValueError as e:
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason=f"id_token_verify_failed:{str(e)[:80]}")
+        raise HTTPException(status_code=401, detail="Invalid ID token")
+
+    email = (idinfo.get("email") or "").lower()
+    if not email or not idinfo.get("email_verified"):
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="email_not_verified")
+        raise HTTPException(status_code=400, detail="Google email not verified")
+
+    name = idinfo.get("name", "")
+    picture = idinfo.get("picture", "")
+
+    # 3. Match by email so existing google users keep working (relink to new flow)
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
         await db.users.update_one(
             {"user_id": user_id},
-            {"$set": {"name": name or existing.get("name", ""), "picture": picture or existing.get("picture", "")}},
+            {"$set": {
+                "name": name or existing.get("name", ""),
+                "picture": picture or existing.get("picture", ""),
+                "auth_provider": "google",  # in case they were email-only before
+                "updated_at": now_iso(),
+            }},
         )
     else:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
-        new_user = {
+        await db.users.insert_one({
             "user_id": user_id,
             "email": email,
             "name": name,
@@ -232,15 +272,20 @@ async def google_session(payload: GoogleSessionRequest, request: Request, respon
             "auth_provider": "google",
             "role": "user",
             "created_at": now_iso(),
-        }
-        await db.users.insert_one(dict(new_user))
+        })
 
-    token = await create_session(user_id, source="google", token=emergent_token)
+    token = await create_session(user_id, source="google")
     set_session_cookie(response, token)
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
     user = await ensure_admin_role(user)
     await record_login_event(request, event_type="login_success", login_method="google_oauth", user=user)
     return {"user": user, "session_token": token}
+
+
+@router.get("/google/config")
+async def google_config():
+    """Public endpoint — frontend reads the Google client_id from here so it never has to be hardcoded."""
+    return {"client_id": GOOGLE_CLIENT_ID, "configured": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)}
 
 
 @router.get("/me")

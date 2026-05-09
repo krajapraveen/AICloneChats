@@ -1,9 +1,11 @@
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import "./App.css";
 
 import { AuthProvider } from "./contexts/AuthContext";
-import AuthCallback from "./components/AuthCallback";
+import api from "./lib/api";
 
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
@@ -20,18 +22,11 @@ import SmartReplyFavorites from "./pages/SmartReplyFavorites";
 import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
 
 function AppRouter() {
-  const location = useLocation();
-  // CRITICAL: Detect session_id during render (NOT in useEffect)
-  if (location.hash?.includes("session_id=")) {
-    return <AuthCallback />;
-  }
-
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-      <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/explore" element={<Explore />} />
       <Route path="/mood-chat" element={<MoodChat />} />
       <Route path="/smart-reply" element={<SmartReplyStudio />} />
@@ -48,7 +43,17 @@ function AppRouter() {
 }
 
 function App() {
-  return (
+  // Pull Google client ID from backend config so it's never hardcoded in the bundle.
+  // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+  const [googleClientId, setGoogleClientId] = useState(null);
+
+  useEffect(() => {
+    api.get("/auth/google/config")
+      .then((r) => setGoogleClientId(r.data?.client_id || ""))
+      .catch(() => setGoogleClientId(""));
+  }, []);
+
+  const inner = (
     <div className="App">
       <BrowserRouter>
         <AuthProvider>
@@ -58,6 +63,13 @@ function App() {
       </BrowserRouter>
     </div>
   );
+
+  // Wait for config so GoogleOAuthProvider gets a stable clientId on first paint.
+  // Render plain shell while loading; Google button itself handles "not configured" gracefully.
+  if (googleClientId === null) return inner;
+  if (!googleClientId) return inner;
+
+  return <GoogleOAuthProvider clientId={googleClientId}>{inner}</GoogleOAuthProvider>;
 }
 
 export default App;

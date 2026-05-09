@@ -146,7 +146,7 @@ export default function PublicClone() {
                   </span>
                 )}
               </div>
-              <p className="font-mono text-xs text-muted">cloneme.ai/{clone.slug}</p>
+              <p className="font-mono text-xs text-muted">aiclonechats.com/{clone.slug}</p>
               {clone.bio && <p className="mt-2 text-sm font-medium text-ink/80 leading-relaxed">{clone.bio}</p>}
               {(stats.message_count > 0 || stats.visitor_count > 0) && (
                 <div className="mt-3 flex items-center gap-4 text-[11px] font-mono uppercase tracking-wider text-muted" data-testid="header-stats">
@@ -213,7 +213,7 @@ export default function PublicClone() {
         </div>
 
         <p className="text-center text-xs text-muted mt-5 font-mono uppercase tracking-widest">
-          Built on CloneMe AI · <a href="/" className="underline hover:text-amber-soft">Make your own →</a>
+          Built on aiclonechats.com · <a href="/" className="underline hover:text-amber-soft">Make your own →</a>
         </p>
       </div>
 

@@ -37,6 +37,12 @@ class GoogleSessionRequest(BaseModel):
     session_id: str
 
 
+# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+class GoogleCallbackRequest(BaseModel):
+    code: str
+    redirect_uri: str
+
+
 # ---------- CLONES ----------
 PERSONALITY_DEFAULT = {
     "tone": "direct",

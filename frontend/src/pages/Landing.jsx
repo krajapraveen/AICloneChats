@@ -5,7 +5,7 @@ import ChatTypeCards from "../components/ChatTypeCards";
 const FEATURES = [
   { tone: "amber", n: "01", title: "Personality engine", body: "Tune humor, directness, warmth, energy. Add catchphrases. Block topics. Your clone, your rules." },
   { tone: "violet", n: "02", title: "Memory you control", body: "Drop in facts, preferences, relationships. Edit, hide, or delete anything — anytime." },
-  { tone: "emerald", n: "03", title: "One link to share", body: "cloneme.ai/your-name. Drop it in your bio. Watch the chats roll in while you sleep." },
+  { tone: "emerald", n: "03", title: "One link to share", body: "aiclonechats.com/your-name. Drop it in your bio. Watch the chats roll in while you sleep." },
   { tone: "rose", n: "04", title: "Always on, never tired", body: "Your AI version replies 24/7. With your tone, your weird opinions — and zero social anxiety." },
 ];
 
@@ -33,7 +33,7 @@ export default function Landing() {
           </h1>
 
           <p className="mt-5 sm:mt-7 text-base sm:text-lg md:text-xl max-w-2xl text-ink/75 font-medium animate-fade-up leading-relaxed" style={{ animationDelay: "0.1s" }} data-testid="hero-subheadline">
-            CloneMe AI builds a chatty digital twin of you — your tone, your humor, your weird opinions —
+            aiclonechats.com builds a chatty digital twin of you — your tone, your humor, your weird opinions —
             so your friends, fans, or curious strangers can chat when you can't.
           </p>
 
@@ -55,7 +55,7 @@ export default function Landing() {
                   <div className="font-display font-bold text-lg flex items-center gap-2">
                     Raja AI <span className="tag tag-amber">AI Clone</span>
                   </div>
-                  <div className="font-mono text-xs text-muted">cloneme.ai/raja</div>
+                  <div className="font-mono text-xs text-muted">aiclonechats.com/raja</div>
                 </div>
               </div>
               <div className="space-y-3">
@@ -115,7 +115,7 @@ export default function Landing() {
       <section className="border-t border-white/5" data-testid="features-section">
         <div className="max-w-6xl mx-auto px-5 md:px-8 py-20 md:py-28">
           <div className="max-w-2xl mb-12">
-            <span className="tag mb-4 inline-block">Why CloneMe</span>
+            <span className="tag mb-4 inline-block">Why aiclonechats.com</span>
             <h2 className="heading-display text-3xl md:text-5xl mb-4" data-testid="features-heading">A clone that feels like you.</h2>
             <p className="text-muted max-w-2xl font-medium leading-relaxed">Not a generic chatbot pretending. A digital twin trained on your style, tuned to your rules, with memories you control.</p>
           </div>
@@ -141,7 +141,7 @@ export default function Landing() {
             {[
               { n: "01", t: "Set up your identity", d: "Drop your name, bio, and the kind of conversations you actually want to have.", color: "tag-amber" },
               { n: "02", t: "Tune your personality", d: "Slide between funny and serious, short and long. Add catchphrases. Block topics.", color: "tag-violet" },
-              { n: "03", t: "Share your link", d: "Paste cloneme.ai/your-name in your bio. Friends DM your AI. You sleep better.", color: "tag-emerald" },
+              { n: "03", t: "Share your link", d: "Paste aiclonechats.com/your-name in your bio. Friends DM your AI. You sleep better.", color: "tag-emerald" },
             ].map((s, i) => (
               <div key={i} className="brutal-card p-7" data-testid={`step-card-${i}`}>
                 <div className={`tag ${s.color} mb-4 inline-block`}>STEP {s.n}</div>
@@ -167,7 +167,7 @@ export default function Landing() {
 
       <footer className="border-t border-white/5 py-8" data-testid="footer">
         <div className="max-w-6xl mx-auto px-5 md:px-8 flex items-center justify-between text-xs font-mono uppercase tracking-widest text-muted">
-          <span>© CloneMe AI</span>
+          <span>© aiclonechats.com</span>
           <span>Built with feelings · Not a real person</span>
         </div>
       </footer>

@@ -19,12 +19,6 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    // CRITICAL: If returning from OAuth callback, skip the /me check.
-    // AuthCallback will exchange the session_id and establish the session first.
-    if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
-      setLoading(false);
-      return;
-    }
     // Skip /me check on truly public routes if there's no token to avoid noisy 401s
     const hasToken = typeof window !== "undefined" && !!localStorage.getItem("session_token");
     if (!hasToken) {
@@ -48,13 +42,6 @@ export const AuthProvider = ({ children }) => {
     return data.user;
   };
 
-  const exchangeGoogleSession = async (sessionId) => {
-    const { data } = await api.post("/auth/google/session", { session_id: sessionId });
-    if (data.session_token) localStorage.setItem("session_token", data.session_token);
-    setUser(data.user);
-    return data.user;
-  };
-
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch {}
     localStorage.removeItem("session_token");
@@ -62,7 +49,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, exchangeGoogleSession, refresh: checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh: checkAuth }}>
       {children}
     </AuthContext.Provider>
   );
