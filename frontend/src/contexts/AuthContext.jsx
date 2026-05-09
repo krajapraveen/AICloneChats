@@ -32,6 +32,7 @@ export const AuthProvider = ({ children }) => {
     const { data } = await api.post("/auth/login", { email, password });
     if (data.session_token) localStorage.setItem("session_token", data.session_token);
     setUser(data.user);
+    setLoading(false);
     return data.user;
   };
 
@@ -39,6 +40,15 @@ export const AuthProvider = ({ children }) => {
     const { data } = await api.post("/auth/register", { email, password, name });
     if (data.session_token) localStorage.setItem("session_token", data.session_token);
     setUser(data.user);
+    setLoading(false);
+    return data.user;
+  };
+
+  const loginWithGoogle = async (code, redirect_uri) => {
+    const { data } = await api.post("/auth/google/callback", { code, redirect_uri });
+    if (data.session_token) localStorage.setItem("session_token", data.session_token);
+    setUser(data.user);
+    setLoading(false);
     return data.user;
   };
 
@@ -49,7 +59,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh: checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, loginWithGoogle, refresh: checkAuth }}>
       {children}
     </AuthContext.Provider>
   );

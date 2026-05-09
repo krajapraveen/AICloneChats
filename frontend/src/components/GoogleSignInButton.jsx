@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
 import { toast } from "sonner";
-import api from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import { useGoogleAuthConfig } from "../contexts/GoogleAuthConfigContext";
 
@@ -17,7 +16,7 @@ const GoogleIcon = () => (
 
 function ActiveGoogleButton({ label, testId, onSuccess }) {
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { loginWithGoogle } = useAuth();
   const [loading, setLoading] = useState(false);
 
   const login = useGoogleLogin({
@@ -28,12 +27,10 @@ function ActiveGoogleButton({ label, testId, onSuccess }) {
         // window.location.origin is required — never hardcoded.
         // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
         const redirect_uri = window.location.origin;
-        const { data } = await api.post("/auth/google/callback", { code: resp.code, redirect_uri });
-        if (data.session_token) localStorage.setItem("session_token", data.session_token);
-        await refresh();
-        if (onSuccess) onSuccess(data); else navigate("/dashboard");
+        const user = await loginWithGoogle(resp.code, redirect_uri);
+        if (onSuccess) onSuccess(user);
+        else navigate("/dashboard", { replace: true });
       } catch (err) {
-        // Surface the most informative message we can build from the error
         const status = err?.response?.status;
         const rawDetail = err?.response?.data?.detail;
         const detailStr =
@@ -42,7 +39,6 @@ function ActiveGoogleButton({ label, testId, onSuccess }) {
             : rawDetail
               ? JSON.stringify(rawDetail)
               : err?.message || "no response from server";
-        // Visible, copy-pasteable diagnostic so prod issues are debuggable from a screenshot
         // eslint-disable-next-line no-console
         console.error("[Google sign-in] callback failed", { status, detail: rawDetail, error: err });
         toast.error(`Google sign-in failed${status ? ` (${status})` : ""}: ${detailStr}`);
