@@ -50,7 +50,7 @@ export default function ShareCardModal({ open, onClose, clone, message, visitorM
       const dataUrl = await generatePng();
       if (!dataUrl) return;
       const link = document.createElement("a");
-      link.download = `cloneme-${clone?.slug || "share"}-${Date.now()}.png`;
+      link.download = `aiclonechats-${clone?.slug || "share"}-${Date.now()}.png`;
       link.href = dataUrl;
       link.click();
       toast.success("Image downloaded! Post it everywhere.");
@@ -88,7 +88,7 @@ export default function ShareCardModal({ open, onClose, clone, message, visitorM
 
   const shareToX = () => {
     const url = window.location.href;
-    const text = `Talk to my AI clone — ${clone?.display_name || "CloneMe"} 👇`;
+    const text = `Talk to my AI clone — ${clone?.display_name || "aiclonechats.com"} 👇`;
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`, "_blank");
     api.post("/analytics/event", { event_name: "share_link_clicked", clone_id: clone?.clone_id, metadata: { channel: "x" } }).catch(() => {});
   };
@@ -171,7 +171,7 @@ export default function ShareCardModal({ open, onClose, clone, message, visitorM
                   </div>
                 )}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ color: "#fff", fontWeight: 800, fontSize: 16, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{clone?.display_name || "CloneMe"}</div>
+                  <div style={{ color: "#fff", fontWeight: 800, fontSize: 16, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{clone?.display_name || "aiclonechats"}</div>
                   <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>aiclonechats.com/{clone?.slug || "you"}</div>
                 </div>
                 <div style={{

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import "./App.css";
@@ -20,6 +20,11 @@ import SmartReplyHistory from "./pages/SmartReplyHistory";
 import SmartReplyFavorites from "./pages/SmartReplyFavorites";
 import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
 
+function LegacyAuthRedirect() {
+  // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
+  return <Navigate to="/login" replace />;
+}
+
 function AppRouter() {
   return (
     <Routes>
@@ -32,6 +37,7 @@ function AppRouter() {
       <Route path="/smart-reply/history" element={<SmartReplyHistory />} />
       <Route path="/smart-reply/favorites" element={<SmartReplyFavorites />} />
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
+      <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/edit" element={<CloneEditor />} />

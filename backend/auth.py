@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Header
 from typing import Optional
 
 from db import db
-from models import RegisterRequest, LoginRequest, GoogleSessionRequest, GoogleCallbackRequest, User, now_iso
+from models import RegisterRequest, LoginRequest, GoogleCallbackRequest, User, now_iso
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
