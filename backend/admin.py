@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from pydantic import BaseModel
 
 from db import db
@@ -29,17 +29,70 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 
 
 # ------------- ADMIN ROLE PROMOTION -------------
-def _admin_emails() -> set:
+def _admin_emails_from_env() -> set:
     raw = os.environ.get("ADMIN_EMAILS", "")
     return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 
+_DB_ADMINS_CACHE = {"emails": set(), "fetched_at": 0.0}
+_DB_ADMINS_TTL = 30  # seconds
+
+
+async def _admin_emails_from_db() -> set:
+    """Pull the persisted admin allowlist from MongoDB (cached 30s).
+
+    Survives redeploys, so admin changes don't depend on .env propagating.
+    """
+    import time
+    now = time.time()
+    if now - _DB_ADMINS_CACHE["fetched_at"] < _DB_ADMINS_TTL and _DB_ADMINS_CACHE["emails"]:
+        return _DB_ADMINS_CACHE["emails"]
+    cursor = db.admin_users.find({}, {"_id": 0, "email": 1})
+    emails = {(doc.get("email") or "").lower() async for doc in cursor}
+    emails.discard("")
+    _DB_ADMINS_CACHE["emails"] = emails
+    _DB_ADMINS_CACHE["fetched_at"] = now
+    return emails
+
+
+def _invalidate_admin_cache():
+    _DB_ADMINS_CACHE["fetched_at"] = 0.0
+
+
+async def _all_admin_emails() -> set:
+    """Union of env list and DB list."""
+    db_emails = await _admin_emails_from_db()
+    return _admin_emails_from_env() | db_emails
+
+
+async def seed_admins_from_env():
+    """Idempotent — copy ADMIN_EMAILS env values into admin_users collection on startup.
+
+    Once seeded into the DB, admin status persists across redeploys even if the env var disappears.
+    """
+    env_emails = _admin_emails_from_env()
+    if not env_emails:
+        return
+    for email in env_emails:
+        await db.admin_users.update_one(
+            {"email": email},
+            {"$setOnInsert": {
+                "email": email,
+                "source": "env_seed",
+                "created_at": now_iso(),
+            }},
+            upsert=True,
+        )
+    _invalidate_admin_cache()
+
+
 async def ensure_admin_role(user: dict) -> dict:
-    """Idempotent: if user.email is in ADMIN_EMAILS, mark role=admin."""
+    """Idempotent: if user.email is in env OR DB admin allowlist, mark role=admin."""
     if not user:
         return user
     email = (user.get("email") or "").lower()
-    desired = "admin" if email in _admin_emails() else user.get("role", "user")
+    admins = await _all_admin_emails()
+    desired = "admin" if email in admins else user.get("role", "user")
     if desired and user.get("role") != desired:
         await db.users.update_one(
             {"user_id": user["user_id"]},
@@ -302,3 +355,72 @@ async def login_events_summary(_admin: dict = Depends(get_admin_user)):
 async def admin_me(user: dict = Depends(get_admin_user)):
     """Tiny endpoint for the frontend to verify admin access without leaking data."""
     return {"role": user.get("role"), "email": user.get("email"), "user_id": user.get("user_id")}
+
+
+# -------------- BOOTSTRAP / MANAGEMENT (DB-backed, redeploy-proof) --------------
+
+class BootstrapAdminRequest(BaseModel):
+    email: str
+    token: str  # must equal JWT_SECRET (proves caller controls the deploy)
+
+
+@router.post("/bootstrap-admin")
+async def bootstrap_admin(payload: BootstrapAdminRequest):
+    """One-time-use endpoint to promote an email to admin without env or redeploy.
+
+    Authentication: caller must supply the server's JWT_SECRET in the body's `token` field.
+    Only someone with deploy/env access has this secret, so this is safe.
+
+    The email is added to the persistent `admin_users` collection. On the user's next
+    /auth/me call (or login), `ensure_admin_role` will set their `role=admin`.
+    """
+    if not payload.token or payload.token != JWT_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid bootstrap token")
+
+    email = (payload.email or "").lower().strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    await db.admin_users.update_one(
+        {"email": email},
+        {"$set": {
+            "email": email,
+            "source": "bootstrap",
+            "created_at": now_iso(),
+        }},
+        upsert=True,
+    )
+    _invalidate_admin_cache()
+
+    # If the user already exists, promote them immediately.
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    promoted = False
+    if existing:
+        await db.users.update_one(
+            {"email": email},
+            {"$set": {"role": "admin", "updated_at": now_iso()}},
+        )
+        promoted = True
+
+    return {
+        "ok": True,
+        "email": email,
+        "user_existed_and_promoted": promoted,
+        "next_step": (
+            "User is now admin. They may need to refresh or log out + back in."
+            if promoted
+            else "Email added to allowlist. The user will become admin on their next login."
+        ),
+    }
+
+
+@router.get("/admins")
+async def list_admins(_admin: dict = Depends(get_admin_user)):
+    """List of admin emails (for verification). Admin-only."""
+    db_admins = []
+    async for doc in db.admin_users.find({}, {"_id": 0}):
+        db_admins.append(doc)
+    return {
+        "env_emails": sorted(_admin_emails_from_env()),
+        "db_admins": db_admins,
+    }

@@ -92,6 +92,13 @@ async def on_startup():
     await _db.login_events.create_index([("event_type", 1), ("created_at", -1)])
     await _db.login_events.create_index([("user_id", 1), ("created_at", -1)])
     await _db.login_events.create_index([("email", 1), ("created_at", -1)])
+    await _db.admin_users.create_index("email", unique=True)
+    # Seed env ADMIN_EMAILS into DB (idempotent) so admin status survives redeploys
+    try:
+        from admin import seed_admins_from_env
+        await seed_admins_from_env()
+    except Exception as e:
+        logger.warning("seed_admins_from_env failed: %s", e)
     logger.info("Startup complete: indexes ensured")
 
     # Seed system Companion clone for /mood-chat
