@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import "./App.css";
 
 import { AuthProvider } from "./contexts/AuthContext";
-import api from "./lib/api";
+import { GoogleAuthConfigProvider, useGoogleAuthConfig } from "./contexts/GoogleAuthConfigContext";
 
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
@@ -42,34 +41,40 @@ function AppRouter() {
   );
 }
 
-function App() {
-  // Pull Google client ID from backend config so it's never hardcoded in the bundle.
-  // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-  const [googleClientId, setGoogleClientId] = useState(null);
-
-  useEffect(() => {
-    api.get("/auth/google/config")
-      .then((r) => setGoogleClientId(r.data?.client_id || ""))
-      .catch(() => setGoogleClientId(""));
-  }, []);
+/**
+ * Children render only after Google config is known. This guarantees that any descendant
+ * using @react-oauth/google will have a GoogleOAuthProvider ancestor in the tree.
+ */
+function ConfiguredApp() {
+  const { configured, clientId } = useGoogleAuthConfig();
 
   const inner = (
-    <div className="App">
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRouter />
-          <Toaster position="top-center" richColors closeButton />
-        </AuthProvider>
-      </BrowserRouter>
-    </div>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRouter />
+        <Toaster position="top-center" richColors closeButton />
+      </AuthProvider>
+    </BrowserRouter>
   );
 
-  // Wait for config so GoogleOAuthProvider gets a stable clientId on first paint.
-  // Render plain shell while loading; Google button itself handles "not configured" gracefully.
-  if (googleClientId === null) return inner;
-  if (!googleClientId) return inner;
+  if (!configured || !clientId) return inner;
+  return <GoogleOAuthProvider clientId={clientId}>{inner}</GoogleOAuthProvider>;
+}
 
-  return <GoogleOAuthProvider clientId={googleClientId}>{inner}</GoogleOAuthProvider>;
+const Splash = (
+  <div className="App page-bg" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ color: "rgba(255,255,255,0.5)", fontFamily: "monospace", fontSize: 13 }}>loading…</div>
+  </div>
+);
+
+function App() {
+  return (
+    <div className="App">
+      <GoogleAuthConfigProvider fallback={Splash}>
+        <ConfiguredApp />
+      </GoogleAuthConfigProvider>
+    </div>
+  );
 }
 
 export default App;

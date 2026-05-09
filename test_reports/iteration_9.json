@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 9: validated Google OAuth migration (Emergent → custom @react-oauth/google) and the 'aiclonechats.com' branding strip. Backend pytest 12/12 PASS (email login/register/me/logout regressions, /auth/google/config returns client_id+configured:true, /auth/google/callback negative paths return 401/422 with correct contract, failed callback records login_events with login_method='google_oauth' & failure_reason starting with 'token_exchange_failed_'). Frontend Playwright on /, /login, /register, /explore, /smart-reply, /mood-chat: 0 occurrences of 'emergent' and 0 of 'cloneme' in rendered text; page title is 'aiclonechats.com — Talk to my AI'; login-google-btn is enabled, text 'Continue with Google'; register-google-btn is enabled, text 'Sign up with Google'; clicking login-google-btn triggers window.open to https://accounts.google.com/o/oauth2/v2/auth (popup OAuth flow) with the correct client_id and response_type=code (proves @react-oauth/google auth-code flow is wired up). exchangeGoogleSession is gone from src; AuthCallback.jsx is deleted; /auth/callback does not crash (React app mounts cleanly, no pageerrors, no console errors).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/auth/callback",
+        "issues": [
+          "Per spec, /auth/callback should 'fall through to the /:slug catch-all and try to load a public clone'. In practice the path has TWO segments (/auth/callback) and React Router's :slug param matches only ONE segment, so NO route matches → page shows empty body. There IS no crash (html mounts, no errors, root div renders 261 chars of HTML), so the hard requirement (no crash) is met. To honor the 'fall through' intent, add a wildcard route like <Route path='*' element={<NotFound />} /> or change /:slug to /:slug/* — non-blocking."
+        ]
+      },
+      {
+        "screen": "ShareCardModal source",
+        "issues": [
+          "/app/frontend/src/components/ShareCardModal.jsx still contains 3 references to 'cloneme'/'CloneMe' (line 53 download filename 'cloneme-…png', line 91 share text 'CloneMe' fallback, line 174 display name fallback 'CloneMe'). These are NOT on the rendered pages tested (modal not auto-shown), so the rendered-page branding test passes — but they will leak when a user opens the share modal. Replace with 'aiclonechats' / 'aiclonechats.com' to fully complete the branding strip."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_google_migration.py",
+    "/app/test_reports/pytest/auth_google_migration.xml"
+  ],
+  "action_items": [
+    "(Minor) Replace remaining 'cloneme' / 'CloneMe' strings in /app/frontend/src/components/ShareCardModal.jsx (lines 53, 91, 174) with 'aiclonechats' branding for full migration completeness.",
+    "(Minor) Add a 404 route or change /:slug to /:slug/* so /auth/callback (or any 2-segment URL) renders something instead of an empty body. Spec called for fall-through to public-clone loader; current router silently renders nothing for unmatched 2+ segment paths."
+  ],
+  "critical_code_review_comments": [
+    "auth.py /google/callback correctly verifies the ID token via google.oauth2.id_token.verify_oauth2_token (audience = GOOGLE_CLIENT_ID). Good.",
+    "Existing-user match by email (line 253) lowercases email and updates auth_provider to 'google' on next login — zero-disruption migration is implemented as described.",
+    "/google/config exposes only the public client_id and a boolean — the secret stays server-side. Correct.",
+    "models.GoogleSessionRequest is still imported in auth.py but no longer used by any route. Safe to remove (dead import) but not blocking.",
+    "auth.py is 313 lines — well within size guidelines."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_google_migration.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12)",
+    "frontend": "100% on critical checks (branding strip, Google buttons enabled, popup-trigger, no-crash on /auth/callback, no exchangeGoogleSession refs)"
+  },
+  "test_credentials": "sr-tester@example.com / TestPass123! (works for email login regression). Google OAuth manually verifiable only — popup correctly opens to accounts.google.com with response_type=code; backend rejects fake codes with 401 as designed.",
+  "seed_data_creation": "Test created users with email prefix 'test_reg_<8hex>@example.com' via /api/auth/register. Multiple failed login_events with login_method='google_oauth' & failure_reason starting 'token_exchange_failed_' inserted by the negative-path tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth migration + branding are verified. Backend regression file at /app/backend/tests/test_auth_google_migration.py is reusable. Two MINOR finds to address: (1) ShareCardModal still has 'CloneMe'/'cloneme' literals (non-rendered by default), (2) /auth/callback renders blank because /:slug only matches single segments — no crash, but no fall-through either. Real Google OAuth completion is NOT automatable in this env (no real Google account) — popup-open verification is the ceiling; backend negative path is fully covered.",
+  "rca of the issue": "N/A — no defects blocking the migration. Two minor cleanup items documented above."
+}
