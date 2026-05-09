@@ -250,14 +250,17 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response, session_token: Optional[str] = Cookie(default=None)):
+async def logout(request: Request, response: Response, session_token: Optional[str] = Cookie(default=None), authorization: Optional[str] = Header(default=None)):
     from admin import record_login_event
+    token = session_token
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
     user = None
-    if session_token:
-        sess = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+    if token:
+        sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
         if sess:
             user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0, "password_hash": 0})
-        await db.user_sessions.delete_one({"session_token": session_token})
+        await db.user_sessions.delete_one({"session_token": token})
     if user:
         await record_login_event(request, event_type="logout", login_method=user.get("auth_provider", "email") + ("_oauth" if user.get("auth_provider") == "google" else "_password"), user=user)
     clear_session_cookie(response)
