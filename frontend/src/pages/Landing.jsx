@@ -27,7 +27,7 @@ export default function Landing() {
           </div>
 
           <h1 className="heading-display text-[2.25rem] sm:text-5xl md:text-6xl lg:text-7xl xl:text-[5.5rem] max-w-5xl animate-fade-up leading-[1.05]" data-testid="hero-headline">
-            Make an <span className="bg-gradient-to-r from-amber to-amber-soft bg-clip-text text-transparent">AI version</span> of yourself.
+            Make an <span className="bg-gradient-to-r from-amber to-amber-soft bg-clip-text text-transparent">AI version</span> of yourself.{" "}
             <br />
             Let people <span className="bg-gradient-to-r from-violet-soft to-violet bg-clip-text text-transparent">talk to it.</span>
           </h1>
