@@ -10,6 +10,14 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 from db import db
 from auth import get_optional_user
 from models import ChatRequest, ChatResponse, now_iso
+from mood import (
+    MOOD_ENABLED,
+    analyze_emotion,
+    update_session_mood_state,
+    build_mood_instruction,
+    build_mood_ui,
+    MoodUIConfig,
+)
 
 router = APIRouter(prefix="/api/clones", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -140,7 +148,7 @@ async def get_recent_messages(conversation_id: str, limit: int = 20) -> List[dic
 
 
 # ---------- routes ----------
-@router.post("/{clone_id_or_slug}/chat", response_model=ChatResponse)
+@router.post("/{clone_id_or_slug}/chat")
 async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
     # Try slug first then id
     clone = await db.clones.find_one({"slug": clone_id_or_slug.lower()}, {"_id": 0})
@@ -158,6 +166,7 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
 
     # Conversation
     conversation_id = payload.conversation_id
+    conv = None
     if conversation_id:
         conv = await db.clone_conversations.find_one({"conversation_id": conversation_id}, {"_id": 0})
         if not conv:
@@ -174,24 +183,61 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
             "updated_at": now_iso(),
         })
 
-    # Save visitor message
-    await db.clone_messages.insert_one({
+    # ---------- MOOD ANALYSIS (feature-flagged) ----------
+    clone_mood_settings = clone.get("mood_chat_settings") or {"enabled": True, "show_mood_pill": True}
+    emotion_state = None
+    session_mood_state = None
+    mood_instruction = ""
+    mood_ui_obj = MoodUIConfig(enabled=False)
+
+    if MOOD_ENABLED and clone_mood_settings.get("enabled", True) is not False:
+        # Pull last 3 visitor messages for context
+        prev_msgs = await (
+            db.clone_messages.find(
+                {"conversation_id": conversation_id, "sender": "visitor"},
+                {"_id": 0, "text": 1},
+            ).sort("created_at", -1).limit(3).to_list(3)
+        )
+        recent_visitor_texts = [m["text"] for m in reversed(prev_msgs)]
+
+        try:
+            emotion_state = await analyze_emotion(payload.message, recent_visitor_texts)
+        except Exception as e:
+            logger.warning("mood analyzer crashed: %s", e)
+            emotion_state = None
+
+        if emotion_state:
+            prev_session_mood = (conv or {}).get("chat_mood_state")
+            session_mood_state = update_session_mood_state(prev_session_mood, emotion_state)
+            await db.clone_conversations.update_one(
+                {"conversation_id": conversation_id},
+                {"$set": {"chat_mood_state": session_mood_state}},
+            )
+            mood_instruction = build_mood_instruction(session_mood_state, emotion_state.safety_flags)
+            mood_ui_obj = build_mood_ui(session_mood_state, clone_mood_settings, emotion_state.safety_flags)
+
+    # Save visitor message (with emotion_state if available)
+    visitor_msg_doc = {
         "message_id": f"msg_{uuid.uuid4().hex[:14]}",
         "conversation_id": conversation_id,
         "clone_id": clone_id,
         "sender": "visitor",
         "text": payload.message,
         "created_at": now_iso(),
-    })
+    }
+    if emotion_state:
+        visitor_msg_doc["emotion_state"] = emotion_state.model_dump()
+    await db.clone_messages.insert_one(dict(visitor_msg_doc))
 
     # Build context
     memories = await retrieve_memories(clone_id, payload.message, limit=6)
     recent = await get_recent_messages(conversation_id, limit=20)
-    # Drop the just-inserted visitor message from history (we send it fresh)
     if recent and recent[-1]["sender"] == "visitor" and recent[-1]["text"] == payload.message:
         recent = recent[:-1]
 
     system_prompt = build_clone_system_prompt(clone, memories, recent)
+    if mood_instruction:
+        system_prompt = system_prompt + "\n\nMOOD INSTRUCTION (do not mention this to the user):\n" + mood_instruction
 
     # Call LLM
     if not EMERGENT_LLM_KEY:
@@ -210,25 +256,35 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
             logger.exception("LLM call failed")
             reply = f"(I hit a snag generating a reply. {type(e).__name__})"
 
-    # Save clone message
-    await db.clone_messages.insert_one({
+    # Save clone message (with mood_response_strategy if mood active)
+    clone_msg_doc = {
         "message_id": f"msg_{uuid.uuid4().hex[:14]}",
         "conversation_id": conversation_id,
         "clone_id": clone_id,
         "sender": "clone",
         "text": reply,
         "created_at": now_iso(),
-    })
+    }
+    if session_mood_state and session_mood_state.get("dominant_tone") not in (None, "neutral"):
+        clone_msg_doc["mood_response_strategy"] = {
+            "used": bool(mood_instruction),
+            "theme": session_mood_state.get("theme", "default"),
+            "response_style": mood_ui_obj.accent_style if mood_ui_obj else "default",
+            "source_tone": session_mood_state.get("dominant_tone", "neutral"),
+        }
+    await db.clone_messages.insert_one(dict(clone_msg_doc))
     await db.clone_conversations.update_one(
         {"conversation_id": conversation_id},
         {"$set": {"updated_at": now_iso()}},
     )
 
-    return ChatResponse(
-        conversation_id=conversation_id,
-        reply=reply,
-        used_memories=[m["content"] for m in memories[:3]],
-    )
+    return {
+        "conversation_id": conversation_id,
+        "reply": reply,
+        "used_memories": [m["content"] for m in memories[:3]],
+        "mood_ui": mood_ui_obj.model_dump() if mood_ui_obj else None,
+        "session_mood_state": session_mood_state,
+    }
 
 
 @router.get("/{clone_id_or_slug}/conversations/{conversation_id}/messages")

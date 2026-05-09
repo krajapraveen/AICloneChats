@@ -486,6 +486,158 @@ class TestExplore:
         assert r.status_code == 422
 
 
+# ---------------- Mood Chat (NEW) ----------------
+class TestMoodChat:
+    """Mood-Based Chat emotional intelligence layer."""
+
+    def _post(self, message, conv_id=None, visitor="v_mood_1"):
+        body = {"message": message, "visitor_id": visitor}
+        if conv_id:
+            body["conversation_id"] = conv_id
+        return requests.post(f"{API}/clones/{SLUG}/chat", json=body, timeout=120)
+
+    def test_mood_response_shape_stressed(self, state):
+        r = self._post("i am so overwhelmed today, everything is falling apart and i can't cope")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        # Backward compat fields preserved
+        assert "reply" in d and "conversation_id" in d and "used_memories" in d
+        # New fields
+        assert "mood_ui" in d
+        assert "session_mood_state" in d
+        mu = d["mood_ui"]
+        assert mu and mu.get("enabled") is True
+        for k in ["dominant_state", "theme", "confidence", "animation_level", "accent_style", "show_mood_pill", "microcopy"]:
+            assert k in mu, f"mood_ui missing {k}"
+        sm = d["session_mood_state"]
+        assert sm and sm.get("enabled") is True
+        for k in ["dominant_tone", "confidence", "scores", "theme", "message_count_analyzed"]:
+            assert k in sm, f"session_mood_state missing {k}"
+        assert sm["message_count_analyzed"] == 1
+        state["mood_conv_id"] = d["conversation_id"]
+        state["mood_first_count"] = sm["message_count_analyzed"]
+        state["mood_first_conf"] = sm["confidence"]
+
+    def test_mood_session_increments_and_confidence_rises(self, state):
+        r = self._post(
+            "i'm freaking out, completely burnt out, anxious and stressed beyond words right now",
+            conv_id=state["mood_conv_id"],
+        )
+        assert r.status_code == 200, r.text
+        sm = r.json()["session_mood_state"]
+        assert sm["message_count_analyzed"] == state["mood_first_count"] + 1
+        # confidence should not collapse — typically rises or holds
+        assert sm["confidence"] >= state["mood_first_conf"] - 0.05
+        # On 2 stressed messages, dominant should lean stressed (allow neutral if confidence still gated)
+        assert sm["dominant_tone"] in {"stressed", "neutral"}
+
+    def test_mood_happy_messages_shift_tone(self, state):
+        # Fresh conversation
+        conv = None
+        last = None
+        for msg in [
+            "this is amazing!! i love this so much",
+            "haha awesome, fantastic stuff lol",
+            "yay this is wonderful, i'm thrilled!!",
+        ]:
+            r = self._post(msg, conv_id=conv, visitor="v_mood_happy")
+            assert r.status_code == 200
+            last = r.json()
+            conv = last["conversation_id"]
+        sm = last["session_mood_state"]
+        scores = sm["scores"]
+        # happiness or playfulness or excitement should dominate
+        positive = scores.get("happiness", 0) + scores.get("playfulness", 0) + scores.get("excitement", 0)
+        negative = scores.get("stress", 0) + scores.get("frustration", 0) + scores.get("sadness", 0)
+        assert positive > negative, f"Expected positive>negative, got {scores}"
+        # Allow either neutral (if confidence gate) or one of positive tones; mood_ui pill OK if shown
+        if last["mood_ui"].get("show_mood_pill"):
+            assert last["mood_ui"]["theme"] in {"bright", "playful"}, f"theme={last['mood_ui']['theme']}"
+
+    def test_mood_smoothing_persists_previous(self, state):
+        """First stressed → then happy: smoothed stress should NOT drop to ~0 immediately."""
+        r1 = self._post("i am so panicked, anxious, overwhelmed and freaking out", visitor="v_smooth")
+        assert r1.status_code == 200
+        d1 = r1.json()
+        conv = d1["conversation_id"]
+        prev_stress = d1["session_mood_state"]["scores"].get("stress", 0)
+
+        r2 = self._post("yay this is amazing, i love it!! fantastic", conv_id=conv, visitor="v_smooth")
+        assert r2.status_code == 200
+        d2 = r2.json()
+        new_stress = d2["session_mood_state"]["scores"].get("stress", 0)
+        # Smoothed: new = 0.7*prev + 0.3*curr → should retain a sizable fraction of prev_stress
+        if prev_stress > 0.2:
+            assert new_stress >= prev_stress * 0.5, f"prev_stress={prev_stress}, new_stress={new_stress} — smoothing failed"
+
+    def test_low_confidence_gate(self, state):
+        """A short / ambiguous message should produce confidence < 0.65 → pill hidden."""
+        r = self._post("ok", visitor="v_low_conf")
+        assert r.status_code == 200
+        mu = r.json()["mood_ui"]
+        # If confidence is low, pill must be off and theme/state default/neutral
+        if (mu.get("confidence") or 0) < 0.65:
+            assert mu.get("show_mood_pill") is False
+            assert mu.get("dominant_state") == "neutral"
+            assert mu.get("theme") == "default"
+
+    def test_visitor_message_persisted_with_emotion_state(self, state):
+        # Pull conversation history → find visitor messages with emotion_state
+        r = requests.get(
+            f"{API}/clones/{SLUG}/conversations/{state['mood_conv_id']}/messages", timeout=20
+        )
+        assert r.status_code == 200
+        msgs = r.json()
+        v_msgs = [m for m in msgs if m["sender"] == "visitor"]
+        assert v_msgs, "expected visitor messages persisted"
+        es_msgs = [m for m in v_msgs if m.get("emotion_state")]
+        assert es_msgs, "expected emotion_state on at least one visitor msg"
+        es = es_msgs[-1]["emotion_state"]
+        assert es.get("analyzed") is True
+        assert "dominant_tone" in es and "confidence" in es and "scores" in es
+        assert "safety_flags" in es
+        assert es.get("analyzer_version") == "mood-v1"
+
+    def test_clone_message_mood_response_strategy(self, state):
+        r = requests.get(
+            f"{API}/clones/{SLUG}/conversations/{state['mood_conv_id']}/messages", timeout=20
+        )
+        assert r.status_code == 200
+        msgs = r.json()
+        clone_msgs = [m for m in msgs if m["sender"] == "clone"]
+        assert clone_msgs
+        # mood_response_strategy may or may not be present depending on whether dominant_tone went non-neutral.
+        # If any clone msg has it, validate shape.
+        with_strategy = [m for m in clone_msgs if m.get("mood_response_strategy")]
+        for m in with_strategy:
+            mrs = m["mood_response_strategy"]
+            assert "used" in mrs and "theme" in mrs and "source_tone" in mrs
+
+    def test_safety_self_harm_override(self, state):
+        r = self._post("i want to end it all, i can't go on anymore", visitor="v_safety")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        mu = d["mood_ui"]
+        # Safety override should force soft theme + sad state + microcopy regardless of confidence
+        assert mu["theme"] == "soft"
+        assert mu["dominant_state"] == "sad"
+        assert mu["microcopy"] == "Here with you."
+        assert isinstance(d["reply"], str) and len(d["reply"]) > 0
+        assert not d["reply"].startswith("(I hit a snag")
+
+    def test_explore_mood_filter_unaffected(self, state):
+        # /api/explore?category=savage must still work and not be affected by chat emotion_state
+        r = requests.get(f"{API}/explore?category=savage&limit=10", timeout=20)
+        assert r.status_code == 200
+        body = r.json()
+        # Should be a list-like response (either list or {results:[...]} — we tolerate both shapes)
+        if isinstance(body, dict):
+            arr = body.get("results") or body.get("clones") or []
+        else:
+            arr = body
+        assert isinstance(arr, list)
+
+
 # ---------------- Cleanup / Cascade ----------------
 class TestZCleanup:
     def test_delete_clone_cascade(self, state):

@@ -6,6 +6,8 @@ import { formatCount } from "../lib/format";
 import MarqueeDisclaimer from "../components/MarqueeDisclaimer";
 import ChatBubble from "../components/ChatBubble";
 import ShareCardModal from "../components/ShareCardModal";
+import MoodSignalPill from "../components/MoodSignalPill";
+import { useMoodTheme } from "../hooks/useMoodTheme";
 
 function getOrCreateVisitorId() {
   let id = localStorage.getItem("visitor_id");
@@ -32,6 +34,7 @@ export default function PublicClone() {
   const [shareTarget, setShareTarget] = useState(null); // { reply, question }
   const visitorId = useRef(getOrCreateVisitorId());
   const scrollRef = useRef(null);
+  const { moodUI, theme: moodTheme, updateMoodUI } = useMoodTheme();
 
   useEffect(() => {
     (async () => {
@@ -66,6 +69,7 @@ export default function PublicClone() {
       });
       setConversationId(data.conversation_id);
       setMessages((m) => [...m, { sender: "clone", text: data.reply, key: Date.now() + 1, prevQuestion: text }]);
+      if (data.mood_ui) updateMoodUI(data.mood_ui);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Couldn't send");
       setMessages((m) => [...m, { sender: "clone", text: "(Hmm, I couldn't reply just now. Try again?)", key: Date.now() + 1, prevQuestion: text }]);
@@ -156,7 +160,17 @@ export default function PublicClone() {
         </div>
 
         {/* Chat */}
-        <div className="glass-card p-0 flex-1 flex flex-col min-h-[400px] overflow-hidden">
+        <div
+          className="glass-card p-0 flex-1 flex flex-col min-h-[400px] overflow-hidden"
+          data-mood-theme={moodUI?.theme || "default"}
+          data-mood-state={moodUI?.dominant_state || "neutral"}
+          data-testid="chat-container"
+        >
+          {moodUI?.show_mood_pill && moodUI?.microcopy && (
+            <div className="px-5 pt-4 pb-1 flex justify-end" data-testid="mood-pill-wrap">
+              <MoodSignalPill moodUI={moodUI} theme={moodTheme} />
+            </div>
+          )}
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4" data-testid="chat-scroll">
             {messages.length === 0 && (
               <div className="text-center py-10">
