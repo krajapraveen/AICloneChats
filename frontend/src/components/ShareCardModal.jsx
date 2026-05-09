@@ -39,6 +39,7 @@ export default function ShareCardModal({ open, onClose, clone, message, visitorM
       cacheBust: true,
       pixelRatio: 2,
       backgroundColor: "#070A12",
+      skipFonts: true,
       style: { transform: "none" },
     });
   };

@@ -50,14 +50,36 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Prioritized Backlog
 
-### P1 (next phase)
-- **Voice replies (OpenAI TTS)** via Emergent key — audio button on clone bubbles
-- **OpenAI embeddings** — replace keyword retrieval with vector cosine similarity for better memory recall
-- **Auto memory extraction** — background worker analyzes conversations, extracts stable facts as candidate memories with confidence/importance
+### P1 (next phase) — recommended order
+- **Public clone discovery** — `/explore` page surfacing the most-shared clones (uses analytics counts) — completes the viral loop
+- **OpenAI TTS voice replies** via Emergent key — audio button on clone bubbles
+- **OpenAI embeddings** — replace keyword retrieval with vector cosine similarity
+- **Auto memory extraction** — background worker analyzes conversations, extracts stable facts as candidate memories
 - **Visitor memories** — clone remembers things about each visitor across sessions
 - **Training data uploads** — WhatsApp/tweets/notes upload to seed style
-- **Creator analytics** — clone view count, message count, top visitors
+- **Creator analytics dashboard** — surface the analytics we're already tracking (views, chats, shares, top moods)
 - **"Future Self Mode"** — preset prompt: "Talk to yourself from 2035"
+
+### P2
+- Voice cloning (custom voice via ElevenLabs)
+- Avatar video replies (lip-sync)
+- Fan monetization (paid clone access via Stripe)
+- Clone marketplace + creator profiles
+- Group clones / multi-clone roleplay
+- Mobile app
+
+### P0 deferred (intentionally out of MVP scope)
+- Pause clone (status field exists, no UI yet) — easy add
+- Sensitive memory tagging UI (visibility=owner_only exists, just need filter UI)
+
+## Next Tasks (recommended order)
+1. Add voice replies (OpenAI TTS + audio playback in chat bubbles)
+2. Add OpenAI embeddings + cosine similarity for memory retrieval
+3. Auto memory extraction worker (post-conversation)
+4. Add clone analytics page (views, chats, popular questions)
+5. "Future Self Mode" preset
+6. Stripe-based premium tier (unlimited memory, voice, private clones)
+to yourself from 2035"
 
 ### P2
 - Voice cloning (custom voice via ElevenLabs)
