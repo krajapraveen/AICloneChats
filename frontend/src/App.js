@@ -13,6 +13,7 @@ import CloneEditor from "./pages/CloneEditor";
 import MemoryManager from "./pages/MemoryManager";
 import PublicClone from "./pages/PublicClone";
 import Explore from "./pages/Explore";
+import MoodChat from "./pages/MoodChat";
 
 function AppRouter() {
   const location = useLocation();

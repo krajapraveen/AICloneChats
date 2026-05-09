@@ -81,6 +81,62 @@ async def on_startup():
     await _db.files.create_index("storage_path", unique=True)
     logger.info("Startup complete: indexes ensured")
 
+    # Seed system Companion clone for /mood-chat
+    await _seed_companion_clone(_db)
+
+
+async def _seed_companion_clone(_db):
+    """Idempotent system clone for the standalone Mood-Based Chat experience."""
+    existing = await _db.clones.find_one({"slug": "companion"}, {"_id": 0, "clone_id": 1})
+    if existing:
+        return
+    from datetime import datetime, timezone
+    import uuid
+    now = datetime.now(timezone.utc).isoformat()
+    # Ensure system user exists too (orphan clones break /clones/mine for that user)
+    sys_user_id = "user_system_companion"
+    await _db.users.update_one(
+        {"user_id": sys_user_id},
+        {"$setOnInsert": {
+            "user_id": sys_user_id,
+            "email": "system@cloneme.ai",
+            "name": "CloneMe System",
+            "auth_provider": "system",
+            "created_at": now,
+        }},
+        upsert=True,
+    )
+    await _db.clones.insert_one({
+        "clone_id": f"clone_{uuid.uuid4().hex[:14]}",
+        "user_id": sys_user_id,
+        "slug": "companion",
+        "display_name": "Companion",
+        "bio": "A mood-aware AI companion. Adapts tone to match how you're feeling — calm when you're stressed, playful when you're playful. Not impersonating any real person.",
+        "avatar_url": "",
+        "default_language": "en",
+        "visibility": "unlisted",
+        "status": "ready",
+        "allowed_topics": [],
+        "blocked_topics": ["medical_diagnosis", "legal_advice", "financial_advice"],
+        "personality": {
+            "tone": "warm",
+            "humor_level": 5,
+            "directness": 5,
+            "warmth": 8,
+            "energy": 5,
+            "reply_length": "short",
+            "emoji_usage": "low",
+            "catchphrases": [],
+            "common_words": [],
+            "avoid_words": ["maybe", "kind of"],
+        },
+        "mood_chat_settings": {"enabled": True, "show_mood_pill": True},
+        "is_system": True,
+        "created_at": now,
+        "updated_at": now,
+    })
+    logger.info("Seeded system Companion clone (slug=companion)")
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

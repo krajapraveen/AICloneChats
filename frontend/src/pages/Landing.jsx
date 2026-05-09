@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
+import ChatTypeCards from "../components/ChatTypeCards";
 
 const FEATURES = [
   { tone: "amber", n: "01", title: "Personality engine", body: "Tune humor, directness, warmth, energy. Add catchphrases. Block topics. Your clone, your rules." },
@@ -106,6 +107,9 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* Two ways to chat */}
+      <ChatTypeCards />
 
       {/* Bento features */}
       <section className="border-t border-white/5" data-testid="features-section">
