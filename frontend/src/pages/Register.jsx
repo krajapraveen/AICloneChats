@@ -26,7 +26,14 @@ export default function Register() {
       await register(email, password, name);
       navigate("/dashboard");
     } catch (err) {
-      setError(err?.response?.data?.detail || "Sign up failed");
+      let detail = err?.response?.data?.detail;
+      if (Array.isArray(detail)) detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+      if (!detail) {
+        if (err?.message === "Network Error") detail = "Network error — please check your connection and try again.";
+        else if (err?.response?.status) detail = `Sign up failed (HTTP ${err.response.status})`;
+        else detail = "Sign up failed";
+      }
+      setError(detail);
     } finally {
       setLoading(false);
     }

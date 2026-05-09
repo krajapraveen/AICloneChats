@@ -40,10 +40,22 @@ app.include_router(chat.router)
 app.include_router(storage.router)
 app.include_router(analytics.router)
 
+# CORS — must use explicit origins (not '*') because we send credentials.
+# Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
+_default_origins = [
+    "https://aiclonechats.com",
+    "https://www.aiclonechats.com",
+    "http://localhost:3000",
+]
+_env_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip() and o.strip() != "*"]
+_allowed_origins = list({*_default_origins, *_env_origins})
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=_allowed_origins,
+    # Allow all Emergent preview/host subdomains via regex (no need to update env on every fork)
+    allow_origin_regex=r"^https://([a-z0-9-]+)\.(preview\.emergentagent\.com|emergent\.host|emergentagent\.com)$",
     allow_methods=["*"],
     allow_headers=["*"],
 )

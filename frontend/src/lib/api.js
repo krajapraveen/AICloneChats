@@ -5,11 +5,13 @@ export const API = `${BACKEND_URL}/api`;
 
 const api = axios.create({
   baseURL: API,
-  withCredentials: true,
+  // NOTE: Do NOT use withCredentials. Some hosting layers force
+  // Access-Control-Allow-Origin:* which browsers reject when combined
+  // with credentials. We auth via Bearer header (localStorage) instead.
   headers: { "Content-Type": "application/json" },
 });
 
-// Always attach token from localStorage too (for cross-cookie environments)
+// Always attach token from localStorage as Bearer header.
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("session_token");
   if (token) {
