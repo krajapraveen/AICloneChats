@@ -119,13 +119,13 @@ export default function PublicClone() {
     : null;
 
   return (
-    <div className="page-bg flex flex-col min-h-screen">
+    <div className="page-bg flex flex-col min-h-screen min-h-[100dvh]">
       <MarqueeDisclaimer />
 
       <div className="orb orb-amber w-[380px] h-[380px] top-20 -right-20 opacity-30 animate-orb" aria-hidden />
       <div className="orb orb-violet w-[420px] h-[420px] bottom-10 -left-32 opacity-25 animate-orb" style={{ animationDelay: "3s" }} aria-hidden />
 
-      <div className="max-w-3xl w-full mx-auto px-5 md:px-8 py-8 flex-1 flex flex-col" data-testid="public-clone-page">
+      <div className="max-w-3xl w-full mx-auto px-4 sm:px-5 md:px-8 py-6 sm:py-8 flex-1 flex flex-col" data-testid="public-clone-page">
         {/* Header */}
         <div className="glass-card p-6 mb-5" data-testid="clone-header">
           <div className="flex items-start gap-4">
@@ -200,14 +200,14 @@ export default function PublicClone() {
           </div>
 
           {showNamePrompt ? (
-            <form onSubmit={submitName} className="border-t border-white/10 p-4 flex gap-2 bg-amber/5" data-testid="visitor-name-form">
-              <input className="input-brutal flex-1" required maxLength={40} value={visitorName} onChange={(e) => setVisitorName(e.target.value)} placeholder="What should they call you? (e.g. Sam)" data-testid="visitor-name-input" />
-              <button type="submit" className="btn-brutal" data-testid="visitor-name-submit">Start chatting →</button>
+            <form onSubmit={submitName} className="border-t border-white/10 p-4 chat-form-sticky flex flex-col sm:flex-row gap-2 bg-amber/5" data-testid="visitor-name-form">
+              <input className="input-brutal flex-1 min-w-0" required maxLength={40} value={visitorName} onChange={(e) => setVisitorName(e.target.value)} placeholder="What should they call you? (e.g. Sam)" data-testid="visitor-name-input" />
+              <button type="submit" className="btn-brutal flex-shrink-0" data-testid="visitor-name-submit">Start chatting →</button>
             </form>
           ) : (
-            <form onSubmit={send} className="border-t border-white/10 p-4 flex gap-2" data-testid="chat-form">
-              <input className="input-brutal flex-1" required disabled={sending} maxLength={2000} value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Message ${clone.display_name}…`} data-testid="chat-input" />
-              <button type="submit" disabled={sending || !input.trim()} className="btn-brutal" data-testid="chat-send-btn">Send</button>
+            <form onSubmit={send} className="border-t border-white/10 p-4 chat-form-sticky flex gap-2" data-testid="chat-form">
+              <input className="input-brutal flex-1 min-w-0" required disabled={sending} maxLength={2000} value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Message ${clone.display_name}…`} data-testid="chat-input" />
+              <button type="submit" disabled={sending || !input.trim()} className="btn-brutal flex-shrink-0" data-testid="chat-send-btn">Send</button>
             </form>
           )}
         </div>

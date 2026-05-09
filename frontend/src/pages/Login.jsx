@@ -45,7 +45,7 @@ export default function Login() {
       <Navbar />
       <div className="orb orb-amber w-[380px] h-[380px] -top-20 -right-32 opacity-30 animate-orb" aria-hidden />
       <div className="orb orb-violet w-[400px] h-[400px] top-40 -left-32 opacity-25 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
-      <div className="max-w-md mx-auto px-5 md:px-8 py-16 relative">
+      <div className="max-w-md mx-auto px-4 sm:px-5 md:px-8 py-12 sm:py-16 relative">
         <div className="brutal-card p-8" data-testid="login-card">
           <h1 className="heading-display text-4xl mb-2">Welcome back.</h1>
           <p className="text-sm text-muted mb-7 font-medium">Talk to your AI self again.</p>

@@ -44,7 +44,7 @@ export default function Register() {
       <Navbar />
       <div className="orb orb-violet w-[400px] h-[400px] -top-20 -right-32 opacity-30 animate-orb" aria-hidden />
       <div className="orb orb-amber w-[380px] h-[380px] top-40 -left-32 opacity-25 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
-      <div className="max-w-md mx-auto px-5 md:px-8 py-16 relative">
+      <div className="max-w-md mx-auto px-4 sm:px-5 md:px-8 py-12 sm:py-16 relative">
         <div className="brutal-card p-8" data-testid="register-card">
           <h1 className="heading-display text-4xl mb-2">Build your clone.</h1>
           <p className="text-sm text-muted mb-7 font-medium">3 minutes. No credit card. No vibes harmed.</p>

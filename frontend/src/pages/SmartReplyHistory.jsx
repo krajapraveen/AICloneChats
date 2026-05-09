@@ -43,7 +43,7 @@ export default function SmartReplyHistory() {
   return (
     <div className="page-bg min-h-screen">
       <Navbar />
-      <div className="max-w-3xl mx-auto px-5 md:px-8 py-8" data-testid="sr-history-page">
+      <div className="max-w-3xl mx-auto px-4 sm:px-5 md:px-8 py-6 sm:py-8" data-testid="sr-history-page">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
           <div>
             <span className="tag tag-amber mb-2 inline-block">SMART REPLY · HISTORY</span>

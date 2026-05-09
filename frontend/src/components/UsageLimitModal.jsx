@@ -4,12 +4,12 @@ export default function UsageLimitModal({ open, onClose, onUpgradeClick, daily_l
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 safe-px"
       onClick={onClose}
       data-testid="usage-limit-modal"
     >
       <div
-        className="brutal-card max-w-md w-full p-7 relative"
+        className="brutal-card modal-shell w-full sm:max-w-md p-6 sm:p-7 relative rounded-t-3xl sm:rounded-3xl chat-form-sticky"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between mb-4">

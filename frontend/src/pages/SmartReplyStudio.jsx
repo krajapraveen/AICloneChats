@@ -183,23 +183,23 @@ export default function SmartReplyStudio() {
   }
 
   return (
-    <div className="page-bg min-h-screen">
+    <div className="page-bg min-h-screen min-h-[100dvh]">
       <Navbar />
       <div className="orb orb-amber w-[420px] h-[420px] -top-20 -right-32 opacity-30 animate-orb" aria-hidden />
       <div className="orb orb-violet w-[380px] h-[380px] top-72 -left-32 opacity-20 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
 
-      <div className="max-w-3xl mx-auto px-5 md:px-8 py-8 relative" data-testid="smart-reply-studio">
+      <div className="max-w-3xl mx-auto px-4 sm:px-5 md:px-8 py-6 sm:py-8 relative" data-testid="smart-reply-studio">
         {/* Header */}
-        <div className="glass-card p-6 mb-5">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="glass-card p-5 sm:p-6 mb-5">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div className="flex-1 min-w-0">
               <span className="tag tag-amber mb-2 inline-block">SMART REPLY</span>
-              <h1 className="heading-display text-3xl sm:text-4xl">Paste it. Get the right reply.</h1>
+              <h1 className="heading-display text-2xl sm:text-3xl md:text-4xl">Paste it. Get the right reply.</h1>
               <p className="text-sm font-medium text-ink/70 leading-relaxed mt-2">
                 Drop in the message you got. Pick a mode + tone. We'll write 3 copy-ready replies.
               </p>
             </div>
-            <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-row sm:flex-col items-start sm:items-end gap-2 flex-wrap">
               {remainingPill()}
               <div className="flex gap-2">
                 <Link to="/smart-reply/history" className="text-xs font-mono uppercase tracking-widest text-muted hover:text-amber-soft" data-testid="link-sr-history">History</Link>

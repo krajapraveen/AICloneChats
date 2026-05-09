@@ -20,24 +20,24 @@ export default function Landing() {
 
       {/* Hero */}
       <section className="relative" data-testid="landing-hero">
-        <div className="max-w-6xl mx-auto px-5 md:px-8 pt-16 pb-24 md:pt-24 md:pb-32">
-          <div className="inline-flex items-center gap-2 mb-7 animate-fade-up" data-testid="hero-badge">
+        <div className="max-w-6xl mx-auto px-4 sm:px-5 md:px-8 pt-10 pb-16 sm:pt-16 sm:pb-24 md:pt-24 md:pb-32">
+          <div className="inline-flex flex-wrap items-center gap-2 mb-7 animate-fade-up" data-testid="hero-badge">
             <span className="tag tag-violet">v0.1 · Made with feelings</span>
             <span className="tag">Now in beta</span>
           </div>
 
-          <h1 className="heading-display text-5xl sm:text-6xl md:text-7xl lg:text-[5.5rem] max-w-5xl animate-fade-up" data-testid="hero-headline">
+          <h1 className="heading-display text-[2.25rem] sm:text-5xl md:text-6xl lg:text-7xl xl:text-[5.5rem] max-w-5xl animate-fade-up leading-[1.05]" data-testid="hero-headline">
             Make an <span className="bg-gradient-to-r from-amber to-amber-soft bg-clip-text text-transparent">AI version</span> of yourself.
             <br />
             Let people <span className="bg-gradient-to-r from-violet-soft to-violet bg-clip-text text-transparent">talk to it.</span>
           </h1>
 
-          <p className="mt-7 text-lg md:text-xl max-w-2xl text-ink/75 font-medium animate-fade-up leading-relaxed" style={{ animationDelay: "0.1s" }} data-testid="hero-subheadline">
+          <p className="mt-5 sm:mt-7 text-base sm:text-lg md:text-xl max-w-2xl text-ink/75 font-medium animate-fade-up leading-relaxed" style={{ animationDelay: "0.1s" }} data-testid="hero-subheadline">
             CloneMe AI builds a chatty digital twin of you — your tone, your humor, your weird opinions —
             so your friends, fans, or curious strangers can chat when you can't.
           </p>
 
-          <div className="mt-10 flex flex-wrap items-center gap-3 animate-fade-up" style={{ animationDelay: "0.2s" }}>
+          <div className="mt-8 sm:mt-10 flex flex-wrap items-center gap-3 animate-fade-up" style={{ animationDelay: "0.2s" }}>
             <Link to="/register" className="btn-brutal text-base" data-testid="hero-cta-primary">
               Build your clone — free →
             </Link>

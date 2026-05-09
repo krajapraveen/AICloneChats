@@ -84,12 +84,12 @@ export default function MoodChat() {
   };
 
   return (
-    <div className="page-bg min-h-screen flex flex-col">
+    <div className="page-bg min-h-screen min-h-[100dvh] flex flex-col">
       <Navbar />
       <div className="orb orb-violet w-[420px] h-[420px] -top-20 -right-32 opacity-30 animate-orb" aria-hidden />
       <div className="orb orb-amber w-[380px] h-[380px] top-60 -left-32 opacity-20 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
 
-      <div className="max-w-3xl w-full mx-auto px-5 md:px-8 py-8 flex-1 flex flex-col relative" data-testid="mood-chat-page">
+      <div className="max-w-3xl w-full mx-auto px-4 sm:px-5 md:px-8 py-6 sm:py-8 flex-1 flex flex-col relative" data-testid="mood-chat-page">
         {/* Header */}
         <div className="glass-card p-6 mb-5" data-testid="mood-chat-header">
           <div className="flex items-start gap-4">
@@ -149,9 +149,9 @@ export default function MoodChat() {
             )}
           </div>
 
-          <form onSubmit={send} className="border-t border-white/10 p-4 flex gap-2" data-testid="mood-chat-form">
+          <form onSubmit={send} className="border-t border-white/10 p-4 chat-form-sticky flex gap-2" data-testid="mood-chat-form">
             <input
-              className="input-brutal flex-1"
+              className="input-brutal flex-1 min-w-0"
               required
               disabled={sending}
               maxLength={2000}
@@ -160,7 +160,7 @@ export default function MoodChat() {
               placeholder="What's on your mind?"
               data-testid="mood-chat-input"
             />
-            <button type="submit" disabled={sending || !input.trim()} className="btn-violet" data-testid="mood-chat-send-btn">
+            <button type="submit" disabled={sending || !input.trim()} className="btn-violet flex-shrink-0" data-testid="mood-chat-send-btn">
               Send
             </button>
           </form>

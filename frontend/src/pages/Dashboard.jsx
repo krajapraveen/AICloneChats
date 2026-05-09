@@ -53,7 +53,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-cream">
       <Navbar />
-      <div className="max-w-6xl mx-auto px-5 md:px-8 py-10 md:py-14" data-testid="dashboard-page">
+      <div className="max-w-6xl mx-auto px-4 sm:px-5 md:px-8 py-8 md:py-14" data-testid="dashboard-page">
         <div className="flex items-end justify-between gap-4 flex-wrap mb-10">
           <div>
             <p className="font-mono text-xs uppercase tracking-widest text-muted mb-2">CLONE HQ</p>

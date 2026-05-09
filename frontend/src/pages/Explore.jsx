@@ -87,7 +87,7 @@ export default function Explore() {
       <div className="orb orb-amber w-[420px] h-[420px] -top-20 -right-20 opacity-30 animate-orb" aria-hidden />
       <div className="orb orb-violet w-[460px] h-[460px] top-40 -left-32 opacity-25 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
 
-      <div className="max-w-6xl mx-auto px-5 md:px-8 py-12 relative" data-testid="explore-page">
+      <div className="max-w-6xl mx-auto px-4 sm:px-5 md:px-8 py-8 sm:py-12 relative" data-testid="explore-page">
         <div className="max-w-2xl mb-8">
           <p className="font-mono text-xs uppercase tracking-widest text-muted mb-3">DISCOVERY · CLONE WORLD</p>
           <h1 className="heading-display text-4xl md:text-6xl mb-3">

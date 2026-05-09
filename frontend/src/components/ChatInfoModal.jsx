@@ -23,12 +23,12 @@ export default function ChatInfoModal({ open, onClose, info }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-up"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-up safe-px"
       onClick={handleClose}
       data-testid={`chat-info-modal-${info.id}`}
     >
       <div
-        className="glass-card-strong w-full max-w-xl max-h-[88vh] overflow-y-auto p-6 sm:p-8 rounded-t-3xl sm:rounded-3xl animate-pop-in"
+        className="glass-card-strong modal-shell w-full sm:max-w-xl p-6 sm:p-8 rounded-t-3xl sm:rounded-3xl animate-pop-in chat-form-sticky"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 mb-5">
