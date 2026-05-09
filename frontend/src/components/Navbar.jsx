@@ -19,6 +19,9 @@ export default function Navbar() {
           <Link to="/explore" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-amber-soft transition" data-testid="nav-explore">
             Explore
           </Link>
+          <Link to="/smart-reply" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-emerald-soft transition" data-testid="nav-smart-reply">
+            Smart Reply
+          </Link>
           {user ? (
             <>
               <Link to="/dashboard" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-ink transition" data-testid="nav-dashboard">

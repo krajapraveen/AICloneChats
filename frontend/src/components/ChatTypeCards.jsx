@@ -17,7 +17,6 @@ const CHAT_INFO = {
       "Open the public clone link.",
       "Type a message or question.",
       "The clone replies in its selected personality style.",
-      "Edit clone settings anytime to improve replies.",
     ],
     example: {
       input: "Give me startup advice.",
@@ -47,11 +46,31 @@ const CHAT_INFO = {
     safety:
       "Mood-Based Chat is not therapy or emergency support. If you mention self-harm or danger, the chat will respond supportively and encourage you to reach a trusted person or local emergency services immediately.",
   },
+  smart: {
+    id: "smart",
+    kicker: "OPTION 03",
+    title: "What is Smart Reply?",
+    body:
+      "Smart Reply turns a real message you received into 3 copy-ready replies. Pick a mode (dating, professional, apology, negotiation), pick a tone, and we write the safe, warm, and confident version of what you should send.",
+    how_to: [
+      "Paste the message you got.",
+      "Pick a mode — dating, professional, apology, or negotiation.",
+      "Choose a tone (warm, calm, flirty, professional, confident, direct).",
+      "Optionally add context (relationship, goal, what you want to say).",
+      "Get 3 reply variants — short / medium / long. Tap Copy to send.",
+    ],
+    example: {
+      input: "Hey, are we still on for Friday? Or have plans changed?",
+      output: "Still on from my end — let me know if anything's changed for you.",
+    },
+    safety:
+      "Smart Reply blocks harassment, manipulation, coercive dating advice, sexual pressure, fake threats, and revenge messages. If your input is unsafe, you'll get a healthier alternative instead.",
+  },
 };
 
 export default function ChatTypeCards() {
   const navigate = useNavigate();
-  const [openInfo, setOpenInfo] = useState(null); // 'clone' | 'mood' | null
+  const [openInfo, setOpenInfo] = useState(null);
 
   useEffect(() => {
     api.post("/analytics/event", { event_name: "chat_type_card_viewed" }).catch(() => {});
@@ -62,9 +81,15 @@ export default function ChatTypeCards() {
     if (chat_type === "clone") {
       api.post("/analytics/event", { event_name: "clone_chat_started", metadata: { source: "chat_type_cards" } }).catch(() => {});
       navigate("/explore");
-    } else {
+    } else if (chat_type === "mood") {
       api.post("/analytics/event", { event_name: "mood_chat_started", metadata: { source: "chat_type_cards" } }).catch(() => {});
       navigate("/mood-chat");
+    } else if (chat_type === "smart") {
+      api.post("/analytics/event", {
+        event_name: "smart_reply_landing_view",
+        metadata: { source: "chat_type_cards", experience_variant: "smart_reply_v1" },
+      }).catch(() => {});
+      navigate("/smart-reply");
     }
   };
 
@@ -72,14 +97,14 @@ export default function ChatTypeCards() {
     <section className="border-t border-white/5" data-testid="chat-type-cards-section">
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-16 md:py-24">
         <div className="max-w-2xl mb-10">
-          <span className="tag mb-4 inline-block">Pick your chat</span>
-          <h2 className="heading-display text-3xl md:text-5xl mb-3">Two ways to talk.</h2>
+          <span className="tag mb-4 inline-block">Pick your tool</span>
+          <h2 className="heading-display text-3xl md:text-5xl mb-3">Three ways to talk.</h2>
           <p className="text-muted font-medium leading-relaxed">
-            Personality-first, or emotion-first. Choose the one that fits the moment — they work in completely different ways.
+            Personality-first, emotion-first, or just-paste-and-reply. Pick the one that fits the moment.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {/* AI Clone Chat */}
           <div className="brutal-card p-7 flex flex-col" data-testid="card-clone-chat">
             <div className="flex items-center justify-between gap-3 mb-2">
@@ -88,12 +113,12 @@ export default function ChatTypeCards() {
             </div>
             <h3 className="heading-display text-2xl md:text-3xl mb-3">AI Clone Chat</h3>
             <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5">
-              Chat with a real person's AI clone — their tone, humor, opinions, and weird takes. Browse existing clones or build your own.
+              Chat with a real person's AI clone — their tone, humor, opinions, and weird takes.
             </p>
             <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
-              <li className="flex items-start gap-2"><span className="text-amber mt-0.5">●</span> Each clone has a distinct personality</li>
-              <li className="flex items-start gap-2"><span className="text-amber mt-0.5">●</span> Configurable bio, tone, memories</li>
-              <li className="flex items-start gap-2"><span className="text-amber mt-0.5">●</span> Public share link per clone</li>
+              <li className="flex items-start gap-2"><span className="text-amber mt-0.5">●</span> Distinct personality per clone</li>
+              <li className="flex items-start gap-2"><span className="text-amber mt-0.5">●</span> Bio, tone, memories</li>
+              <li className="flex items-start gap-2"><span className="text-amber mt-0.5">●</span> Public share link</li>
             </ul>
             <button onClick={() => select("clone")} className="btn-brutal mt-auto" data-testid="cta-clone-chat">
               Browse clones →
@@ -108,15 +133,35 @@ export default function ChatTypeCards() {
             </div>
             <h3 className="heading-display text-2xl md:text-3xl mb-3">Mood-Based Chat</h3>
             <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5">
-              No persona, no setup. Type how you feel — the chat adapts its tone to match. Calm when you're stressed. Playful when you're playful.
+              No persona, no setup. Type how you feel — the chat adapts its tone to match.
             </p>
             <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
-              <li className="flex items-start gap-2"><span className="text-violet-soft mt-0.5">●</span> Detects emotional tone in real time</li>
-              <li className="flex items-start gap-2"><span className="text-violet-soft mt-0.5">●</span> Adapts reply style + UI subtly</li>
-              <li className="flex items-start gap-2"><span className="text-violet-soft mt-0.5">●</span> Built-in safety for distress signals</li>
+              <li className="flex items-start gap-2"><span className="text-violet-soft mt-0.5">●</span> Detects emotional tone</li>
+              <li className="flex items-start gap-2"><span className="text-violet-soft mt-0.5">●</span> Adapts reply style + UI</li>
+              <li className="flex items-start gap-2"><span className="text-violet-soft mt-0.5">●</span> Built-in distress safety</li>
             </ul>
             <button onClick={() => select("mood")} className="btn-violet mt-auto" data-testid="cta-mood-chat">
               Start mood chat →
+            </button>
+          </div>
+
+          {/* Smart Reply */}
+          <div className="brutal-card p-7 flex flex-col" data-testid="card-smart-reply">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="tag tag-emerald">UTILITY-FIRST</span>
+              <InfoIcon onClick={() => setOpenInfo("smart")} label="What is Smart Reply?" testId="info-icon-smart" />
+            </div>
+            <h3 className="heading-display text-2xl md:text-3xl mb-3">Smart Reply</h3>
+            <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5">
+              Paste the message. Pick the mode. Get 3 copy-ready replies. Send the right one.
+            </p>
+            <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
+              <li className="flex items-start gap-2"><span className="text-emerald-soft mt-0.5">●</span> Dating · pro · apology · negotiation</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-soft mt-0.5">●</span> 3 lengths: short / medium / long</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-soft mt-0.5">●</span> Tone control + risk warnings</li>
+            </ul>
+            <button onClick={() => select("smart")} className="btn-brutal mt-auto" data-testid="cta-smart-reply">
+              Open Smart Reply →
             </button>
           </div>
         </div>
@@ -131,6 +176,11 @@ export default function ChatTypeCards() {
         open={openInfo === "mood"}
         onClose={() => setOpenInfo(null)}
         info={{ ...CHAT_INFO.mood, cta: { label: "Start mood chat →", onClick: () => select("mood") } }}
+      />
+      <ChatInfoModal
+        open={openInfo === "smart"}
+        onClose={() => setOpenInfo(null)}
+        info={{ ...CHAT_INFO.smart, cta: { label: "Open Smart Reply →", onClick: () => select("smart") } }}
       />
     </section>
   );

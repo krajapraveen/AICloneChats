@@ -16,6 +16,7 @@ import memories  # noqa: E402
 import chat  # noqa: E402
 import storage  # noqa: E402
 import analytics  # noqa: E402
+import smart_reply  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -39,6 +40,7 @@ app.include_router(memories.router)
 app.include_router(chat.router)
 app.include_router(storage.router)
 app.include_router(analytics.router)
+app.include_router(smart_reply.router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -79,6 +81,10 @@ async def on_startup():
     await _db.clone_messages.create_index("conversation_id")
     await _db.clone_conversations.create_index("conversation_id", unique=True)
     await _db.files.create_index("storage_path", unique=True)
+    await _db.smart_reply_sessions.create_index("session_id", unique=True)
+    await _db.smart_reply_sessions.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.smart_reply_favorites.create_index("favorite_id", unique=True)
+    await _db.smart_reply_favorites.create_index([("user_id", 1), ("created_at", -1)])
     logger.info("Startup complete: indexes ensured")
 
     # Seed system Companion clone for /mood-chat

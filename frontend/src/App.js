@@ -14,6 +14,9 @@ import MemoryManager from "./pages/MemoryManager";
 import PublicClone from "./pages/PublicClone";
 import Explore from "./pages/Explore";
 import MoodChat from "./pages/MoodChat";
+import SmartReplyStudio from "./pages/SmartReplyStudio";
+import SmartReplyHistory from "./pages/SmartReplyHistory";
+import SmartReplyFavorites from "./pages/SmartReplyFavorites";
 
 function AppRouter() {
   const location = useLocation();
@@ -30,6 +33,9 @@ function AppRouter() {
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/explore" element={<Explore />} />
       <Route path="/mood-chat" element={<MoodChat />} />
+      <Route path="/smart-reply" element={<SmartReplyStudio />} />
+      <Route path="/smart-reply/history" element={<SmartReplyHistory />} />
+      <Route path="/smart-reply/favorites" element={<SmartReplyFavorites />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/edit" element={<CloneEditor />} />
