@@ -29,6 +29,7 @@ function AppRouter() {
       <Route path="/register" element={<Register />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/explore" element={<Explore />} />
+      <Route path="/mood-chat" element={<MoodChat />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/edit" element={<CloneEditor />} />
