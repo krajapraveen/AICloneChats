@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 import bcrypt
 import requests
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from db import db
 from models import RegisterRequest, LoginRequest, GoogleCallbackRequest, User, now_iso
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 SESSION_TTL_DAYS = 7
@@ -223,8 +225,26 @@ async def google_callback(payload: GoogleCallbackRequest, request: Request, resp
         raise HTTPException(status_code=502, detail="Google token endpoint unreachable")
 
     if token_resp.status_code != 200:
-        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason=f"token_exchange_failed_{token_resp.status_code}")
-        raise HTTPException(status_code=401, detail="Google token exchange failed")
+        # Surface the actual Google error so debugging from logs/UI is possible.
+        # Google returns JSON like {"error": "redirect_uri_mismatch", "error_description": "..."}
+        try:
+            err_body = token_resp.json()
+            err_code = err_body.get("error", f"http_{token_resp.status_code}")
+            err_desc = err_body.get("error_description", "")
+        except Exception:
+            err_code = f"http_{token_resp.status_code}"
+            err_desc = token_resp.text[:200] if token_resp.text else ""
+        await record_login_event(
+            request,
+            event_type="login_failed",
+            login_method="google_oauth",
+            failure_reason=f"token_exchange_failed:{err_code}",
+        )
+        logger.warning("Google token exchange failed: %s | %s | redirect_uri=%s", err_code, err_desc, payload.redirect_uri)
+        raise HTTPException(
+            status_code=401,
+            detail=f"Google sign-in rejected: {err_code}{(' — ' + err_desc) if err_desc else ''}",
+        )
 
     tokens = token_resp.json()
     id_token_str = tokens.get("id_token")

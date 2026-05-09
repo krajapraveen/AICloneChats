@@ -33,13 +33,28 @@ function ActiveGoogleButton({ label, testId, onSuccess }) {
         await refresh();
         if (onSuccess) onSuccess(data); else navigate("/dashboard");
       } catch (err) {
-        const detail = err?.response?.data?.detail || "Google sign-in failed";
-        toast.error(typeof detail === "string" ? detail : "Google sign-in failed");
+        // Surface the most informative message we can build from the error
+        const status = err?.response?.status;
+        const rawDetail = err?.response?.data?.detail;
+        const detailStr =
+          typeof rawDetail === "string"
+            ? rawDetail
+            : rawDetail
+              ? JSON.stringify(rawDetail)
+              : err?.message || "no response from server";
+        // Visible, copy-pasteable diagnostic so prod issues are debuggable from a screenshot
+        // eslint-disable-next-line no-console
+        console.error("[Google sign-in] callback failed", { status, detail: rawDetail, error: err });
+        toast.error(`Google sign-in failed${status ? ` (${status})` : ""}: ${detailStr}`);
       } finally {
         setLoading(false);
       }
     },
-    onError: () => toast.error("Google sign-in cancelled or failed"),
+    onError: (err) => {
+      // eslint-disable-next-line no-console
+      console.error("[Google sign-in] popup error", err);
+      toast.error(`Google sign-in cancelled or failed: ${err?.error || "unknown"}`);
+    },
   });
 
   return (
