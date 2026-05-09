@@ -23,6 +23,7 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog
 - **2026-02-09** — P0 fix: registered `/mood-chat` route in `App.js` before `/:slug` catch-all so the standalone Mood-Based Chat page renders (was previously hijacked by `PublicClone`). Verified end-to-end via frontend testing agent (iteration_5).
+- **2026-02-09** — Smart Reply MVP shipped as **third product** on the same site (alongside AI Clone Chat and Mood-Based Chat). Backend: `/api/smart-reply/{generate,history,subscription/status,track,{id}/favorite,favorites,favorites/{id}}` powered by Claude Sonnet 4.5. Frontend: `/smart-reply` (Studio), `/smart-reply/history`, `/smart-reply/favorites`, `UsageLimitModal`. Free tier 5/day → 402 `usage_limit_reached` (counter consumed only on successful generation). 3 reply cards per generation: `safe/short`, `warm/medium`, `confident/long` with `risk_level` and `why_it_works`. 4 modes (dating/professional/apology/negotiation), 6 tones. All analytics events tagged `metadata.experience_variant="smart_reply_v1"` so funnels never merge with CloneMe/Mood-Chat. Payment gateway intentionally NOT integrated — placeholder Upgrade CTA only. 25/25 backend tests + full frontend flow verified (iteration_6).
 
 ## What's Implemented (2026-02 — MVP + Theme + Share + Discovery + Mood v1)
 ### Backend

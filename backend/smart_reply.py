@@ -69,8 +69,8 @@ class GenerateResponse(BaseModel):
 
 
 # -------------- Usage Gate --------------
-async def _ensure_usage(user_id: str) -> dict:
-    """Return updated user dict. Raise 402 when free cap is exhausted."""
+async def _check_usage(user_id: str) -> dict:
+    """Verify user is allowed to generate. Raise 402 if exhausted. Does NOT increment."""
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -83,26 +83,30 @@ async def _ensure_usage(user_id: str) -> dict:
     count = int(user.get("daily_reply_count", 0)) if last_day == today else 0
 
     if not is_pro and count >= FREE_DAILY_LIMIT:
-        # emit usage_limit_hit so funnel can see friction
         await _emit(user_id, "smart_reply_usage_limit_hit", {"daily_count": count})
         raise HTTPException(
             status_code=402,
             detail={"code": "usage_limit_reached", "limit": FREE_DAILY_LIMIT, "remaining": 0},
         )
 
-    # increment
+    user["_today"] = today
+    user["_current_count"] = count
+    user["subscription_status"] = sub_status
+    return user
+
+
+async def _consume_usage(user_id: str, today: str, current_count: int) -> int:
+    """Increment daily count. Called only after a successful generation."""
+    new_count = current_count + 1
     await db.users.update_one(
         {"user_id": user_id},
         {"$set": {
-            "daily_reply_count": count + 1,
+            "daily_reply_count": new_count,
             "daily_reply_day": today,
             "updated_at": now_iso(),
         }},
     )
-    user["daily_reply_count"] = count + 1
-    user["daily_reply_day"] = today
-    user["subscription_status"] = sub_status
-    return user
+    return new_count
 
 
 async def _emit(user_id: Optional[str], event_name: str, props: Optional[dict] = None):
@@ -239,8 +243,10 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
 
     await _emit(user_id, "smart_reply_generate_clicked", {"mode": payload.mode, "tone": payload.desired_tone})
 
-    user = await _ensure_usage(user_id)
+    user = await _check_usage(user_id)
     is_pro = user.get("subscription_status") == "pro"
+    today = user["_today"]
+    prev_count = user["_current_count"]
 
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="LLM not configured")
@@ -286,9 +292,9 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
     }
     await db.smart_reply_sessions.insert_one(dict(doc))
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    used = int(user.get("daily_reply_count", 0)) if user.get("daily_reply_day") == today else 0
-    remaining = -1 if is_pro else max(0, FREE_DAILY_LIMIT - used)
+    # Only consume quota on successful generation + parse
+    new_count = await _consume_usage(user_id, today, prev_count) if not is_pro else prev_count
+    remaining = -1 if is_pro else max(0, FREE_DAILY_LIMIT - new_count)
 
     await _emit(user_id, "smart_reply_generated", {
         "mode": payload.mode,
