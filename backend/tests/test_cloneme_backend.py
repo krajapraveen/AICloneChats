@@ -384,6 +384,108 @@ class TestAnalytics:
         assert r.json() == {"events": {}}
 
 
+# ---------------- Stats (NEW) ----------------
+class TestStats:
+    def test_stats_by_slug(self, state):
+        r = requests.get(f"{API}/analytics/stats/{SLUG}", timeout=15)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        for k in ("share_count", "message_count", "visitor_count"):
+            assert k in d
+            assert isinstance(d[k], int)
+        # TestAnalytics posted at least 3 share events for this clone
+        assert d["share_count"] >= 3
+        # TestChat created >=4 messages on this clone
+        assert d["message_count"] >= 4
+        # >=1 distinct visitor_id
+        assert d["visitor_count"] >= 1
+
+    def test_stats_by_clone_id(self, state):
+        r = requests.get(f"{API}/analytics/stats/{state['clone_id']}", timeout=15)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["share_count"] >= 3
+
+    def test_stats_unknown_404(self):
+        r = requests.get(f"{API}/analytics/stats/no-such-slug-xyz-{TS}", timeout=15)
+        assert r.status_code == 404
+
+
+# ---------------- Explore (NEW) ----------------
+class TestExplore:
+    def test_explore_default_trending(self, state):
+        r = requests.get(f"{API}/explore", timeout=20)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["category"] == "trending"
+        assert isinstance(d["total"], int)
+        assert isinstance(d["clones"], list)
+        # Our public clone must be present
+        ids = [c["clone_id"] for c in d["clones"]]
+        assert state["clone_id"] in ids
+        c = next(x for x in d["clones"] if x["clone_id"] == state["clone_id"])
+        for k in ("share_count", "message_count", "visitor_count", "score", "primary_mood", "mood_counts", "slug", "display_name"):
+            assert k in c
+        # Score formula
+        expected = round(c["share_count"] * 0.5 + c["message_count"] * 0.3 + c["visitor_count"] * 0.2, 2)
+        assert abs(c["score"] - expected) < 0.01
+        # Sorted by score desc
+        scores = [x["score"] for x in d["clones"]]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_explore_excludes_private(self, state):
+        r = requests.get(f"{API}/explore?category=trending&limit=50", timeout=20)
+        assert r.status_code == 200
+        ids = [c["clone_id"] for c in r.json()["clones"]]
+        assert state.get("priv_clone_id") not in ids
+
+    def test_explore_funny_category(self, state):
+        # TestAnalytics posted one share_card_downloaded with metadata.mood=funny for clone_id
+        r = requests.get(f"{API}/explore?category=funny&limit=50", timeout=20)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["category"] == "funny"
+        ids = [c["clone_id"] for c in d["clones"]]
+        assert state["clone_id"] in ids
+        for c in d["clones"]:
+            assert c["mood_counts"].get("funny", 0) > 0
+
+    def test_explore_savage_filter_excludes_no_mood(self, state):
+        r = requests.get(f"{API}/explore?category=savage&limit=50", timeout=20)
+        assert r.status_code == 200
+        # Our test clone has only funny mood share — should NOT appear under savage
+        ids = [c["clone_id"] for c in r.json()["clones"]]
+        # Either absent or has savage mood >0
+        for c in r.json()["clones"]:
+            assert c["mood_counts"].get("savage", 0) > 0
+
+    def test_explore_active_sort(self):
+        r = requests.get(f"{API}/explore?category=active&limit=50", timeout=20)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["category"] == "active"
+        msgs = [c["message_count"] for c in d["clones"]]
+        assert msgs == sorted(msgs, reverse=True)
+
+    def test_explore_recent_sort(self):
+        r = requests.get(f"{API}/explore?category=recent&limit=50", timeout=20)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["category"] == "recent"
+        # created_at desc
+        ts = [c.get("created_at") or "" for c in d["clones"]]
+        assert ts == sorted(ts, reverse=True)
+
+    def test_explore_limit_param(self):
+        r = requests.get(f"{API}/explore?category=trending&limit=2", timeout=20)
+        assert r.status_code == 200
+        assert len(r.json()["clones"]) <= 2
+
+    def test_explore_invalid_limit(self):
+        r = requests.get(f"{API}/explore?limit=999", timeout=20)
+        assert r.status_code == 422
+
+
 # ---------------- Cleanup / Cascade ----------------
 class TestZCleanup:
     def test_delete_clone_cascade(self, state):

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
+import { formatCount } from "../lib/format";
 import { useAuth } from "../contexts/AuthContext";
 import Navbar from "../components/Navbar";
 
@@ -9,6 +10,7 @@ export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [clones, setClones] = useState([]);
+  const [stats, setStats] = useState({}); // clone_id -> stats
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,6 +23,15 @@ export default function Dashboard() {
       try {
         const { data } = await api.get("/clones/mine");
         setClones(data);
+        // fetch stats per clone in parallel
+        const results = await Promise.all(
+          (data || []).map((c) =>
+            api.get(`/analytics/stats/${c.slug}`).then((r) => [c.clone_id, r.data]).catch(() => [c.clone_id, null])
+          )
+        );
+        const map = {};
+        results.forEach(([id, s]) => { if (s) map[id] = s; });
+        setStats(map);
       } catch (e) {
         console.error(e);
       } finally {
@@ -86,7 +97,16 @@ export default function Dashboard() {
                   </span>
                 </div>
 
-                {c.bio && <p className="text-sm font-medium text-ink/70 mb-4 line-clamp-2">{c.bio}</p>}
+                {c.bio && <p className="text-sm font-medium text-ink/70 mb-3 line-clamp-2">{c.bio}</p>}
+
+                {/* Stats row */}
+                {stats[c.clone_id] && (stats[c.clone_id].share_count > 0 || stats[c.clone_id].message_count > 0) && (
+                  <div className="flex items-center gap-3 mb-4 text-[11px] font-mono uppercase tracking-wider text-muted" data-testid={`stats-${c.slug}`}>
+                    <span title={`${stats[c.clone_id].share_count} shares`}>✨ {formatCount(stats[c.clone_id].share_count)}</span>
+                    <span title={`${stats[c.clone_id].message_count} chats`}>💬 {formatCount(stats[c.clone_id].message_count)}</span>
+                    <span title={`${stats[c.clone_id].visitor_count} visitors`}>● {formatCount(stats[c.clone_id].visitor_count)}</span>
+                  </div>
+                )}
 
                 <div className="mt-auto grid grid-cols-2 gap-2">
                   <Link to={`/clones/${c.clone_id}/edit`} className="btn-ghost text-xs py-2" data-testid={`edit-clone-${c.slug}`}>Edit</Link>

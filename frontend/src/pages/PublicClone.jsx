@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
+import { formatCount } from "../lib/format";
 import MarqueeDisclaimer from "../components/MarqueeDisclaimer";
 import ChatBubble from "../components/ChatBubble";
 import ShareCardModal from "../components/ShareCardModal";
@@ -20,6 +21,7 @@ const SHARE_WORTHY_THRESHOLD = 80;
 export default function PublicClone() {
   const { slug } = useParams();
   const [clone, setClone] = useState(null);
+  const [stats, setStats] = useState({ share_count: 0, message_count: 0, visitor_count: 0 });
   const [error, setError] = useState("");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -36,6 +38,7 @@ export default function PublicClone() {
       try {
         const { data } = await api.get(`/clones/by-slug/${slug}`);
         setClone(data);
+        api.get(`/analytics/stats/${slug}`).then((r) => setStats(r.data)).catch(() => {});
       } catch (e) {
         setError(e?.response?.data?.detail || "Clone not found");
       }
@@ -87,6 +90,8 @@ export default function PublicClone() {
 
   const openShareCard = (msg) => {
     setShareTarget({ reply: msg.text, question: msg.prevQuestion });
+    // optimistic share count bump
+    setStats((s) => ({ ...s, share_count: (s.share_count || 0) + 1 }));
   };
 
   if (error) {
@@ -131,9 +136,20 @@ export default function PublicClone() {
               <div className="flex items-center gap-2 flex-wrap mb-1">
                 <h1 className="heading-display text-3xl truncate">{clone.display_name}</h1>
                 <span className="tag tag-amber">AI CLONE</span>
+                {stats.share_count > 0 && (
+                  <span className="tag tag-violet" data-testid="header-share-counter" title={`${stats.share_count} shares`}>
+                    ✨ {formatCount(stats.share_count)} shares
+                  </span>
+                )}
               </div>
               <p className="font-mono text-xs text-muted">cloneme.ai/{clone.slug}</p>
               {clone.bio && <p className="mt-2 text-sm font-medium text-ink/80 leading-relaxed">{clone.bio}</p>}
+              {(stats.message_count > 0 || stats.visitor_count > 0) && (
+                <div className="mt-3 flex items-center gap-4 text-[11px] font-mono uppercase tracking-wider text-muted" data-testid="header-stats">
+                  <span>💬 {formatCount(stats.message_count)} chats</span>
+                  <span>● {formatCount(stats.visitor_count)} visitors</span>
+                </div>
+              )}
             </div>
             <button onClick={copyShare} className="btn-ghost text-xs hidden md:inline-flex" data-testid="share-btn">Share ↗</button>
           </div>

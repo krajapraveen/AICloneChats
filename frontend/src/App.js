@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import CloneEditor from "./pages/CloneEditor";
 import MemoryManager from "./pages/MemoryManager";
 import PublicClone from "./pages/PublicClone";
+import Explore from "./pages/Explore";
 
 function AppRouter() {
   const location = useLocation();
@@ -26,6 +27,7 @@ function AppRouter() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/explore" element={<Explore />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/edit" element={<CloneEditor />} />
