@@ -1,0 +1,79 @@
+{
+  "project_name": "CloneMe AI",
+  "theme": "Light",
+  "archetype": "Archetype 3 (Pastel & Soft) + Neo-Brutalist E1 Twist",
+  "design_philosophy": "Emotional, viral, shareable. Playful but premium. We use a Neo-Brutalist visual language—soft, warm pastel backgrounds contrasted with hard 2px black borders and solid black drop shadows. This prevents the 'childish' feel of pastels and adds a creator-economy, edgy vibe.",
+  "colors": {
+    "background": "#FDFBF7",
+    "surface": "#FFFFFF",
+    "primary": "#FFE66D",
+    "secondary": "#C8B6FF",
+    "accent_1": "#A0E8AF",
+    "accent_2": "#FF9CEE",
+    "text_main": "#0A0A0A",
+    "text_muted": "#555555",
+    "border": "#0A0A0A"
+  },
+  "typography": {
+    "heading_font": "Cabinet Grotesk, Outfit, sans-serif",
+    "body_font": "Manrope, sans-serif",
+    "h1": "text-5xl sm:text-6xl+ font-black tracking-tighter text-[#0A0A0A]",
+    "h2": "text-3xl sm:text-4xl font-bold tracking-tight text-[#0A0A0A]",
+    "h3": "text-xl sm:text-2xl font-bold text-[#0A0A0A]",
+    "body": "text-base font-medium leading-relaxed text-[#0A0A0A]",
+    "label": "text-xs font-bold uppercase tracking-[0.2em] text-[#0A0A0A]"
+  },
+  "spacing_and_layout": {
+    "container_padding": "p-6 md:p-12",
+    "bento_grid": "grid grid-cols-1 md:grid-cols-4 gap-6",
+    "card": "bg-white border-2 border-[#0A0A0A] rounded-2xl p-6 shadow-[6px_6px_0px_#0A0A0A] transition-transform hover:-translate-y-1 hover:shadow-[8px_8px_0px_#0A0A0A]"
+  },
+  "components": {
+    "button_primary": "bg-[#FFE66D] text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-full px-8 py-3 font-bold text-lg shadow-[4px_4px_0px_#0A0A0A] hover:bg-[#A0E8AF] transition-all hover:translate-y-[2px] hover:shadow-[2px_2px_0px_#0A0A0A] active:translate-y-[4px] active:shadow-none",
+    "button_secondary": "bg-white text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-full px-6 py-2 font-bold shadow-[4px_4px_0px_#0A0A0A] hover:bg-[#C8B6FF] transition-all",
+    "input": "w-full bg-white border-2 border-[#0A0A0A] rounded-xl px-4 py-3 text-base font-medium placeholder:text-gray-400 focus:outline-none focus:ring-0 focus:border-[#C8B6FF] shadow-[4px_4px_0px_#0A0A0A]",
+    "slider_container": "relative w-full h-4 bg-[#FDFBF7] border-2 border-[#0A0A0A] rounded-full overflow-hidden shadow-[2px_2px_0px_#0A0A0A]",
+    "slider_thumb": "absolute top-1/2 -translate-y-1/2 w-8 h-8 bg-[#FFE66D] border-2 border-[#0A0A0A] rounded-full shadow-[2px_2px_0px_#0A0A0A] cursor-pointer",
+    "chat_bubble_user": "bg-[#C8B6FF] text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-2xl rounded-tr-none px-5 py-3 shadow-[4px_4px_0px_#0A0A0A] max-w-[80%]",
+    "chat_bubble_ai": "bg-white text-[#0A0A0A] border-2 border-[#0A0A0A] rounded-2xl rounded-tl-none px-5 py-3 shadow-[4px_4px_0px_#0A0A0A] max-w-[80%]",
+    "marquee": "bg-[#0A0A0A] text-[#FFE66D] py-3 font-mono text-sm uppercase tracking-widest flex overflow-hidden whitespace-nowrap"
+  },
+  "media": {
+    "hero_image": {
+      "url": "https://images.unsplash.com/photo-1706720095318-e3538cae10bf?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzV8MHwxfHNlYXJjaHwyfHxuZW9uJTIwYWJzdHJhY3QlMjAzZCUyMHNoYXBlfGVufDB8fHx8MTc3ODMwNzgxOHww&ixlib=rb-4.1.0&q=85",
+      "description": "Abstract floating shape used as a background accent behind the main hero text."
+    },
+    "avatar_1": {
+      "url": "https://images.unsplash.com/photo-1772371272179-3ecc656fc677?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHw0fHwzZCUyMGN1dGUlMjBjaGFyYWN0ZXIlMjBhdmF0YXJ8ZW58MHx8fHwxNzc4MzA3ODE4fDA&ixlib=rb-4.1.0&q=85",
+      "description": "3D Avatar character for the AI clone example in the hero or dashboard."
+    },
+    "avatar_2": {
+      "url": "https://images.unsplash.com/photo-1772371272208-412168748f2a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwyfHwzZCUyMGN1dGUlMjBjaGFyYWN0ZXIlMjBhdmF0YXJ8ZW58MHx8fHwxNzc4MzA3ODE4fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Alternate 3D Avatar for the public clone chat page."
+    },
+    "lifestyle_shot": {
+      "url": "https://images.unsplash.com/photo-1758273707380-c2a958004cd1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwyfHx5b3VuZyUyMHBlcnNvbiUyMHRleHRpbmclMjBzbWlsaW5nfGVufDB8fHx8MTc3ODMwNzc5OHww&ixlib=rb-4.1.0&q=85",
+      "description": "Image of a user smiling while texting, used in the social proof / 'how it works' section of the landing page."
+    }
+  },
+  "animation": {
+    "hover": "transform transition-transform duration-200 ease-out",
+    "active": "scale-95 transition-transform",
+    "marquee_speed": "animate-marquee linear infinite duration-20000"
+  },
+  "accessibility": {
+    "focus_ring": "focus-visible:ring-4 focus-visible:ring-[#FF9CEE] focus-visible:ring-offset-2",
+    "contrast": "Black text (#0A0A0A) on pastel backgrounds adheres to APCA contrast standards."
+  },
+  "instructions_to_main_agent": [
+    "Use raw HTML/Tailwind for marketing and public pages to achieve the exact layout and Neo-Brutalist borders. Use Shadcn for complex forms in the setup wizard, but heavily override styles to include 'border-2 border-black' and 'shadow-[4px_4px_0px_#0A0A0A]'.",
+    "For Typography, import 'Outfit' and 'Manrope' from Google Fonts in index.html, or use 'Cabinet Grotesk' via Fontshare API if you prefer.",
+    "Do NOT use 'Inter', 'Roboto', 'Open Sans', 'Lato', or 'Syne' for Headings. Headings must be punchy and tight.",
+    "Implement the Marquee (The 'Kinetic Texture'): On the public clone page, use `react-fast-marquee` to display a continuous black banner with yellow text: '⚠️ THIS IS AN AI CLONE • NOT THE REAL PERSON ⚠️'.",
+    "For the Clone Setup Wizard, design it as a step-by-step fluid UI. The Personality Sliders should be customized standard ranges that visually look like tactile, chunky switches.",
+    "Dashboard Layout: Use Mode A (The Tetris Grid). Mix sizes like 'col-span-full md:col-span-2 row-span-2' for primary analytics, and 'col-span-1' for individual memory blocks.",
+    "Ensure the hero section on the landing page does NOT use a 50% dark overlay. Keep the background clean and light, and use the 3D abstract shape/avatar images dynamically placed or floating around the bold text.",
+    "All interactive and key informational elements MUST include a 'data-testid' attribute (e.g., data-testid='create-clone-cta').",
+    "Icons: Use '@phosphor-icons/react' in duotone weight to match the playful premium vibe."
+  ]
+}
