@@ -21,13 +21,16 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 2. **Casual user** — wants a fun, shareable AI twin to send to friends
 3. **Visitor** — chats with a clone via shared link, no account required
 
-## What's Implemented (2026-02 — Initial MVP)
+## What's Implemented (2026-02 — MVP + Theme + Share + Discovery v1)
 ### Backend
 - `/api/auth/register|login|me|logout|google/session` — full auth (email + Google)
 - `/api/clones` CRUD + `/check-slug` + `/by-slug/{slug}` (public, respects visibility)
 - `/api/clones/{id}/memories` CRUD with importance, visibility, can_use_for_reply
 - `/api/clones/{slug}/chat` — public chat endpoint (no auth) with Claude Sonnet 4.5, dynamic prompt builder including identity + personality + memories + last 20 msgs, conversation persistence, AI-disclosure built into system prompt
 - `/api/storage/upload-avatar` (auth) + `/api/storage/files/{path}` (public read)
+- `/api/analytics/event` (POST, optional auth) + `/api/analytics/clone/{clone_id}` (GET, owner only)
+- **NEW** `/api/analytics/stats/{slug_or_clone_id}` — public, returns `{share_count, message_count, visitor_count}`
+- **NEW** `/api/explore?category={trending|funny|deep|savage|quote|active|recent}&limit=20` — aggregation pipeline. Score = shares×0.5 + messages×0.3 + unique_visitors×0.2. Mood categories filter on metadata.mood from share_card events. Public+non-paused only.
 - Cascade delete for clones (memories, messages, conversations)
 - Slug reservation list (api, login, dashboard, etc.)
 - MongoDB indexes on email, user_id, session_token, slug, clone_id, etc.
