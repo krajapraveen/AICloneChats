@@ -1,10 +1,40 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
 import { formatCount } from "../lib/format";
 import { useAuth } from "../contexts/AuthContext";
 import Navbar from "../components/Navbar";
+
+function StatTile({ label, value, tone, testId }) {
+  return (
+    <div className={`brutal-card p-4 sm:p-5 ${tone || ""}`} data-testid={testId}>
+      <p className="label-brutal mb-1.5">{label}</p>
+      <p className="heading-display text-2xl sm:text-3xl">{value ?? "—"}</p>
+    </div>
+  );
+}
+
+function WorkspaceCard({ tone, kicker, title, body, primary, secondary, icon, testId }) {
+  return (
+    <div className="brutal-card p-6 flex flex-col h-full group hover:translate-y-[-2px] transition-transform" data-testid={testId}>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <span className={`tag ${tone}`}>{kicker}</span>
+        <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-base">
+          {icon}
+        </div>
+      </div>
+      <h3 className="heading-display text-2xl mb-2">{title}</h3>
+      <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5 flex-1">{body}</p>
+      <div className="flex flex-wrap gap-2">
+        <Link to={primary.to} className="btn-brutal text-sm" data-testid={`${testId}-primary`}>{primary.label}</Link>
+        {secondary && (
+          <Link to={secondary.to} className="btn-ghost text-sm" data-testid={`${testId}-secondary`}>{secondary.label}</Link>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
@@ -23,7 +53,6 @@ export default function Dashboard() {
       try {
         const { data } = await api.get("/clones/mine");
         setClones(data);
-        // fetch stats per clone in parallel
         const results = await Promise.all(
           (data || []).map((c) =>
             api.get(`/analytics/stats/${c.slug}`).then((r) => [c.clone_id, r.data]).catch(() => [c.clone_id, null])
@@ -46,78 +75,189 @@ export default function Dashboard() {
     toast.success("Share link copied!");
   };
 
+  // Aggregate stats across all clones for the insights strip
+  const totals = useMemo(() => {
+    const cloneIds = Object.keys(stats);
+    let messages = 0, visitors = 0, shares = 0;
+    cloneIds.forEach((id) => {
+      messages += stats[id]?.message_count || 0;
+      visitors += stats[id]?.visitor_count || 0;
+      shares += stats[id]?.share_count || 0;
+    });
+    const publicCount = (clones || []).filter((c) => c.visibility === "public").length;
+    return {
+      total: clones.length,
+      publicCount,
+      messages,
+      visitors,
+      shares,
+    };
+  }, [clones, stats]);
+
   if (authLoading || !user) {
-    return <div className="min-h-screen bg-cream flex items-center justify-center font-display">Loading…</div>;
+    return (
+      <div className="page-bg min-h-screen flex items-center justify-center">
+        <div className="text-muted font-mono text-sm">loading…</div>
+      </div>
+    );
   }
 
+  const firstName = user.name?.split(" ")[0] || "you";
+  const hasClones = clones.length > 0;
+
   return (
-    <div className="min-h-screen bg-cream">
+    <div className="page-bg min-h-screen min-h-[100dvh]">
       <Navbar />
-      <div className="max-w-6xl mx-auto px-4 sm:px-5 md:px-8 py-8 md:py-14" data-testid="dashboard-page">
-        <div className="flex items-end justify-between gap-4 flex-wrap mb-10">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-widest text-muted mb-2">CLONE HQ</p>
-            <h1 className="heading-display text-4xl md:text-5xl">Hey {user.name?.split(" ")[0] || "you"}.</h1>
-            <p className="mt-2 font-medium text-muted">Your AI selves, all in one place.</p>
-          </div>
-          <Link to="/clones/new" className="btn-brutal" data-testid="dashboard-create-clone-btn">
-            + New clone
-          </Link>
-        </div>
+      <div className="orb orb-amber w-[420px] h-[420px] -top-20 -right-32 opacity-30 animate-orb" aria-hidden />
+      <div className="orb orb-violet w-[380px] h-[380px] top-72 -left-32 opacity-20 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
 
-        {loading ? (
-          <p className="font-display text-ink">Loading your clones…</p>
-        ) : clones.length === 0 ? (
-          <div className="glass-card p-10 text-center" data-testid="empty-state">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-amber to-violet mb-5 shadow-glow-amber">
-              <span className="text-3xl">✨</span>
+      <div className="max-w-6xl mx-auto px-4 sm:px-5 md:px-8 py-6 sm:py-10 relative" data-testid="dashboard-page">
+        {/* HERO */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-10" data-testid="dashboard-hero">
+          <div className="lg:col-span-7 glass-card p-6 sm:p-8 flex flex-col justify-between relative overflow-hidden">
+            <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-amber/15 blur-3xl pointer-events-none" />
+            <div className="relative">
+              <p className="label-brutal mb-2">CLONE HQ · WORKSPACE</p>
+              <h1 className="heading-display text-3xl sm:text-4xl md:text-5xl mb-3">Welcome back, {firstName}.</h1>
+              <p className="text-sm sm:text-base font-medium text-ink/75 max-w-lg leading-relaxed">
+                Create AI personalities, explore adaptive conversations, and craft smart replies — all in one workspace.
+              </p>
             </div>
-            <h2 className="heading-display text-3xl mb-2">No clones yet.</h2>
-            <p className="text-muted font-medium mb-6">Build your first AI version. Takes 3 minutes.</p>
-            <Link to="/clones/new" className="btn-brutal" data-testid="empty-create-btn">Create your clone</Link>
+            <div className="flex flex-wrap gap-2 mt-6 relative">
+              <Link to="/clones/new" className="btn-brutal text-sm" data-testid="hero-action-create-clone">+ Create AI Clone</Link>
+              <Link to="/mood-chat" className="btn-violet text-sm" data-testid="hero-action-mood-chat">Mood-Based Chat</Link>
+              <Link to="/smart-reply" className="btn-ghost text-sm" data-testid="hero-action-smart-reply">Smart Reply</Link>
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="clones-grid">
-            {clones.map((c) => (
-              <div key={c.clone_id} className="brutal-card p-6 flex flex-col" data-testid={`clone-card-${c.slug}`}>
-                <div className="flex items-start gap-3 mb-4">
-                  {c.avatar_url ? (
-                    <img src={c.avatar_url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${c.avatar_url}` : c.avatar_url} alt={c.display_name} className="w-14 h-14 rounded-full border border-white/15 object-cover" />
-                  ) : (
-                    <div className="w-14 h-14 rounded-full bg-gradient-to-br from-violet to-amber flex items-center justify-center font-display font-black text-bg text-xl">
-                      {c.display_name?.[0]?.toUpperCase() || "C"}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-display font-bold text-xl truncate text-ink">{c.display_name}</h3>
-                    <p className="font-mono text-xs text-muted truncate">/{c.slug}</p>
-                  </div>
-                  <span className={`tag ${c.visibility === "public" ? "tag-emerald" : c.visibility === "private" ? "tag-rose" : "tag-violet"}`}>
-                    {c.visibility}
-                  </span>
+
+          {/* Stat tiles */}
+          <div className="lg:col-span-5 grid grid-cols-2 gap-3" data-testid="dashboard-stats-grid">
+            <StatTile label="My clones" value={totals.total} testId="stat-clones-total" />
+            <StatTile label="Public" value={totals.publicCount} testId="stat-clones-public" />
+            <StatTile label="Conversations" value={formatCount(totals.messages)} testId="stat-messages" />
+            <StatTile label="Visitors" value={formatCount(totals.visitors)} testId="stat-visitors" />
+          </div>
+        </section>
+
+        {/* WORKSPACE OVERVIEW */}
+        <section className="mb-10" data-testid="workspace-overview">
+          <div className="flex items-end justify-between gap-3 mb-4">
+            <div>
+              <p className="label-brutal mb-1">Tools in your workspace</p>
+              <h2 className="heading-display text-2xl sm:text-3xl">Three ways to talk to AI.</h2>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <WorkspaceCard
+              testId="workspace-card-clone"
+              tone="tag-amber"
+              kicker="PERSONALITY-FIRST"
+              icon="◉"
+              title="AI Clone Chat"
+              body="Build and chat with AI personalities that respond with custom tone, memory, and behavior. Your clone, your rules."
+              primary={{ to: hasClones ? "/explore" : "/clones/new", label: hasClones ? "Explore clones" : "Create clone" }}
+              secondary={{ to: "/clones/new", label: "New clone" }}
+            />
+            <WorkspaceCard
+              testId="workspace-card-mood"
+              tone="tag-violet"
+              kicker="EMOTION-FIRST"
+              icon="◐"
+              title="Mood-Based Chat"
+              body="Emotionally adaptive AI that adjusts tone based on how you're feeling. No setup. Just type."
+              primary={{ to: "/mood-chat", label: "Start mood chat" }}
+            />
+            <WorkspaceCard
+              testId="workspace-card-smart-reply"
+              tone="tag-emerald"
+              kicker="UTILITY-FIRST"
+              icon="✎"
+              title="Smart Reply"
+              body="Generate copy-ready replies for dating, professional, apology, and negotiation messages. Three tones, one tap to copy."
+              primary={{ to: "/smart-reply", label: "Open Smart Reply" }}
+              secondary={{ to: "/smart-reply/favorites", label: "Favorites" }}
+            />
+          </div>
+        </section>
+
+        {/* MY CLONES */}
+        <section data-testid="my-clones-section">
+          <div className="flex items-end justify-between gap-3 mb-4 flex-wrap">
+            <div>
+              <p className="label-brutal mb-1">Your library</p>
+              <h2 className="heading-display text-2xl sm:text-3xl">My AI Clones</h2>
+              <p className="text-sm font-medium text-muted mt-1">Your personalized AI personalities and public experiences.</p>
+            </div>
+            <Link to="/clones/new" className="btn-brutal text-sm" data-testid="my-clones-new-btn">+ New clone</Link>
+          </div>
+
+          {loading ? (
+            <div className="glass-card p-10 text-center text-muted font-mono text-sm">Loading your clones…</div>
+          ) : !hasClones ? (
+            <div className="glass-card p-8 sm:p-10 text-center relative overflow-hidden" data-testid="empty-state">
+              <div className="absolute inset-0 pointer-events-none opacity-50">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-72 h-72 rounded-full bg-violet/10 blur-3xl" />
+              </div>
+              <div className="relative">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-amber to-violet mb-5 shadow-glow-amber">
+                  <span className="text-2xl">✨</span>
                 </div>
-
-                {c.bio && <p className="text-sm font-medium text-ink/70 mb-3 line-clamp-2">{c.bio}</p>}
-
-                {/* Stats row */}
-                {stats[c.clone_id] && (stats[c.clone_id].share_count > 0 || stats[c.clone_id].message_count > 0) && (
-                  <div className="flex items-center gap-3 mb-4 text-[11px] font-mono uppercase tracking-wider text-muted" data-testid={`stats-${c.slug}`}>
-                    <span title={`${stats[c.clone_id].share_count} shares`}>✨ {formatCount(stats[c.clone_id].share_count)}</span>
-                    <span title={`${stats[c.clone_id].message_count} chats`}>💬 {formatCount(stats[c.clone_id].message_count)}</span>
-                    <span title={`${stats[c.clone_id].visitor_count} visitors`}>● {formatCount(stats[c.clone_id].visitor_count)}</span>
-                  </div>
-                )}
-
-                <div className="mt-auto grid grid-cols-2 gap-2">
-                  <Link to={`/clones/${c.clone_id}/edit`} className="btn-ghost text-xs py-2" data-testid={`edit-clone-${c.slug}`}>Edit</Link>
-                  <Link to={`/clones/${c.clone_id}/memories`} className="btn-ghost text-xs py-2" data-testid={`memories-clone-${c.slug}`}>Memories</Link>
-                  <Link to={`/${c.slug}`} className="btn-ghost text-xs py-2 col-span-1" data-testid={`view-clone-${c.slug}`}>Public page</Link>
-                  <button onClick={() => copyShareLink(c.slug)} className="btn-brutal text-xs py-2" data-testid={`share-clone-${c.slug}`}>Copy link</button>
+                <h3 className="heading-display text-2xl sm:text-3xl mb-2">Your AI workspace is ready.</h3>
+                <p className="text-sm text-muted font-medium mb-6 max-w-md mx-auto leading-relaxed">
+                  Create your first AI personality, explore adaptive mood conversations, or generate smart replies for real-world chats.
+                </p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  <Link to="/clones/new" className="btn-brutal text-sm" data-testid="empty-create-btn">Create First Clone</Link>
+                  <Link to="/mood-chat" className="btn-violet text-sm" data-testid="empty-mood-btn">Try Mood Chat</Link>
+                  <Link to="/smart-reply" className="btn-ghost text-sm" data-testid="empty-smart-reply-btn">Try Smart Reply</Link>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="clones-grid">
+              {clones.map((c) => {
+                const s = stats[c.clone_id];
+                return (
+                  <div key={c.clone_id} className="brutal-card p-6 flex flex-col group hover:translate-y-[-2px] transition-transform" data-testid={`clone-card-${c.slug}`}>
+                    <div className="flex items-start gap-3 mb-4">
+                      {c.avatar_url ? (
+                        <img src={c.avatar_url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${c.avatar_url}` : c.avatar_url} alt={c.display_name} className="w-14 h-14 rounded-full border border-white/15 object-cover ring-2 ring-amber/20 group-hover:ring-amber/50 transition" />
+                      ) : (
+                        <div className="w-14 h-14 rounded-full bg-gradient-to-br from-violet to-amber flex items-center justify-center font-display font-black text-bg text-xl ring-2 ring-amber/20 group-hover:ring-amber/50 transition">
+                          {c.display_name?.[0]?.toUpperCase() || "C"}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-display font-bold text-xl truncate text-ink">{c.display_name}</h3>
+                        <p className="font-mono text-xs text-muted truncate">aiclonechats.com/{c.slug}</p>
+                      </div>
+                      <span className={`tag ${c.visibility === "public" ? "tag-emerald" : c.visibility === "private" ? "tag-rose" : "tag-violet"}`}>
+                        {c.visibility}
+                      </span>
+                    </div>
+
+                    {c.bio && <p className="text-sm font-medium text-ink/70 mb-3 line-clamp-2 leading-relaxed">{c.bio}</p>}
+
+                    {s && (s.share_count > 0 || s.message_count > 0 || s.visitor_count > 0) && (
+                      <div className="flex items-center gap-3 mb-4 text-[11px] font-mono uppercase tracking-wider text-muted" data-testid={`stats-${c.slug}`}>
+                        <span title={`${s.share_count} shares`}>✨ {formatCount(s.share_count)}</span>
+                        <span title={`${s.message_count} chats`}>💬 {formatCount(s.message_count)}</span>
+                        <span title={`${s.visitor_count} visitors`}>● {formatCount(s.visitor_count)}</span>
+                      </div>
+                    )}
+
+                    <div className="mt-auto grid grid-cols-2 gap-2">
+                      <Link to={`/clones/${c.clone_id}/edit`} className="btn-ghost text-xs py-2" data-testid={`edit-clone-${c.slug}`}>Edit</Link>
+                      <Link to={`/clones/${c.clone_id}/memories`} className="btn-ghost text-xs py-2" data-testid={`memories-clone-${c.slug}`}>Memories</Link>
+                      <Link to={`/${c.slug}`} className="btn-ghost text-xs py-2" data-testid={`view-clone-${c.slug}`}>Public page</Link>
+                      <button onClick={() => copyShareLink(c.slug)} className="btn-brutal text-xs py-2" data-testid={`share-clone-${c.slug}`}>Copy link</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
