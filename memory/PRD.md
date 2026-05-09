@@ -21,6 +21,9 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 2. **Casual user** — wants a fun, shareable AI twin to send to friends
 3. **Visitor** — chats with a clone via shared link, no account required
 
+## Changelog
+- **2026-02-09** — P0 fix: registered `/mood-chat` route in `App.js` before `/:slug` catch-all so the standalone Mood-Based Chat page renders (was previously hijacked by `PublicClone`). Verified end-to-end via frontend testing agent (iteration_5).
+
 ## What's Implemented (2026-02 — MVP + Theme + Share + Discovery + Mood v1)
 ### Backend
 - `/api/auth/register|login|me|logout|google/session` — full auth (email + Google)
