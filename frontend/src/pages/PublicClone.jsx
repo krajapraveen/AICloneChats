@@ -1,0 +1,171 @@
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
+import { toast } from "sonner";
+import api from "../lib/api";
+import MarqueeDisclaimer from "../components/MarqueeDisclaimer";
+import ChatBubble from "../components/ChatBubble";
+
+function getOrCreateVisitorId() {
+  let id = localStorage.getItem("visitor_id");
+  if (!id) {
+    id = "v_" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    localStorage.setItem("visitor_id", id);
+  }
+  return id;
+}
+
+export default function PublicClone() {
+  const { slug } = useParams();
+  const [clone, setClone] = useState(null);
+  const [error, setError] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [conversationId, setConversationId] = useState(null);
+  const [visitorName, setVisitorName] = useState(localStorage.getItem("visitor_name") || "");
+  const [showNamePrompt, setShowNamePrompt] = useState(!localStorage.getItem("visitor_name"));
+  const visitorId = useRef(getOrCreateVisitorId());
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get(`/clones/by-slug/${slug}`);
+        setClone(data);
+      } catch (e) {
+        setError(e?.response?.data?.detail || "Clone not found");
+      }
+    })();
+  }, [slug]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, sending]);
+
+  const send = async (e) => {
+    e?.preventDefault?.();
+    const text = input.trim();
+    if (!text || !clone || sending) return;
+    setInput("");
+    const newMsg = { sender: "visitor", text, _local: true, key: Date.now() };
+    setMessages((m) => [...m, newMsg]);
+    setSending(true);
+    try {
+      const { data } = await api.post(`/clones/${clone.slug}/chat`, {
+        message: text,
+        visitor_id: visitorId.current,
+        visitor_name: visitorName || null,
+        conversation_id: conversationId,
+      });
+      setConversationId(data.conversation_id);
+      setMessages((m) => [...m, { sender: "clone", text: data.reply, key: Date.now() + 1 }]);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Couldn't send");
+      setMessages((m) => [...m, { sender: "clone", text: "(Hmm, I couldn't reply just now. Try again?)", key: Date.now() + 1 }]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const submitName = (e) => {
+    e.preventDefault();
+    if (visitorName.trim()) {
+      localStorage.setItem("visitor_name", visitorName.trim());
+      setShowNamePrompt(false);
+    }
+  };
+
+  const copyShare = () => {
+    navigator.clipboard.writeText(window.location.href);
+    toast.success("Share link copied!");
+  };
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-cream flex items-center justify-center px-5">
+        <div className="brutal-card p-10 text-center max-w-md" data-testid="clone-not-found">
+          <h1 className="heading-display text-3xl mb-2">404 — no clone here</h1>
+          <p className="text-muted-foreground font-medium">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!clone) {
+    return <div className="min-h-screen bg-cream flex items-center justify-center font-display">Loading clone…</div>;
+  }
+
+  const avatarSrc = clone.avatar_url
+    ? (clone.avatar_url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${clone.avatar_url}` : clone.avatar_url)
+    : null;
+
+  return (
+    <div className="min-h-screen bg-cream flex flex-col">
+      <MarqueeDisclaimer />
+
+      <div className="max-w-3xl w-full mx-auto px-5 md:px-8 py-8 flex-1 flex flex-col" data-testid="public-clone-page">
+        {/* Header */}
+        <div className="brutal-card p-6 mb-5" data-testid="clone-header">
+          <div className="flex items-start gap-4">
+            {avatarSrc ? (
+              <img src={avatarSrc} alt={clone.display_name} className="w-20 h-20 rounded-full border-2 border-ink object-cover" />
+            ) : (
+              <div className="w-20 h-20 rounded-full border-2 border-ink bg-lilac flex items-center justify-center font-display font-black text-3xl">
+                {clone.display_name?.[0]?.toUpperCase()}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <h1 className="heading-display text-3xl truncate">{clone.display_name}</h1>
+                <span className="tag bg-bubblegum">AI CLONE</span>
+              </div>
+              <p className="font-mono text-xs text-muted-foreground">/{clone.slug}</p>
+              {clone.bio && <p className="mt-2 text-sm font-medium">{clone.bio}</p>}
+            </div>
+            <button onClick={copyShare} className="btn-ghost text-xs py-1.5 hidden md:inline-flex" data-testid="share-btn">Share ↗</button>
+          </div>
+        </div>
+
+        {/* Chat */}
+        <div className="brutal-card p-0 flex-1 flex flex-col min-h-[400px] overflow-hidden">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4" data-testid="chat-scroll">
+            {messages.length === 0 && (
+              <div className="text-center py-10">
+                <p className="font-display text-xl mb-1">Say hi to {clone.display_name}.</p>
+                <p className="text-sm text-muted-foreground font-medium">This is an AI clone — not the real {clone.display_name}.</p>
+              </div>
+            )}
+            {messages.map((m) => (
+              <ChatBubble key={m.key} sender={m.sender} text={m.text} name={m.sender === "visitor" ? (visitorName || "you") : clone.display_name} />
+            ))}
+            {sending && (
+              <div className="flex justify-start">
+                <div className="chat-bubble-clone">
+                  <span className="dot-typing" />
+                  <span className="dot-typing" />
+                  <span className="dot-typing" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {showNamePrompt ? (
+            <form onSubmit={submitName} className="border-t-2 border-ink p-4 flex gap-2 bg-lemon/40" data-testid="visitor-name-form">
+              <input className="input-brutal flex-1" required maxLength={40} value={visitorName} onChange={(e) => setVisitorName(e.target.value)} placeholder="What should they call you? (e.g. Sam)" data-testid="visitor-name-input" />
+              <button type="submit" className="btn-brutal" data-testid="visitor-name-submit">Start chatting →</button>
+            </form>
+          ) : (
+            <form onSubmit={send} className="border-t-2 border-ink p-4 flex gap-2 bg-cream" data-testid="chat-form">
+              <input className="input-brutal flex-1" required disabled={sending} maxLength={2000} value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Message ${clone.display_name}…`} data-testid="chat-input" />
+              <button type="submit" disabled={sending || !input.trim()} className="btn-brutal" data-testid="chat-send-btn">Send</button>
+            </form>
+          )}
+        </div>
+
+        <p className="text-center text-xs text-muted-foreground mt-5 font-mono uppercase tracking-widest">
+          Built on CloneMe AI · <a href="/" className="underline">Make your own →</a>
+        </p>
+      </div>
+    </div>
+  );
+}
