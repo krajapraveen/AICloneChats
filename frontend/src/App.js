@@ -17,6 +17,7 @@ import MoodChat from "./pages/MoodChat";
 import SmartReplyStudio from "./pages/SmartReplyStudio";
 import SmartReplyHistory from "./pages/SmartReplyHistory";
 import SmartReplyFavorites from "./pages/SmartReplyFavorites";
+import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
 
 function AppRouter() {
   const location = useLocation();
@@ -36,6 +37,7 @@ function AppRouter() {
       <Route path="/smart-reply" element={<SmartReplyStudio />} />
       <Route path="/smart-reply/history" element={<SmartReplyHistory />} />
       <Route path="/smart-reply/favorites" element={<SmartReplyFavorites />} />
+      <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/edit" element={<CloneEditor />} />

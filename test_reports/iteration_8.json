@@ -1,0 +1,33 @@
+{
+  "summary": "Comprehensive testing of Admin Login Intelligence module (backend + frontend). 18/18 backend pytest assertions passed (admin auto-promotion, /admin/me 200/401/403 gating, /admin/login-events pagination + filter by email/event_type/login_method, NO raw ip_address ever returned, ip_address_hash is 24-char hex, summary endpoint shape, event recording on register/login_failed/logout, UA parsing for iPhone/Chrome/Android, cf-ipcountry geo extraction). 11/11 frontend Playwright checks effectively passed: logged-out redirects to /login (visually confirmed via screenshot — wait_for_url matched), non-admin sees admin-forbidden 403 card, admin sees full page with all 6 summary cards + filter block + 34 event rows, Admin nav link gated correctly (hidden for non-admin, visible for admin), email filter narrows results correctly (34 → 11 sr-tester-only rows), no horizontal overflow at 1440x900 or 375x667, network-level confirmation that /api/admin/login-events response contains 'ip_address_hash' but NOT 'ip_address'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_login_intelligence.py",
+    "/app/test_reports/pytest/admin_login_intel.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "logout endpoint reads session_token from Cookie only (not Bearer header) — if a client only sends Bearer, the logout event won't be recorded and the session won't be deleted. Consider also accepting Authorization header in /api/auth/logout for parity with get_current_user. Not blocking (cookie+localStorage both set on login) but worth noting.",
+    "_BROWSER_PATTERNS uses 'first-match wins' iteration where Edge is checked before Chrome. Good. However Safari is checked before Firefox/Opera; Chrome UA strings contain 'Safari/' too — but Chrome is matched first so OK. Firefox UA does NOT contain Safari/ so safe. Logic is correct.",
+    "admin.py is 305 lines — fine, under the 700-line guideline.",
+    "Privacy posture is clean: _strip_event explicitly drops _id and ip_address keys before returning, and find() projects {_id: 0}. Good defense in depth."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_login_intelligence.py"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% (11/11)"},
+  "test_credentials": "Admin: sr-tester@example.com / TestPass123! (auto-promoted via ADMIN_EMAILS env). Non-admin: any newly-registered user.",
+  "seed_data_creation": "Tests created multiple TEST_-prefixed user accounts during run (TEST_nonadmin_*, TEST_reg_*, TEST_lo_*, TEST_unk_*, TEST_iphone_*, TEST_chr_*, TEST_and_*, TEST_geo_*, TEST_geo_pub_*, TEST_uifn_*). They are isolated by email prefix and safe to clean up.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Admin Login Intelligence is fully verified. Backend pytest file at /app/backend/tests/test_admin_login_intelligence.py — reuse for regression. Note: in this preview env, public ingress strips inbound 'cf-ipcountry' header so events posted via REACT_APP_BACKEND_URL get ip_country=null. The geo-extraction logic is correct and is verified by hitting localhost:8001 directly (test_cf_ipcountry_header_via_localhost). This is documented behavior, not a bug.",
+  "rca of the issue": "N/A — no defects found."
+}

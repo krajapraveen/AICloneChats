@@ -102,9 +102,19 @@ async def get_optional_user(
 
 # ----- routes -----
 @router.post("/register")
-async def register(payload: RegisterRequest, response: Response):
+async def register(payload: RegisterRequest, request: Request, response: Response):
+    # Lazy import to avoid circular: admin imports get_current_user from this module
+    from admin import record_login_event, ensure_admin_role
+
     existing = await db.users.find_one({"email": payload.email.lower()}, {"_id": 0})
     if existing:
+        await record_login_event(
+            request,
+            event_type="login_failed",
+            login_method="email_password",
+            email=payload.email,
+            failure_reason="email_already_registered",
+        )
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
@@ -115,37 +125,73 @@ async def register(payload: RegisterRequest, response: Response):
         "picture": "",
         "password_hash": hash_password(payload.password),
         "auth_provider": "email",
+        "role": "user",
         "created_at": now_iso(),
     }
     await db.users.insert_one(dict(user_doc))
 
     token = await create_session(user_id, source="email")
     set_session_cookie(response, token)
+    user_view = {k: v for k, v in user_doc.items() if k not in ("password_hash", "_id")}
+    user_view = await ensure_admin_role(user_view)
+    await record_login_event(
+        request,
+        event_type="login_success",
+        login_method="email_password",
+        user=user_view,
+    )
     return {
-        "user": {k: v for k, v in user_doc.items() if k not in ("password_hash", "_id")},
+        "user": user_view,
         "session_token": token,
     }
 
 
 @router.post("/login")
-async def login(payload: LoginRequest, response: Response):
+async def login(payload: LoginRequest, request: Request, response: Response):
+    from admin import record_login_event, ensure_admin_role
+
     user = await db.users.find_one({"email": payload.email.lower()}, {"_id": 0})
     if not user or not user.get("password_hash"):
+        await record_login_event(
+            request,
+            event_type="login_failed",
+            login_method="email_password",
+            email=payload.email,
+            failure_reason="invalid_credentials",
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not verify_password(payload.password, user["password_hash"]):
+        await record_login_event(
+            request,
+            event_type="login_failed",
+            login_method="email_password",
+            email=payload.email,
+            user={"user_id": user["user_id"], "email": user["email"], "name": user.get("name")},
+            failure_reason="invalid_password",
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = await create_session(user["user_id"], source="email")
     set_session_cookie(response, token)
+    user_view = {k: v for k, v in user.items() if k not in ("password_hash", "_id")}
+    user_view = await ensure_admin_role(user_view)
+    await record_login_event(
+        request,
+        event_type="login_success",
+        login_method="email_password",
+        user=user_view,
+    )
     return {
-        "user": {k: v for k, v in user.items() if k not in ("password_hash", "_id")},
+        "user": user_view,
         "session_token": token,
     }
 
 
 @router.post("/google/session")
-async def google_session(payload: GoogleSessionRequest, response: Response):
+async def google_session(payload: GoogleSessionRequest, request: Request, response: Response):
     """Exchange Emergent session_id for our session_token."""
+    from admin import record_login_event, ensure_admin_role
+
     try:
         r = requests.get(
             EMERGENT_AUTH_DATA_URL,
@@ -153,9 +199,11 @@ async def google_session(payload: GoogleSessionRequest, response: Response):
             timeout=15,
         )
         if r.status_code != 200:
+            await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="invalid_emergent_session")
             raise HTTPException(status_code=401, detail="Invalid Emergent session")
         data = r.json()
     except requests.RequestException:
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="auth_provider_unreachable")
         raise HTTPException(status_code=502, detail="Auth service unreachable")
 
     email = (data.get("email") or "").lower()
@@ -164,6 +212,7 @@ async def google_session(payload: GoogleSessionRequest, response: Response):
     emergent_token = data.get("session_token") or new_session_token()
 
     if not email:
+        await record_login_event(request, event_type="login_failed", login_method="google_oauth", failure_reason="no_email_from_provider")
         raise HTTPException(status_code=400, detail="No email from auth provider")
 
     existing = await db.users.find_one({"email": email}, {"_id": 0})
@@ -181,6 +230,7 @@ async def google_session(payload: GoogleSessionRequest, response: Response):
             "name": name,
             "picture": picture,
             "auth_provider": "google",
+            "role": "user",
             "created_at": now_iso(),
         }
         await db.users.insert_one(dict(new_user))
@@ -188,17 +238,27 @@ async def google_session(payload: GoogleSessionRequest, response: Response):
     token = await create_session(user_id, source="google", token=emergent_token)
     set_session_cookie(response, token)
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    user = await ensure_admin_role(user)
+    await record_login_event(request, event_type="login_success", login_method="google_oauth", user=user)
     return {"user": user, "session_token": token}
 
 
 @router.get("/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    from admin import ensure_admin_role
+    return await ensure_admin_role(user)
 
 
 @router.post("/logout")
-async def logout(response: Response, session_token: Optional[str] = Cookie(default=None)):
+async def logout(request: Request, response: Response, session_token: Optional[str] = Cookie(default=None)):
+    from admin import record_login_event
+    user = None
     if session_token:
+        sess = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+        if sess:
+            user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0, "password_hash": 0})
         await db.user_sessions.delete_one({"session_token": session_token})
+    if user:
+        await record_login_event(request, event_type="logout", login_method=user.get("auth_provider", "email") + ("_oauth" if user.get("auth_provider") == "google" else "_password"), user=user)
     clear_session_cookie(response)
     return {"ok": True}
