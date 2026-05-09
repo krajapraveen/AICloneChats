@@ -21,7 +21,7 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 2. **Casual user** — wants a fun, shareable AI twin to send to friends
 3. **Visitor** — chats with a clone via shared link, no account required
 
-## What's Implemented (2026-02 — MVP + Theme + Share + Discovery v1)
+## What's Implemented (2026-02 — MVP + Theme + Share + Discovery + Mood v1)
 ### Backend
 - `/api/auth/register|login|me|logout|google/session` — full auth (email + Google)
 - `/api/clones` CRUD + `/check-slug` + `/by-slug/{slug}` (public, respects visibility)

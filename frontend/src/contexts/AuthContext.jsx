@@ -25,6 +25,12 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
       return;
     }
+    // Skip /me check on truly public routes if there's no token to avoid noisy 401s
+    const hasToken = typeof window !== "undefined" && !!localStorage.getItem("session_token");
+    if (!hasToken) {
+      setLoading(false);
+      return;
+    }
     checkAuth();
   }, [checkAuth]);
 
