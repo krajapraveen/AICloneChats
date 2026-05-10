@@ -24,6 +24,9 @@ export default function Navbar() {
           <Link to="/smart-reply" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-emerald-soft transition" data-testid="nav-smart-reply">
             Smart Reply
           </Link>
+          <Link to="/voice" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-emerald-soft transition" data-testid="nav-voice">
+            Voice
+          </Link>
           {user ? (
             <>
               <Link to="/dashboard" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-ink transition" data-testid="nav-dashboard">

@@ -1,0 +1,57 @@
+{
+  "summary": "Voice-First AI Messaging E2E test. Backend pytest 21/21 PASS covering all required flows: /usage (anon=3, authed=20), /text-input (filler removal verified — 'um/like/you know/basically' stripped from cleaned_transcript), /generate (single tone), /generate-all (6 tones in parallel, ~10–15s end-to-end), /refine (returns NEW message_id with rewritten text for all 5 refine_types: shorter/confident/polite/flirty/professional), PATCH /sessions/{id} (cleaned_transcript persisted with edited_by_user=true), /copy-event (copy_count increments), /history (authed returns sessions with attached messages, anon returns empty list with is_anonymous=true), 4th anon generation correctly returns 402 with detail.code='anon_limit_reached' and wall='signup', /transcribe with a real 1.5s WAV reaches Whisper end-to-end (returns 200 or 422 — both valid for a tone-only sample with no speech), /track accepts allowed events and rejects unknown events with 400, and analytics separation is clean (events only in db.voice_usage_events with metadata.experience_variant='voice_v1', zero pollution in clone_analytics or smart_reply_sessions). Frontend Playwright on /voice as anon: page loads without redirect, '3 free trials left' pill visible, examples row + 3 tabs (record/upload/text) render, clicking 'Tell my boss I'll be late' example auto-runs the text pipeline and renders all 6 tone cards within ~30s with 5 refine chips per card and a Copy button, transcript editor is prefilled with cleaned text. /voice/history correctly redirects anon to /login?redirect=/voice/history. Navbar Voice link visible at md+ desktop. Regression: /login /register /mood-chat /smart-reply all still render (smart-reply correctly auth-gates).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "VoiceMessaging.copyMessage / clipboard fallback",
+        "issue": "Copy button shows 'Copy failed' toast in headless/non-secure-context browsers because navigator.clipboard.writeText throws. No fallback to document.execCommand('copy') or a hidden textarea selection. Real users on https (production) will be fine, but mobile webviews and any non-secure context will silently fail. Recommend a try/catch fallback. The /api/voice/copy-event backend call is also skipped on clipboard failure, so copy_count stays at 0 in those cases.",
+        "selector": "button:has-text('Copy') in [data-testid^='voice-message-card-']",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Frontend /api/voice/track analytics emit",
+        "issue": "ALL frontend-fired voice analytics events (voice_page_viewed, voice_example_clicked, voice_record_started, voice_record_stopped, voice_history_opened, voice_message_regenerated, voice_signup_wall_shown) silently 422 from the browser. Console shows three '422 () /voice/track' errors on the /voice page. Root cause: /app/frontend/src/lib/api.js sets a HARD default `headers: { 'Content-Type': 'application/json' }` on the axios instance, which overrides axios's auto-multipart-boundary detection when VoiceMessaging.jsx posts FormData via api.post('/voice/track', fd). Backend's /api/voice/track endpoint declares event_name as Form(...), so it expects multipart/form-data; with Content-Type forced to application/json the body parses as null and FastAPI returns 422 'Field required'. The backend endpoint itself is correct — verified via direct curl with explicit multipart. Funnel telemetry is therefore broken end-to-end for all client-side events. Backend-emitted events (voice_message_generated, voice_transcription_success, voice_anon_limit_hit, voice_message_copied, voice_text_pasted, voice_audio_uploaded, voice_message_refined, voice_transcript_edited) are unaffected because they're emitted server-side via _emit().",
+        "affected_selectors": ["[data-testid='voice-messaging-page']", "[data-testid^='voice-example-']", "[data-testid='voice-record-start-btn']", "[data-testid='link-voice-history']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_voice_messaging.py",
+    "/app/test_reports/pytest/voice_messaging.xml"
+  ],
+  "action_items": [
+    "FIX (HIGH): /api/voice/track 422 — frontend is dropping ALL client-side voice analytics. Options: (a) in VoiceMessaging.jsx track(): use `api.post('/voice/track', fd, { headers: { 'Content-Type': 'multipart/form-data' } })` so axios re-derives the boundary; or (b) change the backend /api/voice/track signature to accept JSON body (Pydantic model with event_name) so it matches the rest of the API; or (c) remove the global `'Content-Type': 'application/json'` default in /app/frontend/src/lib/api.js (let axios infer per request) — option (b) is cleanest and aligns with all other voice endpoints which use JSON.",
+    "FIX (MEDIUM): VoiceMessaging.copyMessage — add a textarea+execCommand fallback when navigator.clipboard is unavailable, so the Copy button works in non-secure / webview contexts and copy_count still increments.",
+    "(Optional cleanup) /api/voice/transcribe for a tone-only WAV returns 422 'Could not hear enough speech' — this is correct gating, but the test had to allow both 200 and 422 because Whisper occasionally hallucinates words on pure tones. Consider adding a pre-Whisper energy check to short-circuit silent uploads."
+  ],
+  "critical_code_review_comments": [
+    "voice.py is 617 lines — within the 700-line guideline but trending high; consider splitting Whisper/Claude helpers and endpoints into separate modules if more endpoints are added.",
+    "voice.py correctly excludes MongoDB '_id' via {'_id': 0} projection on every find/find_one. Good.",
+    "voice.py uses async/await consistently for all DB and LLM IO. Good.",
+    "Anon limit gating is RACE-SAFE on the happy path because _check_usage uses an atomic $inc upsert — but consume=True is called AFTER the LLM round-trip, so two concurrent generations from the same device_id will both pass the pre-check and then both increment, allowing a 4th generation if perfectly timed. Low impact in practice (rate-limited by user keystrokes) but worth noting.",
+    "transcribe endpoint reads the full audio bytes into memory (up to 15MB) and never persists them — privacy promise honored. Good.",
+    "All voice events tag metadata.experience_variant='voice_v1' via _emit(); analytics separation verified empirically — zero leakage into clone_analytics. Good.",
+    "VoiceMessaging.jsx track() helper (line 51-55) constructs FormData but the global axios default Content-Type:application/json silently breaks it — see integration issue. This is the single most impactful defect in the build.",
+    "VoiceMessaging.jsx is 575 lines — large but manageable; logic is well-organized into stage-based blocks (input → transcript → messages)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_voice_messaging.py"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 pytest)",
+    "frontend": "95% — UI flow fully works; client-side analytics tracking is broken (all /voice/track calls 422), and Copy button fails in non-secure contexts due to missing clipboard fallback"
+  },
+  "test_credentials": "sr-tester@example.com / TestPass123! (worked).",
+  "seed_data_creation": "Created 1 voice session + 11+ generated_messages for the test user (sr-tester@example.com) with cleaned transcript 'I need to tell my boss I will arrive 30 minutes late'. Anon trial counter for one ephemeral device_id was burned to 3 then deleted. Reset voice_daily_count to 0 on the test user before running. No production data touched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression file is /app/backend/tests/test_voice_messaging.py (21 tests, ~30s, all pass). Two known frontend defects to verify after fixes: (1) /api/voice/track must return 200 from the browser — open /voice in DevTools Network tab and confirm voice_page_viewed POST is 200, not 422; (2) Copy button must work in headless Chromium — test with Playwright by reading clipboard or by checking copy_count incremented via /api/voice/history. The Whisper test uses a 1.5s 440Hz sine WAV; both 200 and 422 are accepted because pure tones legitimately have no speech.",
+  "rca of the issue": "Frontend /api/voice/track 422 RCA: axios instance in /app/frontend/src/lib/api.js sets `headers: { 'Content-Type': 'application/json' }` as a global default. When VoiceMessaging.jsx track() helper calls `api.post('/voice/track', new FormData(...))`, axios sees the existing Content-Type header and does NOT replace it with 'multipart/form-data; boundary=...'. The browser ends up sending the FormData body (correctly multipart-encoded by the browser when a FormData is passed to XHR/fetch) BUT with Content-Type: application/json, so FastAPI's Form parser sees a body it can't parse and reports event_name as null/missing → 422. Reproduction: open /voice as anon → browser console shows three '422 ()' errors for /voice/track. Mitigation: pass `{ headers: { 'Content-Type': 'multipart/form-data' } }` as the third arg of api.post in track(), OR refactor backend /api/voice/track to accept JSON body (preferred for consistency)."
+}

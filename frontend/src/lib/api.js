@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getDeviceId } from "./deviceId";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -14,9 +15,15 @@ const api = axios.create({
 // Always attach token from localStorage as Bearer header.
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("session_token");
+  config.headers = config.headers || {};
   if (token) {
-    config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  // Stable device id for anonymous trials (Voice Messaging)
+  try {
+    config.headers["X-Device-Id"] = getDeviceId();
+  } catch {
+    // ignore
   }
   return config;
 });

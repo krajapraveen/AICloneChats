@@ -18,6 +18,8 @@ import MoodChat from "./pages/MoodChat";
 import SmartReplyStudio from "./pages/SmartReplyStudio";
 import SmartReplyHistory from "./pages/SmartReplyHistory";
 import SmartReplyFavorites from "./pages/SmartReplyFavorites";
+import VoiceMessaging from "./pages/VoiceMessaging";
+import VoiceHistory from "./pages/VoiceHistory";
 import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
 
 function LegacyAuthRedirect() {
@@ -36,6 +38,8 @@ function AppRouter() {
       <Route path="/smart-reply" element={<SmartReplyStudio />} />
       <Route path="/smart-reply/history" element={<SmartReplyHistory />} />
       <Route path="/smart-reply/favorites" element={<SmartReplyFavorites />} />
+      <Route path="/voice" element={<VoiceMessaging />} />
+      <Route path="/voice/history" element={<VoiceHistory />} />
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
