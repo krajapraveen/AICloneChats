@@ -22,6 +22,26 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-02-12 (P1: production env wired + real Resend E2E verified)** — **Email channel proven live end-to-end. Public flag flipped on in preview. Production deploy block prepared.**
+  - **Preview env updated** (`backend/.env`):
+    - `RESEND_API_KEY=re_jVN4T1zs_G86j9kGm4FEq1WpDLE7fW3qm`
+    - `RESEND_FROM=aiclonechats.com <admin@aiclonechats.com>`
+    - `FRONTEND_PUBLIC_URL=https://digital-twin-119.preview.emergentagent.com` (preview value; production must be `https://aiclonechats.com`)
+    - `DELAYED_EMOTIONAL_CHAT_ENABLED=true`
+  - **Resend domain verified** by founder: `aiclonechats.com` on GoDaddy DNS, region `us-east-1`. DKIM (`resend._domainkey` TXT), SPF (`send` TXT v=spf1 include:...amazonses.com ~all), MX (`send` → `feedback-smtp.us-east-1.amazonses.com`) all green. Domain status: `Verified`.
+  - **Real E2E verified** (no mocks): created delayed message with `recipient_type=email`, `recipient_email=krajapraveen@aiclonechats.com`, `delivery_channel=email` → admin force-delivered → Resend returned 2xx (no failure_reason, `delivery_attempts=1`, `status=delivered`) → anonymous `GET /api/delayed-messages/open/{token}` returned 200 with `X-Robots-Tag: noindex, nofollow` and the full message body → `opened_at` set on first read → frontend `/open/:token` reveal page rendered the real title/body/delivered-at with all noindex+referrer metas correctly injected.
+  - **Production env block** to apply via Emergent deploy panel for `https://aiclonechats.com`:
+    ```
+    RESEND_API_KEY=re_jVN4T1zs_G86j9kGm4FEq1WpDLE7fW3qm
+    RESEND_FROM=aiclonechats.com <admin@aiclonechats.com>
+    FRONTEND_PUBLIC_URL=https://aiclonechats.com
+    DELAYED_EMOTIONAL_CHAT_ENABLED=true
+    ```
+    (Leave `BACKEND_PUBLIC_URL`, `FAL_KEY`, `AVATAR_CHAT_ENABLED` as-is — those belong to the Avatar feature which remains gated.)
+  - **What was NOT changed**: zero new features, zero copy changes, zero schema changes, zero refactoring. Subtractive discipline preserved per founder directive ("P1 only: configure production env, redeploy, verify").
+  - **Operator note**: the founder is the only person who can apply the env block to production and trigger the redeploy. Once redeployed, the same Resend key + verified domain will work identically there. No further code or DB changes needed.
+
+
 - **2026-02-12 (Open-token reveal flow for emailed delayed messages — final delta)** — **Three-item delta. Closes the recipient-without-account gap so the email channel is genuinely useful.**
   - **Backend** (`backend/delayed_messages.py`):
     - **`open_token`** field minted at create time (`secrets.token_urlsafe(32)`, ~43 chars). Returned ONCE in the create response (`delayed_message.open_token`) and never again — sender must capture it at that moment if they want to share manually. Listing/admin payloads (`_public()`) deliberately do NOT expose the token (test asserts this).
