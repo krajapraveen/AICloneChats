@@ -226,21 +226,14 @@ export default function Dashboard() {
               body="Topic rooms where strangers talk honestly. No names, no fake flexing. AI moderation keeps every room emotionally safe."
               primary={{ to: "/anonymous-reality", label: "Enter anonymously" }}
             />
-            <ComingSoonCard
+            <WorkspaceCard
               testId="workspace-card-debate"
               tone="tag-sky"
               kicker="DEBATE-FIRST"
               icon="⚖"
               title="AI Debate Rooms"
-              body="Live debate rooms with AI scoring, crowd voting, and real-time ranking. Pick a side, argue your case, win a shareable badge. Building separately — coming soon."
-              accent="sky"
-              onInterest={() => {
-                api.post("/analytics/event", {
-                  event_name: "ai_debate_rooms_interest_clicked",
-                  metadata: { source: "dashboard_workspace", state: "coming_soon" },
-                }).catch(() => {});
-                toast.success("Logged. We'll let you know when AI Debate Rooms goes live.");
-              }}
+              body="Live debate rooms with AI scoring, crowd voting, and real-time ranking. Pick a side, argue your case, win a shareable badge."
+              primary={{ to: "/debates", label: "Enter debate room" }}
             />
           </div>
         </section>

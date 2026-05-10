@@ -161,12 +161,11 @@ export default function ChatTypeCards() {
       }).catch(() => {});
       navigate("/anonymous-reality");
     } else if (chat_type === "debate") {
-      // Coming soon — separate Emergent project (not built; demand-signal capture only).
       api.post("/analytics/event", {
-        event_name: "ai_debate_rooms_interest_clicked",
-        metadata: { source: "chat_type_cards", state: "coming_soon" },
+        event_name: "debate_card_clicked",
+        metadata: { source: "chat_type_cards", experience_variant: "debate_v1" },
       }).catch(() => {});
-      setOpenInfo("debate");
+      navigate("/debates");
     }
   };
 
@@ -282,11 +281,8 @@ export default function ChatTypeCards() {
             </button>
           </div>
 
-          {/* AI Debate Rooms (coming soon) */}
+          {/* AI Debate Rooms — LIVE */}
           <div className="brutal-card p-7 flex flex-col relative overflow-hidden" data-testid="card-debate">
-            <div className="absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest text-sky-300/80 bg-sky-500/10 border border-sky-400/30 rounded-full px-2 py-0.5" data-testid="debate-coming-soon-badge">
-              Coming soon
-            </div>
             <div className="flex items-center gap-3 mb-2">
               <span className="tag tag-sky">DEBATE-FIRST</span>
               <InfoIcon onClick={() => setOpenInfo("debate")} label="What is AI Debate Rooms?" testId="info-icon-debate" />
@@ -296,12 +292,12 @@ export default function ChatTypeCards() {
               Pick a side. Argue live. AI scores logic + clarity, the crowd votes, ranking shifts in real time.
             </p>
             <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
-              <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> For / against / spectate · live rooms</li>
+              <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> For / against · live rooms</li>
               <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> AI scoring + crowd voting</li>
               <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> Real-time ranking · shareable wins</li>
             </ul>
-            <button onClick={() => select("debate")} className="btn-ghost mt-auto" data-testid="cta-debate">
-              Learn more →
+            <button onClick={() => select("debate")} className="btn-brutal mt-auto" data-testid="cta-debate">
+              Enter debate room →
             </button>
           </div>
         </div>
@@ -341,13 +337,13 @@ export default function ChatTypeCards() {
         info={{
           ...CHAT_INFO.debate,
           cta: {
-            label: "Coming soon",
+            label: "Enter debate room →",
             onClick: () => {
               api.post("/analytics/event", {
-                event_name: "ai_debate_rooms_interest_clicked",
-                metadata: { source: "info_modal_cta", state: "coming_soon" },
+                event_name: "debate_card_clicked",
+                metadata: { source: "info_modal_cta", experience_variant: "debate_v1" },
               }).catch(() => {});
-              setOpenInfo(null);
+              navigate("/debates");
             },
           },
         }}

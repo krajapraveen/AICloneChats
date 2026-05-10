@@ -30,6 +30,9 @@ export default function Navbar() {
           <Link to="/anonymous-reality" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-rose-300 transition" data-testid="nav-anonymous">
             Anonymous
           </Link>
+          <Link to="/debates" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-sky-300 transition" data-testid="nav-debates">
+            Debates
+          </Link>
           {user ? (
             <>
               <Link to="/dashboard" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-ink transition" data-testid="nav-dashboard">
@@ -48,6 +51,9 @@ export default function Navbar() {
                   </Link>
                   <Link to="/admin/anonymous-metrics" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-anonymous-metrics">
                     Anon Metrics
+                  </Link>
+                  <Link to="/admin/debates" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-debates">
+                    Debates Mod
                   </Link>
                 </>
               )}
