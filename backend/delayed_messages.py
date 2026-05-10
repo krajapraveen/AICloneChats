@@ -33,10 +33,12 @@ import re
 import uuid
 import logging
 import asyncio
+import secrets
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, EmailStr
 
 from db import db
@@ -60,8 +62,17 @@ RECIPIENT_TYPES = {"self", "email", "clone_user", "clone"}
 DELIVERY_CHANNELS = {"in_app", "email", "both"}
 SCHEDULER_POLL_SEC = int(os.environ.get("DELAYED_SCHEDULER_POLL_SEC", "30"))
 EMAIL_RATE_LIMIT_PER_DAY = 5
+MAX_DELIVERY_ATTEMPTS = 3
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _make_open_token() -> tuple[str, str]:
+    """Returns (raw_token, sha256_hash). Raw is shown to recipient once.
+    Hash is what's stored. Lookup by hash, then issue a one-time view."""
+    raw = secrets.token_urlsafe(32)
+    hashed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return raw, hashed
 
 
 # ---- Models ----
@@ -167,6 +178,7 @@ def _public(d: dict) -> dict:
         "timezone": d.get("timezone"),
         "status": d.get("status"),
         "delivery_channel": d.get("delivery_channel"),
+        "delivery_attempts": d.get("delivery_attempts", 0),
         "opened_at": d.get("opened_at"),
         "delivered_at": d.get("delivered_at"),
         "cancelled_at": d.get("cancelled_at"),
@@ -292,6 +304,7 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
             raise HTTPException(429, f"email_rate_limit ({EMAIL_RATE_LIMIT_PER_DAY}/24h)")
 
     delayed_id = f"dm_{uuid.uuid4().hex[:14]}"
+    raw_token, token_hash = _make_open_token()
     doc = {
         "delayed_message_id": delayed_id,
         "sender_user_id": user["user_id"],
@@ -307,6 +320,8 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
         "timezone": payload.timezone or "UTC",
         "status": "scheduled",
         "delivery_channel": payload.delivery_channel,
+        "open_token_hash": token_hash,
+        "delivery_attempts": 0,
         "opened_at": None,
         "delivered_at": None,
         "cancelled_at": None,
@@ -316,7 +331,11 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
     }
     await db.delayed_messages.insert_one(dict(doc))
     await _emit("created", message_id=delayed_id, user_id=user["user_id"], metadata={"category": payload.emotional_category, "channel": payload.delivery_channel, "type": payload.recipient_type})
-    return {"delayed_message": _public(doc)}
+    public = _public(doc)
+    # Return raw token ONCE on create — sender can include it in any custom share.
+    # Hash is what we store; raw is never persisted server-side.
+    public["open_token"] = raw_token
+    return {"delayed_message": public}
 
 
 @router.get("")
@@ -443,6 +462,9 @@ async def _deliver_one(d: dict) -> None:
 
     delivered_any = delivered_in_app or delivered_email
     update = {"updated_at": now_iso()}
+    # Increment attempts whether or not delivery succeeded (each pass through is an attempt)
+    new_attempts = (d.get("delivery_attempts") or 0) + 1
+    update["delivery_attempts"] = new_attempts
     if delivered_any:
         update["status"] = "delivered"
         update["delivered_at"] = now_iso()
@@ -451,13 +473,59 @@ async def _deliver_one(d: dict) -> None:
         await db.delayed_messages.update_one({"delayed_message_id": delayed_id}, {"$set": update})
         await _emit("delivered", message_id=delayed_id, user_id=d.get("sender_user_id"), metadata={"channel": channel, "in_app": delivered_in_app, "email": delivered_email, "partial_failure": failure or None})
     else:
-        update["status"] = "failed"
-        update["failure_reason"] = failure or "unknown_failure"
-        await db.delayed_messages.update_one({"delayed_message_id": delayed_id}, {"$set": update})
-        await _emit("failed", message_id=delayed_id, user_id=d.get("sender_user_id"), metadata={"channel": channel, "reason": update["failure_reason"]})
+        # Retry policy: under the limit, drop back to scheduled with a small
+        # backoff (current delivery_time + 60s × attempt) so the next tick picks
+        # it up. At/over the limit, terminal-fail.
+        if new_attempts < MAX_DELIVERY_ATTEMPTS:
+            try:
+                current_dt = datetime.fromisoformat((d.get("delivery_time") or "").replace("Z", "+00:00"))
+            except Exception:
+                current_dt = datetime.now(timezone.utc)
+            backoff_dt = max(datetime.now(timezone.utc), current_dt) + timedelta(seconds=60 * new_attempts)
+            update["status"] = "scheduled"
+            update["delivery_time"] = backoff_dt.isoformat()
+            update["failure_reason"] = (failure or "unknown_failure") + f" (attempt {new_attempts}/{MAX_DELIVERY_ATTEMPTS}, retrying)"
+            await db.delayed_messages.update_one({"delayed_message_id": delayed_id}, {"$set": update})
+            await _emit("delivery_attempt_failed", message_id=delayed_id, user_id=d.get("sender_user_id"), metadata={"attempt": new_attempts, "reason": failure or "unknown_failure"})
+        else:
+            update["status"] = "failed"
+            update["failure_reason"] = (failure or "unknown_failure") + f" (terminal after {new_attempts} attempts)"
+            await db.delayed_messages.update_one({"delayed_message_id": delayed_id}, {"$set": update})
+            await _emit("failed", message_id=delayed_id, user_id=d.get("sender_user_id"), metadata={"channel": channel, "reason": update["failure_reason"], "attempts": new_attempts})
 
 
-async def _scheduler_tick() -> int:
+# ---- Token-based reveal (recipient opens via shareable link without auth) ----
+@router.get("/open/{token}")
+async def open_via_token(token: str, response: Response):
+    """One-time-style reveal endpoint. The recipient receives a raw token in
+    their email/share link; we look up by hash. Status guard: only delivered
+    messages can be opened via token. The opened_at timestamp is set on first
+    successful read; subsequent reads return the same data idempotently.
+
+    No-index headers prevent search engines from caching reveal payloads."""
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    if not token or len(token) < 16:
+        raise HTTPException(404, "Not found")
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    doc = await db.delayed_messages.find_one({"open_token_hash": token_hash}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    if doc.get("status") != "delivered":
+        # Sealed messages not openable via token before delivery.
+        raise HTTPException(403, "This message is sealed until its delivery time.")
+    # Record first-open if not already recorded
+    if not doc.get("opened_at"):
+        await db.delayed_messages.update_one(
+            {"delayed_message_id": doc["delayed_message_id"]},
+            {"$set": {"opened_at": now_iso(), "updated_at": now_iso()}},
+        )
+        await _emit("opened", message_id=doc["delayed_message_id"], user_id=doc.get("sender_user_id"), metadata={"via": "token"})
+        doc["opened_at"] = now_iso()
+    return {"delayed_message": _public(doc)}
+
+
+
     """Runs every poll. Returns count of deliveries attempted."""
     now = datetime.now(timezone.utc).isoformat()
     # Find due scheduled messages, atomically flip them to "queued" so concurrent ticks don't double-deliver.
