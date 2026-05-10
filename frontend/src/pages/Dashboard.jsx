@@ -235,6 +235,15 @@ export default function Dashboard() {
               body="Live debate rooms with AI scoring, crowd voting, and real-time ranking. Pick a side, argue your case, win a shareable badge."
               primary={{ to: "/debates", label: "Enter debate room" }}
             />
+            <WorkspaceCard
+              testId="workspace-card-translation"
+              tone="tag-amber"
+              kicker="TRANSLATION-FIRST"
+              icon="ことば"
+              title="Translation Chat"
+              body="Type in your language. Everyone reads in theirs. AI translates each message in real time across English, Hindi, Telugu, and Japanese."
+              primary={{ to: "/translation-chat", label: "Open translation chat" }}
+            />
           </div>
         </section>
 

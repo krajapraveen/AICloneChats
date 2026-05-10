@@ -33,6 +33,9 @@ export default function Navbar() {
           <Link to="/debates" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-sky-300 transition" data-testid="nav-debates">
             Debates
           </Link>
+          <Link to="/translation-chat" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-amber transition" data-testid="nav-translation">
+            Translate
+          </Link>
           {user ? (
             <>
               <Link to="/dashboard" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-ink transition" data-testid="nav-dashboard">
