@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import ChatTypeCards from "../components/ChatTypeCards";
+import FounderAboutSection from "../components/FounderAboutSection";
 
 const FEATURES = [
   { tone: "amber", n: "01", title: "Personality engine", body: "Tune humor, directness, warmth, energy. Add catchphrases. Block topics. Your clone, your rules." },
@@ -107,6 +108,9 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* About the Founder */}
+      <FounderAboutSection />
 
       {/* Two ways to chat */}
       <ChatTypeCards />
