@@ -7,6 +7,7 @@ import MarqueeDisclaimer from "../components/MarqueeDisclaimer";
 import ChatBubble from "../components/ChatBubble";
 import ShareCardModal from "../components/ShareCardModal";
 import MoodSignalPill from "../components/MoodSignalPill";
+import ConversationArtifactsPanel from "../components/ConversationArtifactsPanel";
 import { useMoodTheme } from "../hooks/useMoodTheme";
 
 function getOrCreateVisitorId() {
@@ -215,6 +216,9 @@ export default function PublicClone() {
         <p className="text-center text-xs text-muted mt-5 font-mono uppercase tracking-widest">
           Built on aiclonechats.com · <a href="/" className="underline hover:text-amber-soft">Make your own →</a>
         </p>
+
+        {/* Conversation Artifacts — pull-only, no nudges */}
+        <ConversationArtifactsPanel conversationId={conversationId} visitorId={visitorId.current} />
       </div>
 
       <ShareCardModal

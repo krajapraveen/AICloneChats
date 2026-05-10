@@ -27,6 +27,7 @@ import admin_chats  # noqa: E402
 import translation_chat  # noqa: E402
 import avatar_chat  # noqa: E402
 import delayed_messages  # noqa: E402
+import clone_artifacts  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -66,6 +67,8 @@ app.include_router(avatar_chat.router)
 app.include_router(avatar_chat.admin_router)
 app.include_router(delayed_messages.router)
 app.include_router(delayed_messages.admin_router)
+app.include_router(clone_artifacts.router)
+app.include_router(clone_artifacts.admin_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -161,6 +164,15 @@ async def on_startup():
     await _db.delayed_messages.create_index([("status", 1), ("delivery_time", 1)])
     await _db.delayed_message_events.create_index([("created_at", -1)])
     await _db.delayed_message_events.create_index([("event_type", 1), ("created_at", -1)])
+    # Clone Artifacts indexes
+    await _db.clone_artifacts.create_index("artifact_id", unique=True)
+    await _db.clone_artifacts.create_index([("conversation_id", 1), ("created_at", -1)])
+    await _db.clone_artifacts.create_index([("owner_kind", 1), ("owner_value", 1), ("created_at", -1)])
+    await _db.clone_artifact_tasks.create_index("task_id", unique=True)
+    await _db.clone_artifact_tasks.create_index([("owner_kind", 1), ("owner_value", 1), ("status", 1), ("created_at", -1)])
+    await _db.clone_artifact_tasks.create_index([("conversation_id", 1), ("created_at", -1)])
+    await _db.clone_artifact_events.create_index([("created_at", -1)])
+    await _db.clone_artifact_events.create_index([("event_name", 1), ("created_at", -1)])
     # Start delayed-delivery scheduler in the background
     try:
         import asyncio as _asyncio
