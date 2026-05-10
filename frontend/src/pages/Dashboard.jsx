@@ -174,7 +174,7 @@ export default function Dashboard() {
           <div className="flex items-end justify-between gap-3 mb-4">
             <div>
               <p className="label-brutal mb-1">Tools in your workspace</p>
-              <h2 className="heading-display text-2xl sm:text-3xl">Six ways to talk to AI.</h2>
+              <h2 className="heading-display text-2xl sm:text-3xl">Nine ways to talk to AI.</h2>
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -225,6 +225,15 @@ export default function Dashboard() {
               title="Anonymous Reality"
               body="Topic rooms where strangers talk honestly. No names, no fake flexing. AI moderation keeps every room emotionally safe."
               primary={{ to: "/anonymous-reality", label: "Enter anonymously" }}
+            />
+            <WorkspaceCard
+              testId="workspace-card-delayed"
+              tone="tag-rose"
+              kicker="PERSISTENCE-FIRST"
+              icon="⌛"
+              title="Delayed-Delivery Emotional Chat"
+              body="Write something now, sealed until a future date. Delivered to your future self, someone you care about, or by email. The system delivers; it does not chase."
+              primary={{ to: "/delayed-chat", label: "Open delayed chat" }}
             />
             <WorkspaceCard
               testId="workspace-card-debate"
