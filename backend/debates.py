@@ -625,3 +625,313 @@ async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Quer
         "reports": reports,
         "hidden_rate_pct": round(100 * args_hidden / max(1, args_total), 1),
     }
+
+
+
+# ---------- Retention / Behavioral Observability (read-only) ----------
+# Operator note: this is INSTRUMENTATION, not product expansion.
+# Aggregates only over EXISTING collections + analytics_events.
+# Used to test the operator's behavioral hypotheses (intellectual / tribal /
+# performative). NO scaffolding that would shape behavior.
+@admin_router.get("/retention")
+async def admin_retention(_admin: dict = Depends(_require_admin), days: int = Query(default=14, ge=1, le=90)):
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    since_24h = (now - timedelta(days=1)).isoformat()
+
+    # ----- The 5 funnel ratios -----
+    # We emit `debate_list_viewed`, `debate_room_opened`, `debate_joined`,
+    # `debate_argument_submitted`, `debate_vote_clicked`. Compute distinct-user
+    # counts at each stage so the ratios reflect humans, not pageviews.
+    async def _distinct_users(event_name: str, since_iso: str) -> int:
+        pipeline = [
+            {"$match": {"event_name": event_name, "created_at": {"$gte": since_iso}, "user_id": {"$ne": None}}},
+            {"$group": {"_id": "$user_id"}},
+            {"$count": "n"},
+        ]
+        rows = await db.debate_analytics_events.aggregate(pipeline).to_list(1)
+        return rows[0]["n"] if rows else 0
+
+    async def _total_events(event_name: str, since_iso: str) -> int:
+        return await db.debate_analytics_events.count_documents({"event_name": event_name, "created_at": {"$gte": since_iso}})
+
+    list_viewed_users = await _distinct_users("debate_list_viewed", since)
+    opened_users = await _distinct_users("debate_room_opened", since)
+    joined_users = await _distinct_users("debate_joined", since)
+    submitted_users = await _distinct_users("debate_argument_submitted", since)
+    voted_users = await _distinct_users("debate_vote_clicked", since)
+
+    list_viewed_evt = await _total_events("debate_list_viewed", since)
+    opened_evt = await _total_events("debate_room_opened", since)
+    joined_evt = await _total_events("debate_joined", since)
+    submitted_evt = await _total_events("debate_argument_submitted", since)
+    voted_evt = await _total_events("debate_vote_clicked", since)
+
+    def _ratio(num: int, den: int):
+        if den <= 0:
+            return None
+        return round(100 * num / den, 1)
+
+    funnel = {
+        # users
+        "list_viewed_users": list_viewed_users,
+        "opened_users": opened_users,
+        "joined_users": joined_users,
+        "submitted_users": submitted_users,
+        "voted_users": voted_users,
+        # events
+        "list_viewed_events": list_viewed_evt,
+        "opened_events": opened_evt,
+        "joined_events": joined_evt,
+        "submitted_events": submitted_evt,
+        "voted_events": voted_evt,
+        # ratios (user-level)
+        "open_rate_pct": _ratio(opened_users, list_viewed_users),
+        "join_rate_pct": _ratio(joined_users, opened_users),
+        "argument_rate_pct": _ratio(submitted_users, joined_users),
+        "vote_rate_pct": _ratio(voted_users, opened_users),
+    }
+
+    # ----- Return-to-defend (THE gold signal) -----
+    # Definition: a user who submitted at least one argument in window AND later
+    # generated ANY event on that same debate (open/vote/submit) at least 30
+    # minutes after their last submission. No notifications exist, so any return
+    # is unprompted by definition.
+    return_window_30m = timedelta(minutes=30)
+    submitters = await db.debate_arguments.find(
+        {"created_at": {"$gte": since}},
+        {"_id": 0, "user_id": 1, "debate_id": 1, "created_at": 1},
+    ).to_list(50000)
+    # Bucket per (user, debate) keep the EARLIEST submission time
+    earliest: dict = {}
+    for s in submitters:
+        key = (s.get("user_id"), s.get("debate_id"))
+        ts = s.get("created_at")
+        if not key[0] or not key[1] or not ts:
+            continue
+        if key not in earliest or ts < earliest[key]:
+            earliest[key] = ts
+
+    returners = 0
+    if earliest:
+        # Pull all events for these (user, debate) pairs in window
+        user_ids = list({k[0] for k in earliest.keys()})
+        evts = await db.debate_analytics_events.find(
+            {"user_id": {"$in": user_ids}, "created_at": {"$gte": since}, "debate_id": {"$ne": None}},
+            {"_id": 0, "user_id": 1, "debate_id": 1, "created_at": 1, "event_name": 1},
+        ).to_list(200000)
+        # Group events by key
+        by_key: dict = {}
+        for e in evts:
+            k = (e.get("user_id"), e.get("debate_id"))
+            by_key.setdefault(k, []).append(e.get("created_at"))
+        for k, first_sub in earliest.items():
+            try:
+                first_dt = datetime.fromisoformat(first_sub.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            for ts in by_key.get(k, []):
+                try:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if dt - first_dt >= return_window_30m:
+                    returners += 1
+                    break
+    return_to_defend_pct = _ratio(returners, len(earliest))
+
+    # ----- Cohort: first-debate category per user -----
+    # First debate per user (any debate_room_opened) → debate.category
+    first_open_pipeline = [
+        {"$match": {"event_name": "debate_room_opened", "user_id": {"$ne": None}, "debate_id": {"$ne": None}}},
+        {"$sort": {"created_at": 1}},
+        {"$group": {"_id": "$user_id", "first_debate_id": {"$first": "$debate_id"}, "first_at": {"$first": "$created_at"}}},
+    ]
+    first_opens = await db.debate_analytics_events.aggregate(first_open_pipeline).to_list(50000)
+    cohort_buckets: dict = {}
+    for fo in first_opens:
+        d = await db.debate_rooms.find_one({"debate_id": fo["first_debate_id"]}, {"_id": 0, "category": 1, "slug": 1})
+        cat = (d or {}).get("category") or "unknown"
+        cohort_buckets.setdefault(cat, {"category": cat, "users": 0, "returned": 0, "submitted": 0, "voted": 0})
+        cohort_buckets[cat]["users"] += 1
+
+    if first_opens:
+        # For each user, did they later submit/vote/return?
+        first_open_map = {fo["_id"]: fo for fo in first_opens}
+        user_ids = list(first_open_map.keys())
+        evts2 = await db.debate_analytics_events.find(
+            {"user_id": {"$in": user_ids}},
+            {"_id": 0, "user_id": 1, "event_name": 1, "created_at": 1, "debate_id": 1},
+        ).to_list(500000)
+        per_user: dict = {}
+        for e in evts2:
+            per_user.setdefault(e["user_id"], []).append(e)
+        for uid, fo in first_open_map.items():
+            d = await db.debate_rooms.find_one({"debate_id": fo["first_debate_id"]}, {"_id": 0, "category": 1})
+            cat = (d or {}).get("category") or "unknown"
+            user_evts = per_user.get(uid, [])
+            submitted_any = any(x.get("event_name") == "debate_argument_submitted" for x in user_evts)
+            voted_any = any(x.get("event_name") == "debate_vote_clicked" for x in user_evts)
+            # returned: any event >= 24h after first_at on a different timestamp
+            try:
+                first_dt = datetime.fromisoformat(fo["first_at"].replace("Z", "+00:00"))
+                returned = any(
+                    (datetime.fromisoformat((x.get("created_at") or "").replace("Z", "+00:00")) - first_dt) >= timedelta(hours=24)
+                    for x in user_evts if x.get("created_at")
+                )
+            except Exception:
+                returned = False
+            if submitted_any:
+                cohort_buckets[cat]["submitted"] += 1
+            if voted_any:
+                cohort_buckets[cat]["voted"] += 1
+            if returned:
+                cohort_buckets[cat]["returned"] += 1
+
+    cohort_rows = []
+    for c in cohort_buckets.values():
+        users = max(1, c["users"])
+        cohort_rows.append({
+            **c,
+            "submit_rate_pct": round(100 * c["submitted"] / users, 1),
+            "vote_rate_pct": round(100 * c["voted"] / users, 1),
+            "d1_return_pct": round(100 * c["returned"] / users, 1),
+        })
+    cohort_rows.sort(key=lambda x: x["users"], reverse=True)
+
+    # ----- Repeat behavior -----
+    # % of submitters with >1 argument
+    multi_pipeline = [
+        {"$match": {"created_at": {"$gte": since}, "moderation_status": {"$in": ["visible", "flagged"]}}},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}}},
+    ]
+    multi_rows = await db.debate_arguments.aggregate(multi_pipeline).to_list(20000)
+    submitters_count = len(multi_rows)
+    multi_submitters = sum(1 for r in multi_rows if r["n"] > 1)
+    avg_args_per_submitter = round(sum(r["n"] for r in multi_rows) / submitters_count, 2) if submitters_count else 0.0
+
+    # ----- Avg argument length -----
+    arg_lengths = await db.debate_arguments.find(
+        {"created_at": {"$gte": since}, "moderation_status": {"$in": ["visible", "flagged"]}},
+        {"_id": 0, "content": 1},
+    ).to_list(20000)
+    avg_arg_len = round(sum(len((a.get("content") or "")) for a in arg_lengths) / max(1, len(arg_lengths)), 0) if arg_lengths else 0
+
+    # ----- D1 / D7 retention (event-based) -----
+    # D1: user who emitted any event in [now-2d, now-1d) AND another event >= 24h later
+    async def _retention(window_back_days: int) -> dict:
+        cohort_start = (now - timedelta(days=window_back_days + 1)).isoformat()
+        cohort_end = (now - timedelta(days=window_back_days)).isoformat()
+        cohort_users_rows = await db.debate_analytics_events.aggregate([
+            {"$match": {"created_at": {"$gte": cohort_start, "$lt": cohort_end}, "user_id": {"$ne": None}}},
+            {"$group": {"_id": "$user_id", "first_at": {"$min": "$created_at"}}},
+        ]).to_list(20000)
+        if not cohort_users_rows:
+            return {"eligible": 0, "returned": 0, "pct": None}
+        ids = [r["_id"] for r in cohort_users_rows]
+        first_map = {r["_id"]: r["first_at"] for r in cohort_users_rows}
+        evs = await db.debate_analytics_events.find(
+            {"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "created_at": 1},
+        ).to_list(200000)
+        by_user = {}
+        for e in evs:
+            by_user.setdefault(e["user_id"], []).append(e["created_at"])
+        returned = 0
+        for uid, first_at in first_map.items():
+            try:
+                fdt = datetime.fromisoformat(first_at.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            for ts in by_user.get(uid, []):
+                try:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if (dt - fdt).total_seconds() >= window_back_days * 86400:
+                    returned += 1
+                    break
+        return {"eligible": len(cohort_users_rows), "returned": returned, "pct": round(100 * returned / max(1, len(cohort_users_rows)), 1)}
+
+    d1 = await _retention(1)
+    d7 = await _retention(7)
+
+    # ----- Lurker percentage -----
+    # opened_users that did NOT vote AND did NOT submit
+    opener_ids_rows = await db.debate_analytics_events.aggregate([
+        {"$match": {"event_name": "debate_room_opened", "created_at": {"$gte": since}, "user_id": {"$ne": None}}},
+        {"$group": {"_id": "$user_id"}},
+    ]).to_list(20000)
+    opener_ids = {r["_id"] for r in opener_ids_rows}
+    voter_ids_rows = await db.debate_analytics_events.aggregate([
+        {"$match": {"event_name": "debate_vote_clicked", "created_at": {"$gte": since}, "user_id": {"$ne": None}}},
+        {"$group": {"_id": "$user_id"}},
+    ]).to_list(20000)
+    voter_ids = {r["_id"] for r in voter_ids_rows}
+    submitter_ids_rows = await db.debate_analytics_events.aggregate([
+        {"$match": {"event_name": "debate_argument_submitted", "created_at": {"$gte": since}, "user_id": {"$ne": None}}},
+        {"$group": {"_id": "$user_id"}},
+    ]).to_list(20000)
+    submitter_ids = {r["_id"] for r in submitter_ids_rows}
+    lurkers = opener_ids - voter_ids - submitter_ids
+    lurker_pct = _ratio(len(lurkers), len(opener_ids))
+
+    # ----- Top fastest-rising arguments (qualitative observation) -----
+    fastest = await db.debate_arguments.find(
+        {"created_at": {"$gte": since_24h}, "moderation_status": "visible"},
+        {"_id": 0, "argument_id": 1, "debate_id": 1, "anonymous_handle": 1, "content": 1, "ai_score": 1, "upvotes": 1, "downvotes": 1, "rank_score": 1, "side": 1, "created_at": 1},
+    ).sort("rank_score", -1).limit(10).to_list(10)
+    most_reported_rows = await db.debate_reports.aggregate([
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {"_id": "$argument_id", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+        {"$limit": 10},
+    ]).to_list(10)
+    most_reported = []
+    for r in most_reported_rows:
+        a = await db.debate_arguments.find_one({"argument_id": r["_id"]}, {"_id": 0, "argument_id": 1, "content": 1, "anonymous_handle": 1, "side": 1, "ai_score": 1})
+        if a:
+            most_reported.append({**a, "report_count": r["n"]})
+
+    return {
+        "generated_at": now.isoformat(),
+        "window_days": days,
+        "today_utc": now.strftime("%Y-%m-%d"),
+        "operator_note": "Read-only retention instrumentation. No notifications, no behavior shaping. Funnel uses distinct users.",
+        "funnel": funnel,
+        "return_to_defend": {
+            "submitter_debate_pairs": len(earliest),
+            "returned": returners,
+            "pct": return_to_defend_pct,
+        },
+        "engagement": {
+            "submitters": submitters_count,
+            "multi_submitters": multi_submitters,
+            "multi_submitter_pct": _ratio(multi_submitters, submitters_count),
+            "avg_args_per_submitter": avg_args_per_submitter,
+            "avg_argument_length_chars": int(avg_arg_len),
+            "lurker_pct": lurker_pct,
+            "lurkers": len(lurkers),
+            "openers": len(opener_ids),
+        },
+        "retention": {
+            "d1": d1,
+            "d7": d7,
+        },
+        "cohorts_first_category": cohort_rows,
+        "qualitative": {
+            "fastest_rising": fastest,
+            "most_reported": most_reported,
+        },
+    }
+
+
+@admin_router.get("/events/export")
+async def admin_events_export(_admin: dict = Depends(_require_admin), days: int = Query(default=14, ge=1, le=90), event_name: Optional[str] = None, limit: int = Query(default=20000, ge=1, le=100000)):
+    """Raw event export for offline analysis. JSON only (CSV done client-side)."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    q: dict = {"created_at": {"$gte": since}}
+    if event_name:
+        q["event_name"] = event_name
+    cursor = db.debate_analytics_events.find(q, {"_id": 0}).sort("created_at", 1).limit(limit)
+    rows = await cursor.to_list(limit)
+    return {"window_days": days, "count": len(rows), "events": rows}

@@ -9,7 +9,7 @@
  *
  * Mobile: sides stack vertically. Composer is sticky.
  */
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
@@ -222,6 +222,16 @@ export default function DebateRoom() {
   const { user } = useAuth();
   const { debate, args, leaderboard, status, error, refresh } = useDebateRoom(slug);
   const [busy, setBusy] = useState(false);
+
+  // One-shot open event (do NOT couple to the polling refresh — we need a clean
+  // open/join/submit funnel signal for the retention dashboard).
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (debate && !openedRef.current) {
+      openedRef.current = true;
+      api.post(`/debates/${slug}/track`, { event_name: "debate_room_opened", metadata: { authed: !!user } }).catch(() => {});
+    }
+  }, [debate, slug, user]);
 
   const mySide = debate?.my_side || null;
   const sideA = useMemo(() => args.filter((x) => x.side === "A"), [args]);

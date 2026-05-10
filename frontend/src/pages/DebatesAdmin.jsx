@@ -188,6 +188,8 @@ export default function DebatesAdmin() {
         )}
 
         <div className="mt-8 text-[10px] font-mono text-muted">
+          <Link to="/admin/debates/retention" className="hover:text-ink underline">Debates retention</Link>
+          {" · "}
           <Link to="/admin/anonymous-metrics" className="hover:text-ink underline">Anonymous metrics</Link>
           {" · "}
           <Link to="/admin/voice-metrics" className="hover:text-ink underline">Voice metrics</Link>
