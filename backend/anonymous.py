@@ -673,3 +673,284 @@ async def admin_resolve_report(report_id: str, payload: AdminAction, admin: dict
     if res.matched_count == 0:
         raise HTTPException(404, "Report not found")
     return {"ok": True}
+
+
+
+# -------- Observability (read-only) --------
+# Operator note: this endpoint is INSTRUMENTATION, not product expansion.
+# Aggregates only over EXISTING collections. No schema changes.
+# Used by /admin/anonymous-metrics dashboard for behavioral evidence
+# during the measurement freeze.
+def _day_key(iso_str: str) -> str:
+    return (iso_str or "")[:10]  # YYYY-MM-DD
+
+
+@admin_router.get("/observability")
+async def admin_observability(_admin: dict = Depends(_require_admin), days: int = Query(default=7, ge=1, le=90)):
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    since_24h = (now - timedelta(days=1)).isoformat()
+    since_7d = (now - timedelta(days=7)).isoformat()
+    today_key = now.strftime("%Y-%m-%d")
+
+    # ---- Activity signal: an event in anonymous_analytics OR a user message
+    # We treat "active session" = any analytics event in the window.
+    dau_pipeline = [
+        {"$match": {"created_at": {"$gte": since_24h}, "session_id": {"$ne": None}}},
+        {"$group": {"_id": "$session_id"}},
+        {"$count": "n"},
+    ]
+    wau_pipeline = [
+        {"$match": {"created_at": {"$gte": since_7d}, "session_id": {"$ne": None}}},
+        {"$group": {"_id": "$session_id"}},
+        {"$count": "n"},
+    ]
+    dau_res = await db.anonymous_analytics.aggregate(dau_pipeline).to_list(1)
+    wau_res = await db.anonymous_analytics.aggregate(wau_pipeline).to_list(1)
+    dau = (dau_res[0]["n"] if dau_res else 0)
+    wau = (wau_res[0]["n"] if wau_res else 0)
+
+    # DAU time-series for the requested window (per UTC day)
+    daily_pipeline = [
+        {"$match": {"created_at": {"$gte": since}, "session_id": {"$ne": None}}},
+        {"$group": {"_id": {"day": {"$substr": ["$created_at", 0, 10]}, "session_id": "$session_id"}}},
+        {"$group": {"_id": "$_id.day", "users": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+    ]
+    daily_rows = await db.anonymous_analytics.aggregate(daily_pipeline).to_list(120)
+    daily_active = [{"day": r["_id"], "users": r["users"]} for r in daily_rows if r.get("_id")]
+
+    # ---- Sessions in window
+    sessions_in_window = await db.anonymous_sessions.count_documents({"created_at": {"$gte": since}})
+    total_sessions = await db.anonymous_sessions.count_documents({})
+
+    # ---- Messages
+    msgs_user = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "message_type": "user"})
+    msgs_user_allowed = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "message_type": "user", "moderation_status": "allowed"})
+    msgs_blocked = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "moderation_status": "blocked"})
+    msgs_escalated = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "moderation_status": "escalated"})
+    msgs_system = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "message_type": "system"})
+    reports_count = await db.anonymous_reports.count_documents({"created_at": {"$gte": since}})
+
+    # ---- Avg messages per (talking) session
+    talkers_pipeline = [
+        {"$match": {"created_at": {"$gte": since}, "message_type": "user", "moderation_status": "allowed"}},
+        {"$group": {"_id": "$session_id", "n": {"$sum": 1}}},
+    ]
+    talker_rows = await db.anonymous_messages.aggregate(talkers_pipeline).to_list(10000)
+    talker_count = len(talker_rows)
+    avg_msgs_per_talker = round(sum(r["n"] for r in talker_rows) / talker_count, 2) if talker_count else 0.0
+
+    # WAU-relative lurker vs talker. Talker = sent ≥1 allowed user msg in window. Lurker = active but no msg.
+    active_in_window_pipeline = [
+        {"$match": {"created_at": {"$gte": since}, "session_id": {"$ne": None}}},
+        {"$group": {"_id": "$session_id"}},
+    ]
+    active_rows = await db.anonymous_analytics.aggregate(active_in_window_pipeline).to_list(20000)
+    active_session_ids = {r["_id"] for r in active_rows if r.get("_id")}
+    talker_ids = {r["_id"] for r in talker_rows if r.get("_id")}
+    talkers = len(active_session_ids & talker_ids)
+    lurkers = max(0, len(active_session_ids) - talkers)
+    lurker_talker_ratio = round(lurkers / talkers, 2) if talkers else None
+
+    # ---- Avg session duration (last_seen - created)
+    duration_pipeline = [
+        {"$match": {"created_at": {"$gte": since}, "last_seen_at": {"$ne": None}}},
+        {"$project": {"_id": 0, "created_at": 1, "last_seen_at": 1}},
+    ]
+    duration_rows = await db.anonymous_sessions.aggregate(duration_pipeline).to_list(20000)
+    durations_sec = []
+    for r in duration_rows:
+        try:
+            c = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+            ls = datetime.fromisoformat(r["last_seen_at"].replace("Z", "+00:00"))
+            d = (ls - c).total_seconds()
+            if d >= 0:
+                durations_sec.append(d)
+        except Exception:
+            continue
+    avg_session_duration_sec = round(sum(durations_sec) / len(durations_sec), 1) if durations_sec else 0.0
+
+    # ---- Rates
+    block_rate_pct = round(100 * msgs_blocked / max(1, msgs_user), 1)
+    report_rate_pct = round(100 * reports_count / max(1, msgs_user_allowed), 2)
+    # AI reply usage = system messages emitted (crisis/AI moderation responses) per user msg
+    ai_reply_usage_pct = round(100 * msgs_system / max(1, msgs_user_allowed), 1)
+
+    # ---- Peak concurrent (estimate from join events bucketed by 5-min)
+    join_pipeline = [
+        {"$match": {"event_name": "anonymous_room_joined", "created_at": {"$gte": since}}},
+        {"$group": {"_id": {"$substr": ["$created_at", 0, 15]}, "n": {"$sum": 1}}},  # YYYY-MM-DDTHH:M -> 10-min bucket
+        {"$sort": {"n": -1}},
+        {"$limit": 1},
+    ]
+    peak_rows = await db.anonymous_analytics.aggregate(join_pipeline).to_list(1)
+    peak_concurrent_estimate = peak_rows[0]["n"] if peak_rows else 0
+
+    # Real-time current active count from in-memory manager
+    rooms = await db.anonymous_rooms.find({}, {"_id": 0, "slug": 1, "title": 1, "status": 1, "created_at": 1}).to_list(100)
+    rooms_total = len(rooms)
+    rooms_active_now = 0
+    room_rows = []
+    for r in rooms:
+        slug = r["slug"]
+        active_now = await manager.active_count(slug)
+        rooms_active_now += active_now
+        msgs = await db.anonymous_messages.count_documents({"room_slug": slug, "moderation_status": "allowed", "message_type": "user", "created_at": {"$gte": since}})
+        # Distinct talkers in this room
+        room_talker_pipeline = [
+            {"$match": {"room_slug": slug, "message_type": "user", "moderation_status": "allowed", "created_at": {"$gte": since}}},
+            {"$group": {"_id": "$session_id"}},
+            {"$count": "n"},
+        ]
+        rt = await db.anonymous_messages.aggregate(room_talker_pipeline).to_list(1)
+        room_talkers = rt[0]["n"] if rt else 0
+        # Distinct joiners (active sessions for this room)
+        room_join_pipeline = [
+            {"$match": {"event_name": "anonymous_room_joined", "room_slug": slug, "created_at": {"$gte": since}}},
+            {"$group": {"_id": "$session_id"}},
+            {"$count": "n"},
+        ]
+        rj = await db.anonymous_analytics.aggregate(room_join_pipeline).to_list(1)
+        room_joiners = rj[0]["n"] if rj else 0
+        abandonment = round(100 * (1 - (room_talkers / room_joiners)), 1) if room_joiners else None
+        last = await db.anonymous_messages.find_one({"room_slug": slug, "moderation_status": "allowed"}, {"_id": 0, "created_at": 1}, sort=[("created_at", -1)])
+        room_rows.append({
+            "slug": slug,
+            "title": r.get("title"),
+            "status": r.get("status"),
+            "active_now": active_now,
+            "messages": msgs,
+            "talkers": room_talkers,
+            "joiners": room_joiners,
+            "abandonment_pct": abandonment,
+            "last_message_at": (last or {}).get("created_at"),
+        })
+    room_rows.sort(key=lambda x: (x["messages"], x["active_now"]), reverse=True)
+
+    # Room creation rate: Phase 1 explicitly disables user-created rooms.
+    rooms_created_in_window = await db.anonymous_rooms.count_documents({"created_at": {"$gte": since}}) if rooms_total else 0
+    user_created_rooms_locked = True  # Phase 1 constraint
+
+    # ---- Retention (D1 / D7)
+    # D1: sessions created in window (excluding the latest day so they have a chance to return),
+    # had at least 1 analytics event on a day strictly after their created_at day.
+    retention_window_start = (now - timedelta(days=days + 1)).isoformat()
+    eligible_d1 = await db.anonymous_sessions.find(
+        {"created_at": {"$gte": retention_window_start, "$lt": (now - timedelta(days=1)).isoformat()}},
+        {"_id": 0, "session_id": 1, "created_at": 1},
+    ).to_list(20000)
+    d1_returned = 0
+    eligible_d7 = []
+    eligible_d7_sessions = await db.anonymous_sessions.find(
+        {"created_at": {"$gte": (now - timedelta(days=days + 8)).isoformat(), "$lt": (now - timedelta(days=7)).isoformat()}},
+        {"_id": 0, "session_id": 1, "created_at": 1},
+    ).to_list(20000)
+    eligible_d7 = eligible_d7_sessions
+
+    if eligible_d1:
+        ids = [s["session_id"] for s in eligible_d1]
+        # For efficiency, fetch all events for these sessions and bucket by day
+        events = await db.anonymous_analytics.find(
+            {"session_id": {"$in": ids}},
+            {"_id": 0, "session_id": 1, "created_at": 1},
+        ).to_list(200000)
+        by_session: dict[str, set[str]] = defaultdict(set)
+        for e in events:
+            sid = e.get("session_id")
+            d = _day_key(e.get("created_at", ""))
+            if sid and d:
+                by_session[sid].add(d)
+        for s in eligible_d1:
+            sid = s["session_id"]
+            created_day = _day_key(s.get("created_at", ""))
+            days_active = by_session.get(sid, set())
+            if any(d > created_day for d in days_active):
+                d1_returned += 1
+    d1_retention_pct = round(100 * d1_returned / max(1, len(eligible_d1)), 1) if eligible_d1 else None
+
+    d7_returned = 0
+    if eligible_d7:
+        ids7 = [s["session_id"] for s in eligible_d7]
+        events7 = await db.anonymous_analytics.find(
+            {"session_id": {"$in": ids7}},
+            {"_id": 0, "session_id": 1, "created_at": 1},
+        ).to_list(200000)
+        by_session7: dict[str, set[str]] = defaultdict(set)
+        for e in events7:
+            sid = e.get("session_id")
+            d = _day_key(e.get("created_at", ""))
+            if sid and d:
+                by_session7[sid].add(d)
+        from datetime import date as _date
+        for s in eligible_d7:
+            sid = s["session_id"]
+            created_day_str = _day_key(s.get("created_at", ""))
+            try:
+                cd = _date.fromisoformat(created_day_str)
+            except Exception:
+                continue
+            days_active = by_session7.get(sid, set())
+            for d in days_active:
+                try:
+                    if (_date.fromisoformat(d) - cd).days >= 7:
+                        d7_returned += 1
+                        break
+                except Exception:
+                    continue
+    d7_retention_pct = round(100 * d7_returned / max(1, len(eligible_d7)), 1) if eligible_d7 else None
+
+    # ---- Aggregate room abandonment
+    room_joiners_total = sum((r["joiners"] or 0) for r in room_rows)
+    room_talkers_total = sum((r["talkers"] or 0) for r in room_rows)
+    overall_abandonment_pct = round(100 * (1 - (room_talkers_total / room_joiners_total)), 1) if room_joiners_total else None
+
+    return {
+        "generated_at": now.isoformat(),
+        "window_days": days,
+        "today_utc": today_key,
+        "operator_note": "Read-only observability for the measurement freeze. No product features.",
+        # Headline behavioral evidence
+        "audience": {
+            "dau": dau,
+            "wau": wau,
+            "sessions_created_in_window": sessions_in_window,
+            "total_sessions_all_time": total_sessions,
+            "daily_active_series": daily_active,
+        },
+        "engagement": {
+            "messages_user_allowed": msgs_user_allowed,
+            "messages_user_total": msgs_user,
+            "talkers": talkers,
+            "lurkers": lurkers,
+            "lurker_talker_ratio": lurker_talker_ratio,
+            "avg_msgs_per_talker": avg_msgs_per_talker,
+            "avg_session_duration_sec": avg_session_duration_sec,
+            "peak_concurrent_estimate": peak_concurrent_estimate,
+            "active_now_total": rooms_active_now,
+        },
+        "safety": {
+            "blocked": msgs_blocked,
+            "escalated": msgs_escalated,
+            "block_rate_pct": block_rate_pct,
+            "reports": reports_count,
+            "report_rate_pct": report_rate_pct,
+            "ai_reply_usage_pct": ai_reply_usage_pct,
+            "system_messages": msgs_system,
+        },
+        "retention": {
+            "d1_pct": d1_retention_pct,
+            "d1_eligible": len(eligible_d1),
+            "d1_returned": d1_returned,
+            "d7_pct": d7_retention_pct,
+            "d7_eligible": len(eligible_d7),
+            "d7_returned": d7_returned,
+        },
+        "rooms": {
+            "total": rooms_total,
+            "user_created_rooms_locked": user_created_rooms_locked,
+            "rooms_created_in_window": rooms_created_in_window,
+            "overall_abandonment_pct": overall_abandonment_pct,
+            "rows": room_rows,
+        },
+    }

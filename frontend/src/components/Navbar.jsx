@@ -46,6 +46,9 @@ export default function Navbar() {
                   <Link to="/admin/anonymous-reality" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-anonymous">
                     Anon Mod
                   </Link>
+                  <Link to="/admin/anonymous-metrics" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-anonymous-metrics">
+                    Anon Metrics
+                  </Link>
                 </>
               )}
               <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[180px]" data-testid="nav-user-email">

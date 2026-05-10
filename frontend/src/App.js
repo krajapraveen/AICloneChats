@@ -26,6 +26,7 @@ import AnonymousRoom from "./pages/AnonymousRoom";
 import AnonymousAdmin from "./pages/AnonymousAdmin";
 import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
 import AdminVoiceMetrics from "./pages/AdminVoiceMetrics";
+import AdminAnonymousMetrics from "./pages/AdminAnonymousMetrics";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -51,6 +52,7 @@ function AppRouter() {
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
+      <Route path="/admin/anonymous-metrics" element={<AdminAnonymousMetrics />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
