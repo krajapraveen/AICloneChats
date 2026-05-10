@@ -107,7 +107,8 @@ export default function useTranslationChat(roomId) {
 
   const join = useCallback(async (display_name, preferred_language) => {
     await api.post(`/translation-chat/rooms/${roomId}/join`, { display_name, preferred_language }, { headers: withDevice() });
-    api.post(`/translation-chat/rooms/${roomId}/track`, { event_name: "translation_room_joined", metadata: { preferred_language } }, { headers: withDevice() }).catch(() => {});
+    // Server emits `translation_room_joined` only on first fresh insert (idempotent).
+    // We do NOT emit a duplicate from the client — that would inflate raw event counts.
     await refreshRoom();
     // Reload messages with new target language
     seenIdsRef.current = new Set();

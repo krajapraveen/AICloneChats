@@ -254,7 +254,8 @@ export default function DebateRoom() {
     setBusy(true);
     try {
       await api.post(`/debates/${slug}/join`, { side });
-      api.post(`/debates/${slug}/track`, { event_name: "debate_joined", metadata: { side } }).catch(() => {});
+      // Server emits `debate_joined` only on first fresh participant insert (idempotent).
+      // We do NOT emit a duplicate from the client — that would inflate raw event counts.
       toast.success(`You're on side ${side}.`);
       refresh();
     } catch (e) {

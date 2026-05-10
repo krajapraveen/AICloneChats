@@ -668,6 +668,20 @@ async def admin_retention(_admin: dict = Depends(_require_admin), days: int = Qu
     submitted_users = await _distinct_users("debate_argument_submitted", since)
     voted_users = await _distinct_users("debate_vote_clicked", since)
 
+    # P6: anonymous list_viewed events (user_id = null) are NOT in the funnel
+    # above (which filters user_id != null). Surface them separately so the
+    # founder can see how much top-of-funnel is auth-gated invisible.
+    list_viewed_anon_events = await db.debate_analytics_events.count_documents({
+        "event_name": "debate_list_viewed",
+        "created_at": {"$gte": since},
+        "user_id": None,
+    })
+    room_opened_anon_events = await db.debate_analytics_events.count_documents({
+        "event_name": "debate_room_opened",
+        "created_at": {"$gte": since},
+        "user_id": None,
+    })
+
     list_viewed_evt = await _total_events("debate_list_viewed", since)
     opened_evt = await _total_events("debate_room_opened", since)
     joined_evt = await _total_events("debate_joined", since)
@@ -692,6 +706,10 @@ async def admin_retention(_admin: dict = Depends(_require_admin), days: int = Qu
         "joined_events": joined_evt,
         "submitted_events": submitted_evt,
         "voted_events": voted_evt,
+        # P6 — auth-gate visibility (anonymous events excluded from distinct-user funnel above)
+        "list_viewed_anon_events": list_viewed_anon_events,
+        "room_opened_anon_events": room_opened_anon_events,
+        "auth_gate_note": "Distinct-user ratios above use user_id != null. Anonymous traffic counts are surfaced separately so they don't distort interpretation.",
         # ratios (user-level)
         "open_rate_pct": _ratio(opened_users, list_viewed_users),
         "join_rate_pct": _ratio(joined_users, opened_users),

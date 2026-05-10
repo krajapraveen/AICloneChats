@@ -8,6 +8,14 @@ import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
 
 function num(n) { return n === null || n === undefined ? "—" : (typeof n === "number" && n >= 1000 ? n.toLocaleString() : String(n)); }
+function pct(n) { return n === null || n === undefined ? "—" : `${n}%`; }
+function dur(s) {
+  if (!s && s !== 0) return "—";
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${(s / 60).toFixed(1)}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
+  return `${(s / 86400).toFixed(1)}d`;
+}
 
 function StatCard({ label, value, sub, testid }) {
   return (
@@ -88,6 +96,18 @@ export default function AdminTranslationChat() {
               <StatCard testid="tx-msgs" label="Messages" value={num(data.messages_in_window)} sub={`${data.copy_events} copies`} />
               <StatCard testid="tx-blocks" label="Blocked" value={num(data.messages_blocked)} sub="safety blocks" />
               <StatCard testid="tx-members" label="Members joined" value={num(data.members_joined_in_window)} />
+              <StatCard testid="tx-avg-msgs-per-room" label="Avg msgs / active room" value={num(data.avg_messages_per_room)} sub="signal of room depth" />
+              <StatCard testid="tx-repeat-joiners" label="Repeat room joiners" value={num(data.repeat_room_joiners)} sub={data.repeat_room_joiner_pct !== null ? `${pct(data.repeat_room_joiner_pct)} of ${num(data.distinct_members)} distinct members` : "—"} />
+              <StatCard testid="tx-median-duration" label="Median session duration" value={dur(data.median_session_duration_sec)} sub="member tenure proxy" />
+              <StatCard testid="tx-d1-return" label="D1 return rate" value={pct(data.d1_return?.pct)} sub={`${num(data.d1_return?.returned)} of ${num(data.d1_return?.eligible)} cohort`} />
+            </div>
+
+            {/* P2 invite attribution */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mt-4" data-testid="tx-invite-attribution">
+              <StatCard testid="tx-invite-arrivals" label="Arrivals via invite" value={num(data.invite?.arrivals_via_invite)} sub={pct(data.invite?.invite_share_pct)} />
+              <StatCard testid="tx-invite-organic" label="Organic arrivals (est.)" value={num(data.invite?.organic_arrivals_estimate)} sub="members - invite arrivals" />
+              <StatCard testid="tx-invite-copies" label="Invite link copies" value={num(data.invite?.invite_link_copies)} sub="share intent" />
+              <StatCard testid="tx-invite-joined-evt" label="Server join events" value={num(data.invite?.member_joined_events)} sub="raw stream" />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
@@ -121,7 +141,33 @@ export default function AdminTranslationChat() {
               </div>
             </div>
 
-            <div className="mt-8 text-[10px] font-mono text-muted">
+            {/* Language pair frequency — corridors */}
+            <div className="brutal-card overflow-x-auto mt-4" data-testid="tx-lang-pairs">
+              <div className="px-4 pt-3 text-[11px] font-mono uppercase tracking-widest text-muted">Language pair frequency · which corridors are active?</div>
+              <table className="w-full text-sm">
+                <thead className="text-[11px] font-mono uppercase tracking-widest text-muted">
+                  <tr className="border-b border-ink/10">
+                    <th className="text-left p-3">Source</th>
+                    <th className="text-left p-3">Target</th>
+                    <th className="text-right p-3">Translations</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.language_pair_frequency || []).length === 0 && <tr><td colSpan={3} className="p-4 text-center text-muted text-xs">No translation pairs in window.</td></tr>}
+                  {(data.language_pair_frequency || []).map((p) => (
+                    <tr key={`${p.source}-${p.target}`} className="border-b border-ink/5" data-testid={`tx-pair-${p.source}-${p.target}`}>
+                      <td className="p-3 font-mono text-xs uppercase tracking-widest text-ink">{p.source}</td>
+                      <td className="p-3 font-mono text-xs uppercase tracking-widest text-ink">→ {p.target}</td>
+                      <td className="p-3 text-right tabular-nums">{p.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-6 text-[10px] font-mono text-muted">{data.operator_note}</div>
+
+            <div className="mt-4 text-[10px] font-mono text-muted">
               <Link to="/admin/chats" className="hover:text-ink underline">All chats</Link>
               {" · "}<Link to="/admin/safety" className="hover:text-ink underline">Safety</Link>
               {" · "}<Link to="/admin/debates/retention" className="hover:text-ink underline">Debates retention</Link>

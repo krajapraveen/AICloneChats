@@ -783,10 +783,17 @@ async def admin_observability(_admin: dict = Depends(_require_admin), days: int 
     # AI reply usage = system messages emitted (crisis/AI moderation responses) per user msg
     ai_reply_usage_pct = round(100 * msgs_system / max(1, msgs_user_allowed), 1)
 
-    # ---- Peak concurrent (estimate from join events bucketed by 5-min)
+    # ---- Peak concurrent (estimate from join events bucketed by 10-min)
+    # Dedup per (session, 10-min bucket) so page refreshes / re-mounts of the
+    # AnonymousRoom component do NOT inflate the peak. One human in one
+    # 10-min window counts as one — regardless of how many `room_joined`
+    # events the client emits for that session.
     join_pipeline = [
-        {"$match": {"event_name": "anonymous_room_joined", "created_at": {"$gte": since}}},
-        {"$group": {"_id": {"$substr": ["$created_at", 0, 15]}, "n": {"$sum": 1}}},  # YYYY-MM-DDTHH:M -> 10-min bucket
+        {"$match": {"event_name": "anonymous_room_joined", "created_at": {"$gte": since}, "session_id": {"$ne": None}}},
+        # Dedupe per session per 10-min bucket
+        {"$group": {"_id": {"bucket": {"$substr": ["$created_at", 0, 15]}, "session_id": "$session_id"}}},
+        # Count distinct sessions per bucket
+        {"$group": {"_id": "$_id.bucket", "n": {"$sum": 1}}},
         {"$sort": {"n": -1}},
         {"$limit": 1},
     ]

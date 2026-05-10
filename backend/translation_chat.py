@@ -420,7 +420,8 @@ async def _require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 @admin_router.get("/metrics")
 async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Query(default=7, ge=1, le=90)):
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
     rooms_total = await db.translation_rooms.count_documents({})
     rooms_active = await db.translation_rooms.count_documents({"is_active": True, "last_message_at": {"$gte": since}})
     msgs_total = await db.translation_messages.count_documents({"created_at": {"$gte": since}})
@@ -438,6 +439,121 @@ async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Quer
         {"$sort": {"n": -1}},
     ]).to_list(20)
     by_pref = [{"language": r["_id"] or "unknown", "count": r["n"]} for r in pref_rows]
+
+    # ---- Avg messages per active room (in-window) ----
+    avg_msgs_per_room = round(msgs_total / max(1, rooms_active), 2) if rooms_active else 0.0
+
+    # ---- Repeat room joiners ----
+    # Members who appear in ≥2 rooms across all time. Identifies cross-room
+    # behavior — someone who finds a second room is showing real product gravity.
+    repeat_rows = await db.translation_room_members.aggregate([
+        {"$group": {"_id": "$member_id", "rooms": {"$addToSet": "$room_id"}}},
+        {"$project": {"n_rooms": {"$size": "$rooms"}}},
+        {"$match": {"n_rooms": {"$gte": 2}}},
+        {"$count": "n"},
+    ]).to_list(1)
+    repeat_room_joiners = repeat_rows[0]["n"] if repeat_rows else 0
+    distinct_members_rows = await db.translation_room_members.aggregate([
+        {"$group": {"_id": "$member_id"}},
+        {"$count": "n"},
+    ]).to_list(1)
+    distinct_members = distinct_members_rows[0]["n"] if distinct_members_rows else 0
+    repeat_joiner_pct = round(100 * repeat_room_joiners / max(1, distinct_members), 1) if distinct_members else None
+
+    # ---- Language pair frequency ----
+    # Each message has a source_language and translations targeting the other
+    # supported langs. Each (source -> target) pair where target was actually
+    # generated counts as one corridor activation.
+    pair_pipeline = [
+        {"$match": {"created_at": {"$gte": since}, "source_language": {"$ne": None}}},
+        {"$project": {"_id": 0, "source_language": 1, "targets": {"$objectToArray": "$translations"}}},
+        {"$unwind": "$targets"},
+        {"$match": {"$expr": {"$ne": ["$source_language", "$targets.k"]}}},
+        {"$group": {"_id": {"src": "$source_language", "tgt": "$targets.k"}, "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+        {"$limit": 30},
+    ]
+    pair_rows = await db.translation_messages.aggregate(pair_pipeline).to_list(30)
+    language_pair_frequency = [
+        {"source": r["_id"]["src"], "target": r["_id"]["tgt"], "count": r["n"]}
+        for r in pair_rows if r.get("_id")
+    ]
+
+    # ---- D1 return rate (event-based, mirrors debates retention) ----
+    # Cohort: members whose FIRST event was in [now-2d, now-1d). Returned: any
+    # event >= 24h after their first event.
+    cohort_start = (now - timedelta(days=2)).isoformat()
+    cohort_end = (now - timedelta(days=1)).isoformat()
+    first_evt_rows = await db.translation_chat_events.aggregate([
+        {"$match": {"created_at": {"$gte": cohort_start, "$lt": cohort_end}, "member_id": {"$ne": None}}},
+        {"$group": {"_id": "$member_id", "first_at": {"$min": "$created_at"}}},
+    ]).to_list(20000)
+    d1_eligible = len(first_evt_rows)
+    d1_returned = 0
+    if first_evt_rows:
+        ids = [r["_id"] for r in first_evt_rows]
+        first_map = {r["_id"]: r["first_at"] for r in first_evt_rows}
+        evs = await db.translation_chat_events.find(
+            {"member_id": {"$in": ids}}, {"_id": 0, "member_id": 1, "created_at": 1},
+        ).to_list(200000)
+        by_uid: dict = {}
+        for e in evs:
+            by_uid.setdefault(e["member_id"], []).append(e["created_at"])
+        for uid, first_at in first_map.items():
+            try:
+                fdt = datetime.fromisoformat(first_at.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            for ts in by_uid.get(uid, []):
+                try:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if (dt - fdt).total_seconds() >= 86400:
+                    d1_returned += 1
+                    break
+    d1_return_pct = round(100 * d1_returned / max(1, d1_eligible), 1) if d1_eligible else None
+
+    # ---- Median session duration (member tenure: last_seen_at - joined_at) ----
+    # We don't have a session concept; the closest proxy is per-member tenure
+    # inside a room. Skews high for long-lived rooms, but useful as a signal.
+    duration_rows = await db.translation_room_members.find(
+        {"joined_at": {"$gte": since}, "last_seen_at": {"$ne": None}},
+        {"_id": 0, "joined_at": 1, "last_seen_at": 1},
+    ).to_list(20000)
+    durations: list[float] = []
+    for r in duration_rows:
+        try:
+            j = datetime.fromisoformat(r["joined_at"].replace("Z", "+00:00"))
+            ls = datetime.fromisoformat(r["last_seen_at"].replace("Z", "+00:00"))
+            d = (ls - j).total_seconds()
+            if d >= 0:
+                durations.append(d)
+        except Exception:
+            continue
+    if durations:
+        durations.sort()
+        mid = len(durations) // 2
+        median_session_duration_sec = (
+            durations[mid] if len(durations) % 2 == 1
+            else round((durations[mid - 1] + durations[mid]) / 2, 1)
+        )
+    else:
+        median_session_duration_sec = 0.0
+
+    # ---- Invite vs organic attribution ----
+    invite_arrivals = await db.translation_chat_events.count_documents({
+        "event_name": "translation_room_arrived_via_invite", "created_at": {"$gte": since},
+    })
+    invite_link_copies = await db.translation_chat_events.count_documents({
+        "event_name": "translation_invite_link_copied", "created_at": {"$gte": since},
+    })
+    member_joined_evt = await db.translation_chat_events.count_documents({
+        "event_name": "translation_room_joined", "created_at": {"$gte": since},
+    })
+    # Organic = members minus invite-attributed. Floor at 0.
+    organic_arrivals = max(0, members - invite_arrivals)
+
     return {
         "window_days": days,
         "rooms_total": rooms_total,
@@ -448,6 +564,23 @@ async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Quer
         "copy_events": copies,
         "messages_by_source_language": by_lang,
         "members_by_preferred_language": by_pref,
+        # P1 unlocks:
+        "avg_messages_per_room": avg_msgs_per_room,
+        "repeat_room_joiners": repeat_room_joiners,
+        "repeat_room_joiner_pct": repeat_joiner_pct,
+        "distinct_members": distinct_members,
+        "language_pair_frequency": language_pair_frequency,
+        "d1_return": {"eligible": d1_eligible, "returned": d1_returned, "pct": d1_return_pct},
+        "median_session_duration_sec": median_session_duration_sec,
+        # P2 invite attribution:
+        "invite": {
+            "arrivals_via_invite": invite_arrivals,
+            "invite_link_copies": invite_link_copies,
+            "member_joined_events": member_joined_evt,
+            "organic_arrivals_estimate": organic_arrivals,
+            "invite_share_pct": round(100 * invite_arrivals / max(1, members), 1) if members else None,
+        },
+        "operator_note": "Read-only behavioral instrumentation. No notifications, no behavior shaping.",
     }
 
 

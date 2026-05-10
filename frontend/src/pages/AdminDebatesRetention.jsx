@@ -207,6 +207,18 @@ export default function AdminDebatesRetention() {
                 <div className="text-xs font-mono text-muted" data-testid="funnel-ratio-arg">argument rate · <span className="text-ink">{pct(f?.argument_rate_pct)}</span></div>
                 <div className="text-xs font-mono text-muted" data-testid="funnel-ratio-vote">vote rate · <span className="text-ink">{pct(f?.vote_rate_pct)}</span></div>
               </div>
+              {/* P6 — auth-gate honesty: surface anonymous (logged-out) traffic that doesn't appear in the distinct-user funnel above. */}
+              <div className="border-t border-ink/10 pt-3 mt-2 grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="funnel-auth-gate">
+                <div className="text-[11px] font-mono text-muted">
+                  Anon list views (excluded from funnel) · <span className="text-ink" data-testid="funnel-anon-list-viewed">{num(f?.list_viewed_anon_events)}</span>
+                </div>
+                <div className="text-[11px] font-mono text-muted">
+                  Anon room opens (excluded from funnel) · <span className="text-ink" data-testid="funnel-anon-opened">{num(f?.room_opened_anon_events)}</span>
+                </div>
+                <div className="text-[10px] font-mono text-muted/80 col-span-full mt-1">
+                  Distinct-user ratios above filter <code>user_id != null</code>. If anon counts are large, the real top-of-funnel is wider than the funnel suggests — open/join rates may be artificially high.
+                </div>
+              </div>
             </div>
 
             {/* ENGAGEMENT QUALITY */}

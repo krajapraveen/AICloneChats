@@ -125,6 +125,24 @@ export default function TranslationRoom() {
   const [sending, setSending] = useState(false);
   const scrollRef = useRef(null);
 
+  // P2: invite attribution. If URL contains ?invite=1 we tag this arrival as
+  // invite-attributed exactly once. Recorded against the channel-level events
+  // collection so admin dashboard can split organic vs invite traffic.
+  const inviteEmittedRef = useRef(false);
+  useEffect(() => {
+    if (inviteEmittedRef.current) return;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("invite") === "1") {
+        inviteEmittedRef.current = true;
+        api.post(`/translation-chat/rooms/${roomId}/track`, {
+          event_name: "translation_room_arrived_via_invite",
+          metadata: { room_id: roomId },
+        }).catch(() => {});
+      }
+    } catch { /* noop */ }
+  }, [roomId]);
+
   // Track open
   useEffect(() => {
     api.post(`/translation-chat/rooms/${roomId}/track`, {
@@ -157,7 +175,8 @@ export default function TranslationRoom() {
   }, [draft, sending, send]);
 
   const onCopyInvite = async () => {
-    const url = `${window.location.origin}/translation-chat/${roomId}`;
+    // P2: invite attribution — tag the link so we can measure organic vs invite arrivals.
+    const url = `${window.location.origin}/translation-chat/${roomId}?invite=1`;
     try {
       await navigator.clipboard.writeText(url);
       toast.success("Invite link copied");
