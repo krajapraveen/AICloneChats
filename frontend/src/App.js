@@ -20,7 +20,9 @@ import SmartReplyHistory from "./pages/SmartReplyHistory";
 import SmartReplyFavorites from "./pages/SmartReplyFavorites";
 import VoiceMessaging from "./pages/VoiceMessaging";
 import VoiceHistory from "./pages/VoiceHistory";
+import VoiceSharePublic from "./pages/VoiceSharePublic";
 import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
+import AdminVoiceMetrics from "./pages/AdminVoiceMetrics";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -40,7 +42,9 @@ function AppRouter() {
       <Route path="/smart-reply/favorites" element={<SmartReplyFavorites />} />
       <Route path="/voice" element={<VoiceMessaging />} />
       <Route path="/voice/history" element={<VoiceHistory />} />
+      <Route path="/v/:shareId" element={<VoiceSharePublic />} />
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
+      <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />

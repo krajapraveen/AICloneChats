@@ -19,6 +19,7 @@ import analytics  # noqa: E402
 import smart_reply  # noqa: E402
 import admin  # noqa: E402
 import voice  # noqa: E402
+import voice_metrics  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -45,6 +46,7 @@ app.include_router(analytics.router)
 app.include_router(smart_reply.router)
 app.include_router(admin.router)
 app.include_router(voice.router)
+app.include_router(voice_metrics.router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -104,6 +106,10 @@ async def on_startup():
     await _db.generated_messages.create_index([("user_id", 1), ("created_at", -1)])
     await _db.voice_usage_events.create_index([("created_at", -1)])
     await _db.voice_anon_trials.create_index("device_id", unique=True)
+    await _db.voice_shares.create_index("share_id", unique=True)
+    await _db.voice_shares.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.voice_shares.create_index([("device_id", 1), ("created_at", -1)])
+    await _db.voice_shares.create_index("message_id")
     # Seed env ADMIN_EMAILS into DB (idempotent) so admin status survives redeploys
     try:
         from admin import seed_admins_from_env

@@ -33,6 +33,7 @@ from emergentintegrations.llm.openai import OpenAISpeechToText
 from db import db
 from auth import get_optional_user
 from models import now_iso
+from pii_redact import redact
 
 load_dotenv()
 
@@ -609,9 +610,98 @@ async def track(payload: dict, actor: dict = Depends(voice_actor)):
     allowed = {
         "voice_page_viewed", "voice_record_started", "voice_record_stopped",
         "voice_history_opened", "voice_message_regenerated", "voice_example_clicked",
-        "voice_signup_wall_shown",
+        "voice_signup_wall_shown", "voice_share_warning_shown", "voice_share_warning_dismissed",
     }
     if event_name not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported event")
     await _emit(actor, event_name)
+    return {"ok": True}
+
+
+# -------------- Share link (minimal, opt-in, PII-redacted) --------------
+class CreateShareRequest(BaseModel):
+    message_id: str
+    confirmed: bool = False  # client must explicitly confirm "this creates a public link"
+
+
+@router.post("/messages/{message_id}/share")
+async def create_share(message_id: str, payload: CreateShareRequest, actor: dict = Depends(voice_actor)):
+    """Explicit, off-by-default. Auto-redacts PII. Watermarked. Single-button minimal."""
+    if not payload.confirmed:
+        raise HTTPException(status_code=400, detail="Share confirmation required")
+    msg = await db.generated_messages.find_one(
+        {"message_id": message_id, **_session_owner_filter(actor)},
+        {"_id": 0},
+    )
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Reuse share if already created for this message_id (idempotent)
+    existing = await db.voice_shares.find_one({"message_id": message_id, **_session_owner_filter(actor)}, {"_id": 0})
+    if existing:
+        await _emit(actor, "voice_share_reused", {"share_id": existing["share_id"], "message_id": message_id})
+        return {"share_id": existing["share_id"], "url_path": f"/v/{existing['share_id']}", "redacted_categories": existing.get("redacted_categories", [])}
+
+    raw_input = msg.get("input_transcript") or ""
+    polished = msg.get("generated_message") or ""
+    redacted_input, cats_in = redact(raw_input)
+    redacted_output, cats_out = redact(polished)
+    cats = sorted(set(cats_in + cats_out))
+
+    share_id = f"v{uuid.uuid4().hex[:10]}"
+    await db.voice_shares.insert_one({
+        "share_id": share_id,
+        "message_id": message_id,
+        "voice_session_id": msg.get("voice_session_id"),
+        "user_id": actor.get("user_id"),
+        "device_id": actor.get("device_id"),
+        "tone": msg.get("tone"),
+        "raw_input_redacted": redacted_input,
+        "polished_message_redacted": redacted_output,
+        "redacted_categories": cats,
+        "view_count": 0,
+        "created_at": now_iso(),
+        "experience_variant": EXPERIENCE_VARIANT,
+    })
+    await _emit(actor, "voice_share_created", {"share_id": share_id, "message_id": message_id, "redacted_categories": cats})
+    return {"share_id": share_id, "url_path": f"/v/{share_id}", "redacted_categories": cats}
+
+
+@router.get("/share/{share_id}")
+async def get_share(share_id: str, request: Request):
+    """Public, no auth required. Increments view_count on first GET per IP per hour (best-effort)."""
+    share = await db.voice_shares.find_one({"share_id": share_id}, {"_id": 0, "user_id": 0, "device_id": 0, "message_id": 0, "voice_session_id": 0})
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    # Best-effort view counter: bump once
+    await db.voice_shares.update_one({"share_id": share_id}, {"$inc": {"view_count": 1}})
+    # Lightweight share-view event into voice_usage_events (no actor — public)
+    await db.voice_usage_events.insert_one({
+        "event_id": uuid.uuid4().hex,
+        "user_id": None,
+        "device_id": None,
+        "is_anonymous": True,
+        "event_name": "voice_share_viewed",
+        "metadata": {"share_id": share_id, "experience_variant": EXPERIENCE_VARIANT, "ip_hash": _hash_ip(request)},
+        "created_at": now_iso(),
+    })
+    return {
+        "share_id": share["share_id"],
+        "tone": share.get("tone"),
+        "raw_input": share.get("raw_input_redacted"),
+        "polished_message": share.get("polished_message_redacted"),
+        "redacted_categories": share.get("redacted_categories", []),
+        "view_count": (share.get("view_count") or 0) + 1,
+        "created_at": share.get("created_at"),
+        "watermark": "Optimized with aiclonechats.com Voice",
+    }
+
+
+@router.delete("/messages/{message_id}/share")
+async def delete_share(message_id: str, actor: dict = Depends(voice_actor)):
+    res = await db.voice_shares.delete_one({"message_id": message_id, **_session_owner_filter(actor)})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Share not found")
+    await _emit(actor, "voice_share_deleted", {"message_id": message_id})
+    return {"ok": True}
     return {"ok": True}

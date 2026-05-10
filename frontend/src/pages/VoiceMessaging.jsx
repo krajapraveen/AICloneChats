@@ -6,6 +6,7 @@ import { copyToClipboard } from "../lib/clipboard";
 import { useAuth } from "../contexts/AuthContext";
 import Navbar from "../components/Navbar";
 import VoiceSignupWall from "../components/VoiceSignupWall";
+import VoiceShareConfirm from "../components/VoiceShareConfirm";
 import UsageLimitModal from "../components/UsageLimitModal";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 
@@ -67,6 +68,9 @@ export default function VoiceMessaging() {
   const [signupWall, setSignupWall] = useState(false);
   const [paywall, setPaywall] = useState(false);
   const [copiedId, setCopiedId] = useState("");
+  const [shareConfirm, setShareConfirm] = useState({ open: false, messageId: null });
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shares, setShares] = useState({}); // message_id -> {url, redacted_categories}
 
   const fileInputRef = useRef(null);
   const transcriptBlockRef = useRef(null);
@@ -234,6 +238,38 @@ export default function VoiceMessaging() {
     api.post("/voice/copy-event", { message_id: m.message_id }).catch(() => { /* analytics best-effort */ });
   }
 
+  function openShareConfirm(messageId) {
+    setShareConfirm({ open: true, messageId });
+  }
+
+  async function confirmShare() {
+    const messageId = shareConfirm.messageId;
+    if (!messageId) return;
+    setShareBusy(true);
+    try {
+      const { data } = await api.post(`/voice/messages/${messageId}/share`, { message_id: messageId, confirmed: true });
+      const url = `${window.location.origin}${data.url_path}`;
+      setShares((s) => ({ ...s, [messageId]: { url, redacted_categories: data.redacted_categories || [] } }));
+      const ok = await copyToClipboard(url);
+      if (ok) toast.success("Share link copied to clipboard");
+      else toast.success(`Share link ready: ${url}`);
+      setShareConfirm({ open: false, messageId: null });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "Could not create share link");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function copyShareUrl(messageId) {
+    const url = shares[messageId]?.url;
+    if (!url) return;
+    const ok = await copyToClipboard(url);
+    if (ok) toast.success("Link copied");
+    else toast.error("Copy failed");
+  }
+
   async function handleFile(file) {
     if (!file) return;
     const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
@@ -304,10 +340,10 @@ export default function VoiceMessaging() {
             <div className="flex-1 min-w-0">
               <span className="tag tag-emerald mb-2 inline-block">VOICE → MESSAGE</span>
               <h1 className="heading-display text-2xl sm:text-3xl md:text-4xl leading-tight">
-                Turn messy voice into the message you actually want to send.
+                Say what you mean — clearly.
               </h1>
               <p className="text-sm font-medium text-ink/70 leading-relaxed mt-2">
-                Speak it, upload a voice note, or paste rough text. We clean it up and write 6 polished versions instantly.
+                Turn messy thoughts into clear messages. Speak naturally, upload a voice note, or paste rough text — we'll write 6 tone-matched versions instantly.
               </p>
             </div>
             <div className="flex flex-row sm:flex-col items-start sm:items-end gap-2 flex-wrap">
@@ -528,7 +564,7 @@ export default function VoiceMessaging() {
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-2 mt-3">
+                  <div className="flex items-center gap-2 mt-3 flex-wrap">
                     <button
                       type="button"
                       onClick={() => copyMessage(m)}
@@ -537,6 +573,26 @@ export default function VoiceMessaging() {
                     >
                       {justCopied ? "✓ Copied!" : "Copy"}
                     </button>
+                    {shares[m.message_id] ? (
+                      <button
+                        type="button"
+                        onClick={() => copyShareUrl(m.message_id)}
+                        className="btn-ghost text-sm"
+                        data-testid={`voice-share-copy-${m.tone}`}
+                        title={shares[m.message_id].url}
+                      >
+                        🔗 Link copied · copy again
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openShareConfirm(m.message_id)}
+                        className="btn-ghost text-sm"
+                        data-testid={`voice-share-${m.tone}`}
+                      >
+                        Share
+                      </button>
+                    )}
                     {justCopied && (
                       <span className="text-xs font-mono text-emerald-soft animate-pulse" data-testid={`voice-copy-toast-${m.tone}`}>
                         Paste it where you need it.
@@ -567,6 +623,12 @@ export default function VoiceMessaging() {
         onClose={() => setPaywall(false)}
         onUpgradeClick={() => { toast.info("Pro launch coming soon — you're on the early list."); setPaywall(false); }}
         daily_limit={20}
+      />
+      <VoiceShareConfirm
+        open={shareConfirm.open}
+        busy={shareBusy}
+        onClose={() => setShareConfirm({ open: false, messageId: null })}
+        onConfirm={confirmShare}
       />
     </div>
   );

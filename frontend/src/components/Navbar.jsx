@@ -33,9 +33,14 @@ export default function Navbar() {
                 Dashboard
               </Link>
               {user.role === "admin" && (
-                <Link to="/admin/login-intelligence" className="hidden md:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin">
-                  Admin
-                </Link>
+                <>
+                  <Link to="/admin/login-intelligence" className="hidden md:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin">
+                    Admin
+                  </Link>
+                  <Link to="/admin/voice-metrics" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-voice-metrics">
+                    Voice Metrics
+                  </Link>
+                </>
               )}
               <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[180px]" data-testid="nav-user-email">
                 {user.email}
