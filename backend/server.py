@@ -25,6 +25,8 @@ import debates  # noqa: E402
 import safety_admin  # noqa: E402
 import admin_chats  # noqa: E402
 import translation_chat  # noqa: E402
+import avatar_chat  # noqa: E402
+import delayed_messages  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -60,6 +62,10 @@ app.include_router(safety_admin.admin_router)
 app.include_router(admin_chats.admin_router)
 app.include_router(translation_chat.router)
 app.include_router(translation_chat.admin_router)
+app.include_router(avatar_chat.router)
+app.include_router(avatar_chat.admin_router)
+app.include_router(delayed_messages.router)
+app.include_router(delayed_messages.admin_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -137,6 +143,30 @@ async def on_startup():
     await _db.anonymous_moderation_logs.create_index([("created_at", -1)])
     # Seed rooms + starter conversations (idempotent)
     await anonymous.ensure_rooms_and_seed()
+    # Avatar Chat indexes
+    await _db.avatar_chat_messages.create_index("message_id", unique=True)
+    await _db.avatar_chat_messages.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.avatar_chat_messages.create_index([("conversation_id", 1), ("created_at", 1)])
+    await _db.avatar_chat_messages.create_index([("video_status", 1), ("created_at", -1)])
+    await _db.avatar_generation_jobs.create_index("job_id", unique=True)
+    await _db.avatar_generation_jobs.create_index([("status", 1), ("updated_at", -1)])
+    await _db.avatar_profiles.create_index("avatar_id", unique=True)
+    await _db.avatar_profiles.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.avatar_chat_events.create_index([("created_at", -1)])
+    await _db.avatar_chat_events.create_index([("event_name", 1), ("created_at", -1)])
+    # Delayed Messages indexes
+    await _db.delayed_messages.create_index("delayed_message_id", unique=True)
+    await _db.delayed_messages.create_index([("sender_user_id", 1), ("created_at", -1)])
+    await _db.delayed_messages.create_index([("recipient_user_id", 1), ("status", 1), ("delivered_at", -1)])
+    await _db.delayed_messages.create_index([("status", 1), ("delivery_time", 1)])
+    await _db.delayed_message_events.create_index([("created_at", -1)])
+    await _db.delayed_message_events.create_index([("event_type", 1), ("created_at", -1)])
+    # Start delayed-delivery scheduler in the background
+    try:
+        import asyncio as _asyncio
+        _asyncio.create_task(delayed_messages._scheduler_loop())
+    except Exception as e:
+        logger.warning("delayed_messages scheduler failed to start: %s", e)
     # Seed env ADMIN_EMAILS into DB (idempotent) so admin status survives redeploys
     try:
         from admin import seed_admins_from_env

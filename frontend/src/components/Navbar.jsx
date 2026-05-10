@@ -67,6 +67,18 @@ export default function Navbar() {
                   <Link to="/admin/chats" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-chats">
                     Chats
                   </Link>
+                  <Link to="/video-avatar-chat" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-avatar-chat">
+                    Avatar Lab
+                  </Link>
+                  <Link to="/admin/avatar-chat" className="hidden xl:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-avatar-chat">
+                    Avatar Mod
+                  </Link>
+                  <Link to="/delayed-chat" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-delayed-chat">
+                    Delayed
+                  </Link>
+                  <Link to="/admin/delayed-messages" className="hidden xl:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-delayed">
+                    Delayed Mod
+                  </Link>
                 </>
               )}
               <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[180px]" data-testid="nav-user-email">

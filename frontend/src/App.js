@@ -37,6 +37,11 @@ import AdminChats from "./pages/AdminChats";
 import TranslationChatPage from "./pages/TranslationChatPage";
 import TranslationRoom from "./pages/TranslationRoom";
 import AdminTranslationChat from "./pages/AdminTranslationChat";
+import VideoAvatarChat from "./pages/VideoAvatarChat";
+import AvatarProfiles from "./pages/AvatarProfiles";
+import AdminAvatarChat from "./pages/AdminAvatarChat";
+import DelayedChat from "./pages/DelayedChat";
+import AdminDelayedMessages from "./pages/AdminDelayedMessages";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -73,6 +78,12 @@ function AppRouter() {
       <Route path="/translation-chat" element={<TranslationChatPage />} />
       <Route path="/translation-chat/:roomId" element={<TranslationRoom />} />
       <Route path="/admin/translation-chat" element={<AdminTranslationChat />} />
+      <Route path="/video-avatar-chat" element={<VideoAvatarChat />} />
+      <Route path="/video-avatar-chat/profiles" element={<AvatarProfiles />} />
+      <Route path="/admin/avatar-chat" element={<AdminAvatarChat />} />
+      <Route path="/delayed-chat" element={<DelayedChat />} />
+      <Route path="/scheduled-messages" element={<DelayedChat />} />
+      <Route path="/admin/delayed-messages" element={<AdminDelayedMessages />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
