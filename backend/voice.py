@@ -704,4 +704,3 @@ async def delete_share(message_id: str, actor: dict = Depends(voice_actor)):
         raise HTTPException(status_code=404, detail="Share not found")
     await _emit(actor, "voice_share_deleted", {"message_id": message_id})
     return {"ok": True}
-    return {"ok": True}

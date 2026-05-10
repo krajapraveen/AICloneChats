@@ -142,14 +142,17 @@ export default function AdminVoiceMetrics() {
             <div className="glass-card p-5" data-testid="voice-metrics-funnel">
               <h2 className="heading-display text-lg mb-3">Funnel · {days}d</h2>
               <div className="space-y-2">
-                {(data.funnel || []).map((row) => (
+                {(data.funnel || []).map((row) => {
+                  const barWidth = Math.max(2, Math.min(100, row.pct_of_top));
+                  const labelPct = row.pct_of_top > 100 ? "≥100%" : `${row.pct_of_top}%`;
+                  return (
                   <div key={row.stage} className="flex items-center gap-3" data-testid={`voice-metrics-funnel-${row.stage}`}>
                     <div className="w-44 sm:w-56 text-xs font-mono text-ink/85 shrink-0">{STAGE_LABEL[row.stage] || row.stage}</div>
                     <div className="flex-1 h-7 bg-black/40 rounded-lg overflow-hidden relative">
-                      <div className="h-full bg-emerald/70 transition-all" style={{ width: `${Math.max(2, Math.min(100, row.pct_of_top))}%` }} />
+                      <div className="h-full bg-emerald/70 transition-all" style={{ width: `${barWidth}%` }} />
                       <div className="absolute inset-0 flex items-center justify-between px-3 text-xs font-mono">
                         <span className="text-ink font-bold">{row.actors}</span>
-                        <span className="text-muted">{row.pct_of_top}%</span>
+                        <span className="text-muted">{labelPct}</span>
                       </div>
                     </div>
                     {row.drop_from_prev_pct > 0 && (
@@ -158,7 +161,8 @@ export default function AdminVoiceMetrics() {
                       </span>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
