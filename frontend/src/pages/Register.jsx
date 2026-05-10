@@ -73,6 +73,9 @@ export default function Register() {
             <button type="submit" disabled={loading} className="btn-brutal w-full" data-testid="register-submit-btn">
               {loading ? "Creating…" : "Create my account"}
             </button>
+            <p className="text-[10px] font-mono text-muted/80 leading-relaxed text-center" data-testid="register-privacy-notice">
+              By creating an account you acknowledge that chats may be reviewed by platform administrators for safety, abuse prevention, and service improvement. Sensitive values (emails, phones, passwords, API keys) are auto-redacted before review.
+            </p>
           </form>
 
           <p className="text-sm text-center mt-6 font-medium">

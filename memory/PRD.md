@@ -22,6 +22,20 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-02-12 (P0 admin chat monitoring)** — **Unified admin chat monitoring + redaction shipped.**
+  - **Endpoints** (`backend/admin_chats.py`):
+    - `GET /api/admin/chats` — unified list across clone / anonymous / debate / smart_reply with type/safety/days/search/user filters
+    - `GET /api/admin/chats/{conversation_id}?chat_type=` — full thread with redactions per message
+    - `GET /api/admin/chats/user/{user_id}` — by user
+    - `GET /api/admin/chats/export/all` — JSON export (admin-only)
+    - `PATCH /api/admin/chats/{id}/flag` and `/hide` — write to `chat_audit_logs`
+  - **Architecture choice**: reads from existing source-of-truth collections (`clone_messages`, `anonymous_messages`, `debate_arguments`, `smart_reply_sessions`). No data duplication. Admin actions append to `chat_audit_logs` for auditability.
+  - **Redaction at read time**: emails, phone numbers, credit cards (13–19 digits), API keys (sk-, pk-, AIza, ghp_, xox), "password is X" phrases, and street-address patterns are masked before any admin response. Each redaction tagged so the admin sees what was masked.
+  - **Frontend** (`AdminChats.jsx` at `/admin/chats`): table + chat-type/safety/days/search filters, side drawer with full thread + per-message redaction tags, flag/hide actions with reason prompts, JSON export. Privacy notice (amber-tinted) prominently displayed: *"Chats may be reviewed by platform administrators for safety, abuse prevention, and service improvement. Sensitive values are auto-redacted."*
+  - **User-facing privacy disclosure**: small notice added to `Register.jsx` informing new users that chats may be reviewed (with redaction guarantee). Admin acted in disclosed-mode, not surveillance-mode.
+  - **Admin allowlist**: `krajapraveen@gmail.com` already in `ADMIN_EMAILS` env. Auto-promotes on login.
+  - **Tests**: `tests/test_admin_chats.py` — **9/9 pass** (auth gate, non-admin 403, list all, type filter, safety filter, thread fetch, redaction end-to-end, export auth, flag+hide flow). Full suite **231/233** pass; the 2 unrelated failures (`test_remove_message`, `test_fake_code_returns_401`) are pre-existing and confirmed reproducible on the unchanged `main` branch.
+  - **Live verified**: 120 chat rows rendering across all 4 types, drawer opens with full thread, redaction visible (`[redacted:email]` + `[redacted:phone]` tags), HIDDEN/FLAGGED/BLOCKED statuses rendering.
 - **2026-02-12 (P0 brand+safety cleanup)** — **Brand audit + centralized safety filter shipped.**
   - **Brand audit**: codebase already clean of user-facing Emergent branding. The only remaining Emergent references are build-tool dependencies (`@emergentbase/visual-edits` in package.json, craco.config.js comments, App.js comment) — none reach the production bundle or appear in any user-facing surface. Documented in `/app/docs/asset_safety_audit.md`. No copyrighted images/celebrity faces/franchise characters bundled. Single static image is the founder's own portrait.
   - **Centralized safety filter** (`backend/safety_filter.py`): regex/dictionary prefilter across 7 categories (sexual, violence, hate, self_harm, illegal, impersonation, profanity) with severity-based action (low → allow, medium → rewrite output, high → block both ways). Universal `SAFETY_CLAUSE` appended to every system prompt: clone chat (`chat.py`), smart reply (`smart_reply.py`), debate scoring (`debates_scoring.py`), anonymous moderation (kept as-is — already covers it). Wired the prefilter into:

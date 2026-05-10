@@ -33,6 +33,7 @@ import DebateResults from "./pages/DebateResults";
 import DebatesAdmin from "./pages/DebatesAdmin";
 import AdminDebatesRetention from "./pages/AdminDebatesRetention";
 import AdminSafety from "./pages/AdminSafety";
+import AdminChats from "./pages/AdminChats";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -65,6 +66,7 @@ function AppRouter() {
       <Route path="/admin/debates" element={<DebatesAdmin />} />
       <Route path="/admin/debates/retention" element={<AdminDebatesRetention />} />
       <Route path="/admin/safety" element={<AdminSafety />} />
+      <Route path="/admin/chats" element={<AdminChats />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
