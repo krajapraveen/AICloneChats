@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import uuid
+import requests
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
@@ -144,6 +145,35 @@ def _extract_geo(request: Request) -> dict:
     }
 
 
+def _lookup_geo_by_ip(ip: str) -> dict:
+    """Fallback: query ipapi.co when edge headers don't carry geo.
+
+    Sync requests.get is fine because we're calling this inside an asyncio task
+    that's already best-effort and isolated from the auth response. Total budget: 4s.
+    Failures return empty dict (silent — never breaks login).
+    """
+    if not ip or ip.startswith("127.") or ip == "::1" or ip.startswith("10.") or ip.startswith("192.168.") or ip.startswith("172."):
+        return {}
+    try:
+        r = requests.get(
+            f"https://ipapi.co/{ip}/json/",
+            timeout=4,
+            headers={"User-Agent": "aiclonechats-admin/1.0"},
+        )
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        if data.get("error"):
+            return {}
+        return {
+            "country": (data.get("country_code") or "").upper() or None,
+            "region": data.get("region") or None,
+            "city": data.get("city") or None,
+        }
+    except Exception:
+        return {}
+
+
 _BROWSER_PATTERNS = [
     ("Edge", r"Edg(e|A|iOS)?/"),
     ("Chrome", r"Chrome/"),
@@ -200,6 +230,13 @@ async def record_login_event(
         ua = request.headers.get("user-agent", "")
         ip = _extract_client_ip(request)
         geo = _extract_geo(request)
+        # Fallback to IP geolocation when edge headers are absent (e.g. CF "IP Geolocation" off,
+        # or non-CF deployments). Best-effort; never raises.
+        if not geo.get("country") and ip:
+            geo_lookup = _lookup_geo_by_ip(ip)
+            for k, v in geo_lookup.items():
+                if v and not geo.get(k):
+                    geo[k] = v
         ua_info = _parse_user_agent(ua)
 
         doc = {
