@@ -127,6 +127,7 @@ export default function Dashboard() {
               <Link to="/clones/new" className="btn-brutal text-sm" data-testid="hero-action-create-clone">+ Create AI Clone</Link>
               <Link to="/mood-chat" className="btn-violet text-sm" data-testid="hero-action-mood-chat">Mood-Based Chat</Link>
               <Link to="/smart-reply" className="btn-ghost text-sm" data-testid="hero-action-smart-reply">Smart Reply</Link>
+              <Link to="/voice" className="btn-ghost text-sm" data-testid="hero-action-voice">Voice → Message</Link>
             </div>
           </div>
 
@@ -144,10 +145,10 @@ export default function Dashboard() {
           <div className="flex items-end justify-between gap-3 mb-4">
             <div>
               <p className="label-brutal mb-1">Tools in your workspace</p>
-              <h2 className="heading-display text-2xl sm:text-3xl">Three ways to talk to AI.</h2>
+              <h2 className="heading-display text-2xl sm:text-3xl">Four ways to talk to AI.</h2>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <WorkspaceCard
               testId="workspace-card-clone"
               tone="tag-amber"
@@ -176,6 +177,16 @@ export default function Dashboard() {
               body="Generate copy-ready replies for dating, professional, apology, and negotiation messages. Three tones, one tap to copy."
               primary={{ to: "/smart-reply", label: "Open Smart Reply" }}
               secondary={{ to: "/smart-reply/favorites", label: "Favorites" }}
+            />
+            <WorkspaceCard
+              testId="workspace-card-voice"
+              tone="tag-emerald"
+              kicker="VOICE-FIRST"
+              icon="🎙"
+              title="Voice → Message"
+              body="Speak it, upload a voice note, or paste rough text. We write 6 polished tone-matched messages instantly. Audio is never stored."
+              primary={{ to: "/voice", label: "Open Voice studio" }}
+              secondary={{ to: "/voice/history", label: "History" }}
             />
           </div>
         </section>
@@ -210,6 +221,7 @@ export default function Dashboard() {
                   <Link to="/clones/new" className="btn-brutal text-sm" data-testid="empty-create-btn">Create First Clone</Link>
                   <Link to="/mood-chat" className="btn-violet text-sm" data-testid="empty-mood-btn">Try Mood Chat</Link>
                   <Link to="/smart-reply" className="btn-ghost text-sm" data-testid="empty-smart-reply-btn">Try Smart Reply</Link>
+                  <Link to="/voice" className="btn-ghost text-sm" data-testid="empty-voice-btn">Try Voice</Link>
                 </div>
               </div>
             </div>

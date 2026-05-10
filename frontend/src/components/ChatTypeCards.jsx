@@ -66,6 +66,26 @@ const CHAT_INFO = {
     safety:
       "Smart Reply blocks harassment, manipulation, coercive dating advice, sexual pressure, fake threats, and revenge messages. If your input is unsafe, you'll get a healthier alternative instead.",
   },
+  voice: {
+    id: "voice",
+    kicker: "OPTION 04",
+    title: "What is Voice-First AI Messaging?",
+    body:
+      "Speak it, upload a voice note, or paste rough text. We clean up the filler, fix the grammar, and write 6 polished versions you can send right now — concise, professional, friendly, apology, dating, and negotiation.",
+    how_to: [
+      "Tap to record, upload a voice note, or paste messy text.",
+      "We transcribe and clean up the speech in-memory (audio is never stored).",
+      "Edit the cleaned input if anything's off.",
+      "Get 6 tone-matched messages generated in parallel.",
+      "One-tap refines: shorter, more confident, more polite, more flirty, more professional.",
+    ],
+    example: {
+      input: "um yeah so like, tell my boss i will be like 30 minutes late because of traffic",
+      output: "Hey — running about 30 minutes behind because of traffic. I'll be there as soon as I can.",
+    },
+    safety:
+      "Audio is transcribed in memory and never persisted. Public share links are off by default and require explicit confirmation; phone numbers, emails, OTPs, addresses, and links are auto-redacted before any share is created.",
+  },
 };
 
 export default function ChatTypeCards() {
@@ -90,6 +110,10 @@ export default function ChatTypeCards() {
         metadata: { source: "chat_type_cards", experience_variant: "smart_reply_v1" },
       }).catch(() => {});
       navigate("/smart-reply");
+    } else if (chat_type === "voice") {
+      // Funnel separation: voice events live on voice_usage_events, NOT clone_analytics.
+      api.post("/voice/track", { event_name: "voice_page_viewed" }).catch(() => {});
+      navigate("/voice");
     }
   };
 
@@ -98,13 +122,13 @@ export default function ChatTypeCards() {
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-16 md:py-24">
         <div className="max-w-2xl mb-10">
           <span className="tag mb-4 inline-block">Pick your tool</span>
-          <h2 className="heading-display text-3xl md:text-5xl mb-3">Three ways to talk.</h2>
+          <h2 className="heading-display text-3xl md:text-5xl mb-3">Four ways to talk.</h2>
           <p className="text-muted font-medium leading-relaxed">
-            Personality-first, emotion-first, or just-paste-and-reply. Pick the one that fits the moment.
+            Personality-first, emotion-first, paste-and-reply, or speak-it-clean. Pick the one that fits the moment.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {/* AI Clone Chat */}
           <div className="brutal-card p-7 flex flex-col" data-testid="card-clone-chat">
             <div className="flex items-center justify-between gap-3 mb-2">
@@ -164,6 +188,26 @@ export default function ChatTypeCards() {
               Open Smart Reply →
             </button>
           </div>
+
+          {/* Voice-First AI Messaging */}
+          <div className="brutal-card p-7 flex flex-col" data-testid="card-voice">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="tag tag-emerald">VOICE-FIRST</span>
+              <InfoIcon onClick={() => setOpenInfo("voice")} label="What is Voice-First AI Messaging?" testId="info-icon-voice" />
+            </div>
+            <h3 className="heading-display text-2xl md:text-3xl mb-3">Voice → Message</h3>
+            <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5">
+              Speak it, upload a voice note, or paste rough text. We write the polished version.
+            </p>
+            <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
+              <li className="flex items-start gap-2"><span className="text-emerald-soft mt-0.5">●</span> Record · upload · paste text</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-soft mt-0.5">●</span> 6 tones generated in parallel</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-soft mt-0.5">●</span> Audio never stored · 3 free trials</li>
+            </ul>
+            <button onClick={() => select("voice")} className="btn-brutal mt-auto" data-testid="cta-voice">
+              Try Voice →
+            </button>
+          </div>
         </div>
       </div>
 
@@ -181,6 +225,11 @@ export default function ChatTypeCards() {
         open={openInfo === "smart"}
         onClose={() => setOpenInfo(null)}
         info={{ ...CHAT_INFO.smart, cta: { label: "Open Smart Reply →", onClick: () => select("smart") } }}
+      />
+      <ChatInfoModal
+        open={openInfo === "voice"}
+        onClose={() => setOpenInfo(null)}
+        info={{ ...CHAT_INFO.voice, cta: { label: "Try Voice →", onClick: () => select("voice") } }}
       />
     </section>
   );
