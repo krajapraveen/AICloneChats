@@ -349,6 +349,12 @@ async def send_message(slug: str, payload: SendMessageRequest, session: dict = D
     await _check_rate_limit(session["session_id"])
 
     content = payload.content.strip()
+    # Safety regex floor (cheap & fast). LLM moderation below remains the ceiling.
+    from safety_filter import moderate_user_input as _safety_check, log_moderation_event as _safety_log
+    pre = _safety_check(content)
+    if pre["action"] == "block":
+        await _safety_log(db, user_id=session["session_id"], route="anonymous_chat", source="user_input", result=pre, action_taken="block_input")
+        raise HTTPException(400, "Please keep messages safe and respectful.")
     moderation = await mod.moderate_message(content)
     decision = moderation["decision"]
     message_id = f"am_{uuid.uuid4().hex[:14]}"

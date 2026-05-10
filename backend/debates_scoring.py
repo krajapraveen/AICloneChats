@@ -36,7 +36,8 @@ the final_score MUST be capped at 40 regardless of other dimensions.
 Also classify the argument:
 - "ok": publishable
 - "hidden": personal attack, slur, hate, harassment, threats, sexual content, doxxing,
-  or pure spam. Hidden arguments are NEVER published.
+  copyrighted-character impersonation, celebrity impersonation, piracy/illegal-activity
+  instructions, or pure spam. Hidden arguments are NEVER published.
 
 Return STRICT JSON ONLY (no prose, no markdown fences). Schema:
 {
@@ -47,7 +48,7 @@ Return STRICT JSON ONLY (no prose, no markdown fences). Schema:
   "civility": int,
   "persuasiveness": int,
   "final_score": int,
-  "feedback": "1-2 sentences, specific, no flattery",
+  "feedback": "1-2 sentences, specific, no flattery, NO profanity",
   "moderation_status": "ok" | "hidden",
   "moderation_reason": "string or empty"
 }

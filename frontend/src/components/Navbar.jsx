@@ -58,6 +58,9 @@ export default function Navbar() {
                   <Link to="/admin/debates/retention" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-debates-retention">
                     Debates Retention
                   </Link>
+                  <Link to="/admin/safety" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-safety">
+                    Safety
+                  </Link>
                 </>
               )}
               <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[180px]" data-testid="nav-user-email">

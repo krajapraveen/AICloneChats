@@ -297,6 +297,9 @@ export default function AnonymousRoom() {
             {sending ? "…" : "Send"}
           </button>
         </div>
+        <div className="text-[10px] font-mono text-muted/80 mt-1.5 px-1" data-testid="anon-composer-safety-note">
+          Keep it respectful. Vulgar, sexual, violent, or hateful content is blocked.
+        </div>
       </form>
 
       {/* Rules drawer */}

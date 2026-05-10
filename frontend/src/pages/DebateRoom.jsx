@@ -169,6 +169,9 @@ function Composer({ debate, mySide, onSubmit, busy }) {
         disabled={busy}
         data-testid="debate-composer-input"
       />
+      <div className="text-[10px] font-mono text-muted/80 mt-1.5" data-testid="debate-composer-safety-note">
+        Keep it respectful and family-friendly. Vulgar, sexual, violent, or hateful content is blocked. Use original ideas — no copyrighted characters or celebrity impersonation.
+      </div>
       <div className="flex items-center justify-between gap-2 mt-3">
         <div className="text-[10px] font-mono text-muted hidden sm:block">
           AI scores: clarity · logic · evidence · originality · civility · persuasiveness

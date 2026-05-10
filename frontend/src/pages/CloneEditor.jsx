@@ -191,6 +191,9 @@ export default function CloneEditor() {
             <div className="md:col-span-2">
               <label className="label-brutal block mb-1.5">Bio</label>
               <textarea className="input-brutal min-h-[90px]" maxLength={400} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder="Founder building AI creative tools. Likes blunt feedback and slow mornings." data-testid="clone-bio-input" />
+              <p className="text-[10px] font-mono text-muted/80 mt-1" data-testid="clone-bio-safety-note">
+                Keep it safe and original. No vulgar, sexual, violent, or hateful content. No celebrity impersonation or copyrighted characters.
+              </p>
             </div>
             <div>
               <label className="label-brutal block mb-1.5">Visibility</label>

@@ -22,6 +22,7 @@ import voice  # noqa: E402
 import voice_metrics  # noqa: E402
 import anonymous  # noqa: E402
 import debates  # noqa: E402
+import safety_admin  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -53,6 +54,7 @@ app.include_router(anonymous.router)
 app.include_router(anonymous.admin_router)
 app.include_router(debates.router)
 app.include_router(debates.admin_router)
+app.include_router(safety_admin.admin_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.

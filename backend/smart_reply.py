@@ -20,6 +20,7 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 from db import db
 from auth import get_current_user
 from models import now_iso
+from safety_filter import SAFETY_CLAUSE, moderate_user_input, log_moderation_event, safe_chat_response_fallback
 
 router = APIRouter(prefix="/api/smart-reply", tags=["smart-reply"])
 logger = logging.getLogger(__name__)
@@ -160,7 +161,7 @@ HARD SAFETY RULES — refuse and return safe alternatives instead:
 - No replies that pressure consent, isolate the recipient, or shame them.
 - If the incoming message indicates self-harm, the safe reply must encourage reaching a trusted person or local emergency services; never minimize.
 
-If the user's intent is unsafe, set the relevant safety_flag=true and rewrite all 3 replies as the *safest* equivalent that achieves a healthy version of the goal."""
+If the user's intent is unsafe, set the relevant safety_flag=true and rewrite all 3 replies as the *safest* equivalent that achieves a healthy version of the goal.{SAFETY_CLAUSE}"""
 
 
 def _build_user_message(req: GenerateRequest) -> str:
@@ -242,6 +243,20 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
     user_id = user["user_id"]
 
     await _emit(user_id, "smart_reply_generate_clicked", {"mode": payload.mode, "tone": payload.desired_tone})
+
+    # ---- Safety pre-flight on all user inputs ----
+    for field, val in [
+        ("incoming_message", payload.incoming_message),
+        ("relationship_context", payload.relationship_context),
+        ("user_goal", payload.user_goal),
+        ("what_i_want_to_say", payload.what_i_want_to_say),
+    ]:
+        if not val:
+            continue
+        chk = moderate_user_input(val)
+        if chk["action"] == "block":
+            await log_moderation_event(db, user_id=user_id, route="smart_reply", source=f"user_input:{field}", result=chk, action_taken="block_input")
+            raise HTTPException(status_code=400, detail=safe_chat_response_fallback())
 
     user = await _check_usage(user_id)
     is_pro = user.get("subscription_status") == "pro"

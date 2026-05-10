@@ -31,6 +31,7 @@ from auth import get_current_user, get_optional_user
 from models import now_iso
 import debates_scoring as scoring_svc
 from debates_seed import DEBATES as SEED_DEBATES
+from safety_filter import moderate_user_input, log_moderation_event
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/debates", tags=["debates"])
@@ -315,6 +316,12 @@ async def submit_argument(slug: str, payload: SubmitArgumentRequest, user: dict 
         await db.debate_rooms.update_one({"debate_id": d["debate_id"]}, {"$inc": {"participant_count": 1}})
     elif p.get("side") != side:
         raise HTTPException(409, "You're on the other side of this debate.")
+
+    # Safety pre-flight (regex floor — debates_scoring LLM is the contextual ceiling)
+    pre = moderate_user_input(payload.content)
+    if pre["action"] == "block":
+        await log_moderation_event(db, user_id=user["user_id"], route="debate_argument", source="user_input", result=pre, action_taken="block_input")
+        raise HTTPException(400, "Please rewrite this argument respectfully.")
 
     await _check_arg_rate_limit(user["user_id"])
 

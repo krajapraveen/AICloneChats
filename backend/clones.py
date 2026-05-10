@@ -5,10 +5,24 @@ from typing import List, Optional
 from db import db
 from auth import get_current_user, get_optional_user
 from models import CloneCreate, CloneUpdate, Clone, now_iso, PERSONALITY_DEFAULT
+from safety_filter import moderate_user_input, log_moderation_event, safe_chat_response_fallback
 
 router = APIRouter(prefix="/api/clones", tags=["clones"])
 
 RESERVED_SLUGS = {"api", "admin", "auth", "login", "register", "dashboard", "settings", "new", "create"}
+
+
+def _check_clone_text_safety(user_id: str, route: str, fields: dict) -> Optional[dict]:
+    """Returns blocking result on first unsafe field, else None. Caller should HTTPException(400)."""
+    for name, val in fields.items():
+        if not val:
+            continue
+        if isinstance(val, list):
+            val = " | ".join(str(v) for v in val)
+        chk = moderate_user_input(str(val))
+        if chk["action"] == "block":
+            return {"field": name, **chk}
+    return None
 
 
 def _serialize(doc: dict) -> dict:
@@ -30,6 +44,17 @@ async def create_clone(payload: CloneCreate, user: dict = Depends(get_current_us
     count = await db.clones.count_documents({"user_id": user["user_id"]})
     if count >= 5:
         raise HTTPException(status_code=400, detail="Clone limit reached")
+
+    # Safety: block unsafe bios / catchphrases / topics / display name
+    blocked = _check_clone_text_safety(user["user_id"], "clone_create", {
+        "display_name": payload.display_name,
+        "bio": payload.bio,
+        "allowed_topics": payload.allowed_topics,
+        "blocked_topics": payload.blocked_topics,
+    })
+    if blocked:
+        await log_moderation_event(db, user_id=user["user_id"], route="clone_create", source=f"user_input:{blocked['field']}", result=blocked, action_taken="block_input")
+        raise HTTPException(status_code=400, detail=f"Please keep clone content safe and respectful. ({blocked['category']})")
 
     clone_id = f"clone_{uuid.uuid4().hex[:14]}"
     now = now_iso()
@@ -86,6 +111,13 @@ async def update_clone(clone_id: str, payload: CloneUpdate, user: dict = Depends
         raise HTTPException(status_code=404, detail="Clone not found")
 
     update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    # Safety check on any updated text fields
+    fields_to_check = {k: update[k] for k in ("display_name", "bio", "allowed_topics", "blocked_topics") if k in update}
+    if fields_to_check:
+        blocked = _check_clone_text_safety(user["user_id"], "clone_update", fields_to_check)
+        if blocked:
+            await log_moderation_event(db, user_id=user["user_id"], route="clone_update", source=f"user_input:{blocked['field']}", result=blocked, action_taken="block_input")
+            raise HTTPException(status_code=400, detail=f"Please keep clone content safe and respectful. ({blocked['category']})")
     if "personality" in update:
         update["personality"] = {**clone.get("personality", PERSONALITY_DEFAULT), **update["personality"]}
     update["updated_at"] = now_iso()
