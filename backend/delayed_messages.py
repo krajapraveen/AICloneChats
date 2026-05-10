@@ -517,6 +517,61 @@ async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Quer
         {"$sort": {"n": -1}},
     ]).to_list(20)
 
+    # Persistence-focused breakdowns (not engagement-focused)
+    by_recipient = await db.delayed_messages.aggregate([
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {"_id": "$recipient_type", "n": {"$sum": 1}}},
+    ]).to_list(10)
+    recipient_counts = {r["_id"] or "unknown": r["n"] for r in by_recipient}
+    future_self_count = recipient_counts.get("self", 0)
+    other_user_count = recipient_counts.get("clone_user", 0)
+    email_recipient_count = recipient_counts.get("email", 0)
+
+    # D7 / D30 voluntary-open rate.
+    # Cohort: messages delivered ≥7 (or ≥30) days ago. The signal is not
+    # "did the user receive it" but "did the user RETURN to read it."
+    # That is the persistence test.
+    now_dt = datetime.now(timezone.utc)
+    d7_cutoff = (now_dt - timedelta(days=7)).isoformat()
+    d30_cutoff = (now_dt - timedelta(days=30)).isoformat()
+    d7_eligible = await db.delayed_messages.count_documents({
+        "status": "delivered",
+        "delivered_at": {"$lte": d7_cutoff, "$ne": None},
+    })
+    d7_opened = await db.delayed_messages.count_documents({
+        "status": "delivered",
+        "delivered_at": {"$lte": d7_cutoff, "$ne": None},
+        "opened_at": {"$ne": None},
+    })
+    d30_eligible = await db.delayed_messages.count_documents({
+        "status": "delivered",
+        "delivered_at": {"$lte": d30_cutoff, "$ne": None},
+    })
+    d30_opened = await db.delayed_messages.count_documents({
+        "status": "delivered",
+        "delivered_at": {"$lte": d30_cutoff, "$ne": None},
+        "opened_at": {"$ne": None},
+    })
+    d7_open_rate_pct = round(100 * d7_opened / max(1, d7_eligible), 1) if d7_eligible else None
+    d30_open_rate_pct = round(100 * d30_opened / max(1, d30_eligible), 1) if d30_eligible else None
+
+    # Voluntary opens in window — the only "return" metric we track.
+    voluntary_opens_in_window = await db.delayed_messages.count_documents({
+        "status": "delivered",
+        "opened_at": {"$gte": since, "$ne": None},
+    })
+
+    # Repeat composers — users who scheduled ≥2 messages in window. The sender-side
+    # gravity signal: "is anyone using this product more than once?"
+    repeat_pipeline = [
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {"_id": "$sender_user_id", "n": {"$sum": 1}}},
+        {"$match": {"n": {"$gte": 2}}},
+        {"$count": "n"},
+    ]
+    repeat_rows = await db.delayed_messages.aggregate(repeat_pipeline).to_list(1)
+    repeat_composers = repeat_rows[0]["n"] if repeat_rows else 0
+
     return {
         "window_days": days,
         "scheduled": scheduled,
@@ -527,9 +582,18 @@ async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Quer
         "due_now": due_now,
         "avg_delivery_latency_sec": avg_latency,
         "by_emotional_category": [{"category": r["_id"] or "unknown", "count": r["n"]} for r in by_cat],
+        # Persistence signals (not engagement signals)
+        "future_self_count": future_self_count,
+        "other_user_count": other_user_count,
+        "email_recipient_count": email_recipient_count,
+        "voluntary_opens_in_window": voluntary_opens_in_window,
+        "d7_open_rate": {"eligible": d7_eligible, "opened": d7_opened, "pct": d7_open_rate_pct},
+        "d30_open_rate": {"eligible": d30_eligible, "opened": d30_opened, "pct": d30_open_rate_pct},
+        "repeat_composers_in_window": repeat_composers,
         "email_configured": bool(RESEND_API_KEY),
         "feature_enabled_public": DELAYED_EMOTIONAL_CHAT_ENABLED,
         "scheduler_enabled": DELAYED_DELIVERY_CRON_ENABLED,
+        "operator_note": "Persistence over engagement. Voluntary-open rate is the gravity signal. The system delivers; it does not chase.",
     }
 
 

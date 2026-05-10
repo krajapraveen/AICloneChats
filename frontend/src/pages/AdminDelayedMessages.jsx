@@ -85,6 +85,24 @@ export default function AdminDelayedMessages() {
               <StatCard testid="delayed-stat-cron" label="Scheduler" value={metrics.scheduler_enabled ? "on" : "off"} sub={metrics.email_configured ? "email: on" : "email: off"} />
             </div>
 
+            {/* Persistence signals — the gravity layer. NOT engagement. */}
+            <div className="mb-3">
+              <div className="text-[11px] font-mono uppercase tracking-widest text-muted mb-2">Persistence signals · the only thing that matters</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4" data-testid="delayed-persistence-signals">
+                <StatCard testid="delayed-stat-d7-open" label="D7 voluntary opens" value={metrics.d7_open_rate?.pct !== null && metrics.d7_open_rate?.pct !== undefined ? `${metrics.d7_open_rate.pct}%` : "—"} sub={`${num(metrics.d7_open_rate?.opened)} of ${num(metrics.d7_open_rate?.eligible)} delivered ≥7d ago`} />
+                <StatCard testid="delayed-stat-d30-open" label="D30 voluntary opens" value={metrics.d30_open_rate?.pct !== null && metrics.d30_open_rate?.pct !== undefined ? `${metrics.d30_open_rate.pct}%` : "—"} sub={`${num(metrics.d30_open_rate?.opened)} of ${num(metrics.d30_open_rate?.eligible)} delivered ≥30d ago`} />
+                <StatCard testid="delayed-stat-voluntary-opens" label="Voluntary opens" value={num(metrics.voluntary_opens_in_window)} sub={`${days}d window`} />
+                <StatCard testid="delayed-stat-repeat-composers" label="Repeat composers" value={num(metrics.repeat_composers_in_window)} sub="users who scheduled ≥2" />
+                <StatCard testid="delayed-stat-future-self" label="Future-self" value={num(metrics.future_self_count)} sub="messages to self" />
+                <StatCard testid="delayed-stat-other-user" label="To another user" value={num(metrics.other_user_count)} sub="in-app delivery" />
+                <StatCard testid="delayed-stat-email-recipient" label="To email" value={num(metrics.email_recipient_count)} sub="external delivery" />
+                <StatCard testid="delayed-stat-thesis-flag" label="Thesis" value="memory" sub="not engagement" />
+              </div>
+              <div className="text-[10px] font-mono text-muted/80 mt-3" data-testid="delayed-thesis-note">
+                {metrics.operator_note || "The system delivers; it does not chase."}
+              </div>
+            </div>
+
             {metrics.by_emotional_category?.length > 0 && (
               <div className="brutal-card p-4 mb-5" data-testid="delayed-by-cat">
                 <div className="text-[11px] font-mono uppercase tracking-widest text-muted mb-2">By emotional category</div>
