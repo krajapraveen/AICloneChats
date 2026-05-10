@@ -42,6 +42,7 @@ import AvatarProfiles from "./pages/AvatarProfiles";
 import AdminAvatarChat from "./pages/AdminAvatarChat";
 import DelayedChat from "./pages/DelayedChat";
 import AdminDelayedMessages from "./pages/AdminDelayedMessages";
+import ConversationMemory from "./pages/ConversationMemory";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -84,6 +85,7 @@ function AppRouter() {
       <Route path="/delayed-chat" element={<DelayedChat />} />
       <Route path="/scheduled-messages" element={<DelayedChat />} />
       <Route path="/admin/delayed-messages" element={<AdminDelayedMessages />} />
+      <Route path="/conversation-memory" element={<ConversationMemory />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />

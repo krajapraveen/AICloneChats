@@ -343,17 +343,41 @@ async def extract_artifacts(
 
 @router.get("")
 async def list_artifacts(
-    conversation_id: str = Query(...),
+    conversation_id: Optional[str] = Query(default=None),
     visitor_id: Optional[str] = Query(default=None),
     user: Optional[dict] = Depends(get_optional_user),
 ):
     owner_kind, owner_value = _identity(user, visitor_id)
-    await _check_owner(conversation_id, owner_kind, owner_value)
-    rows = await db.clone_artifacts.find(
-        {"conversation_id": conversation_id, "owner_kind": owner_kind, "owner_value": owner_value},
-        {"_id": 0},
-    ).sort("created_at", -1).to_list(50)
-    return {"artifacts": [_public_artifact(a) for a in rows]}
+    if conversation_id:
+        await _check_owner(conversation_id, owner_kind, owner_value)
+        rows = await db.clone_artifacts.find(
+            {"conversation_id": conversation_id, "owner_kind": owner_kind, "owner_value": owner_value},
+            {"_id": 0},
+        ).sort("created_at", -1).to_list(50)
+    else:
+        # Cross-conversation list — "what has this person remembered, across all clones?"
+        # Used by the conversation-memory page. Strictly scoped to the requester's identity.
+        rows = await db.clone_artifacts.find(
+            {"owner_kind": owner_kind, "owner_value": owner_value},
+            {"_id": 0},
+        ).sort("created_at", -1).limit(200).to_list(200)
+    out: list[dict] = []
+    # Enrich with clone slug so the frontend can deep-link back
+    clone_id_set = {a.get("clone_id") for a in rows if a.get("clone_id")}
+    clones_by_id: dict = {}
+    if clone_id_set:
+        clone_rows = await db.clones.find(
+            {"clone_id": {"$in": list(clone_id_set)}}, {"_id": 0, "clone_id": 1, "slug": 1, "display_name": 1, "avatar_url": 1},
+        ).to_list(len(clone_id_set))
+        clones_by_id = {c["clone_id"]: c for c in clone_rows}
+    for a in rows:
+        public = _public_artifact(a)
+        clone = clones_by_id.get(a.get("clone_id")) or {}
+        public["clone_slug"] = clone.get("slug")
+        public["clone_display_name"] = clone.get("display_name")
+        public["clone_avatar_url"] = clone.get("avatar_url")
+        out.append(public)
+    return {"artifacts": out}
 
 
 @router.get("/tasks")

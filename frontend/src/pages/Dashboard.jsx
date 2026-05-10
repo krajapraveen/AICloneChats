@@ -244,6 +244,15 @@ export default function Dashboard() {
               body="Type in your language. Everyone reads in theirs. AI translates each message in real time across English, Hindi, Telugu, and Japanese."
               primary={{ to: "/translation-chat", label: "Open translation chat" }}
             />
+            <WorkspaceCard
+              testId="workspace-card-memory"
+              tone="tag-violet"
+              kicker="MEMORY-FIRST"
+              icon="◈"
+              title="Conversation Memory"
+              body="The clone remembers what mattered in your conversations — tasks, decisions, follow-ups, summaries. Pull-only. No reminders, no nudges, no chasing."
+              primary={{ to: "/conversation-memory", label: "Open memory" }}
+            />
           </div>
         </section>
 
