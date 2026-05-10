@@ -256,6 +256,55 @@ export default function Dashboard() {
           </div>
         </section>
 
+        {/* ADMIN UTILITIES — operator-only. Visually + semantically separated
+            from user-facing Workspace cards. Avatar Mod sits here as an
+            operator surface, NOT as a product peer. */}
+        {user?.role === "admin" && (
+          <section data-testid="admin-utilities-section" className="border-t border-white/5 pt-6 sm:pt-8 mt-2">
+            <div className="flex items-end justify-between gap-3 mb-3 flex-wrap">
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-widest text-muted">Operator console · admin only</p>
+                <h2 className="text-base font-display font-bold text-ink/85 mt-1">Admin utilities</h2>
+                <p className="text-xs text-muted mt-1">Moderation, queues, and diagnostics. Not part of the product surface.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3" data-testid="admin-utilities-grid">
+              <Link to="/admin/chats" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-chats">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Chats</div>
+                <div className="text-sm font-bold mt-0.5">All chats</div>
+              </Link>
+              <Link to="/admin/safety" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-safety">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Safety</div>
+                <div className="text-sm font-bold mt-0.5">Moderation log</div>
+              </Link>
+              <Link to="/admin/delayed-messages" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-delayed">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Delayed</div>
+                <div className="text-sm font-bold mt-0.5">Queue + persistence</div>
+              </Link>
+              <Link to="/admin/avatar-chat" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-avatar">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Avatar</div>
+                <div className="text-sm font-bold mt-0.5">Render queue</div>
+              </Link>
+              <Link to="/admin/anonymous-metrics" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-anonymous">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Anonymous</div>
+                <div className="text-sm font-bold mt-0.5">Behavioral metrics</div>
+              </Link>
+              <Link to="/admin/debates/retention" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-debates">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Debates</div>
+                <div className="text-sm font-bold mt-0.5">Retention</div>
+              </Link>
+              <Link to="/admin/translation-chat" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-translation">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Translation</div>
+                <div className="text-sm font-bold mt-0.5">Corridor metrics</div>
+              </Link>
+              <Link to="/admin/login-intelligence" className="glass-card p-3 hover:border-white/15 transition" data-testid="admin-util-login">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Login</div>
+                <div className="text-sm font-bold mt-0.5">Auth diagnostics</div>
+              </Link>
+            </div>
+          </section>
+        )}
+
         {/* MY CLONES */}
         <section data-testid="my-clones-section">
           <div className="flex items-end justify-between gap-3 mb-4 flex-wrap">
