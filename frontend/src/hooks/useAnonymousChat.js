@@ -82,19 +82,31 @@ export default function useAnonymousChat(slug) {
     const wsBase = backendUrl.replace(/^http/, "ws");
     const url = `${wsBase}/api/anonymous/ws/${encodeURIComponent(slug)}?device_id=${encodeURIComponent(getDeviceId())}`;
     let ws;
+    let opened = false;
     try {
       ws = new WebSocket(url);
     } catch (_) {
-      wsAttemptsRef.current += 1;
-      if (wsAttemptsRef.current >= WS_MAX_ATTEMPTS) startPolling();
+      startPolling();
       return;
     }
     wsRef.current = ws;
     setMode("ws");
     setStatus("connecting");
 
+    // Hard deadline: if WS hasn't opened in 3s, give up and switch to polling.
+    // Polling provides true liveness; once it succeeds the pill flips to "polling".
+    const handshakeTimer = setTimeout(() => {
+      if (opened || stoppedRef.current) return;
+      try { ws.close(); } catch (_) { /* noop */ }
+      startPolling();
+    }, 3000);
+
     ws.onopen = () => {
+      opened = true;
+      clearTimeout(handshakeTimer);
       wsAttemptsRef.current = 0;
+      stopPolling(); // WS is authoritative if it opens
+      setMode("ws");
       setStatus("live");
     };
     ws.onmessage = (ev) => {
@@ -103,6 +115,7 @@ export default function useAnonymousChat(slug) {
         if (data.type === "hello") {
           if (Array.isArray(data.messages)) dedupeAndAppend(data.messages);
           if (typeof data.active_count === "number") setActiveCount(data.active_count);
+          setStatus("live");
         } else if (data.type === "new_message") {
           if (data.message) dedupeAndAppend([data.message]);
         } else if (data.type === "active_count") {
@@ -126,7 +139,14 @@ export default function useAnonymousChat(slug) {
       // onclose will handle the fallback
     };
     ws.onclose = () => {
+      clearTimeout(handshakeTimer);
       if (stoppedRef.current) return;
+      // If WS never opened, jump straight to polling (handshakeTimer may already have).
+      if (!opened) {
+        startPolling();
+        return;
+      }
+      // WS was live and dropped — try one quick reconnect, else polling.
       wsAttemptsRef.current += 1;
       if (wsAttemptsRef.current >= WS_MAX_ATTEMPTS) {
         startPolling();
@@ -137,7 +157,7 @@ export default function useAnonymousChat(slug) {
       api.post("/anonymous/track", { event_name: "anonymous_reconnect_attempted", metadata: { room_slug: slug } }).catch(() => {});
       setTimeout(connectWs, delay);
     };
-  }, [slug, dedupeAndAppend, startPolling]);
+  }, [slug, dedupeAndAppend, startPolling, stopPolling]);
 
   // Initial: load history, then connect WS
   useEffect(() => {

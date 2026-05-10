@@ -574,7 +574,7 @@ async def _require_admin(user: dict = Depends(get_current_user)) -> dict:
 @admin_router.get("/metrics")
 async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Query(default=7, ge=1, le=90)):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    total_messages = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "message_type": "user"})
+    total_messages_user = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "message_type": "user"})
     blocked = await db.anonymous_messages.count_documents({"created_at": {"$gte": since}, "moderation_status": "blocked"})
     reports = await db.anonymous_reports.count_documents({"created_at": {"$gte": since}})
     sessions_created = await db.anonymous_sessions.count_documents({"created_at": {"$gte": since}})
@@ -586,9 +586,9 @@ async def admin_metrics(_admin: dict = Depends(_require_admin), days: int = Quer
         room_rows.append({**r, "messages": n, "last_message_at": (last or {}).get("created_at"), "active_count": await manager.active_count(r["slug"])})
     return {
         "window_days": days,
-        "total_user_messages": total_messages,
+        "total_user_messages": total_messages_user,
         "blocked_messages": blocked,
-        "block_rate_pct": round(100 * blocked / max(1, total_messages + blocked), 1),
+        "block_rate_pct": round(100 * blocked / max(1, total_messages_user), 1),
         "reports": reports,
         "sessions_created": sessions_created,
         "rooms": room_rows,
