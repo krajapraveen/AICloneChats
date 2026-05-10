@@ -8,7 +8,9 @@ import ChatBubble from "../components/ChatBubble";
 import ShareCardModal from "../components/ShareCardModal";
 import MoodSignalPill from "../components/MoodSignalPill";
 import ConversationArtifactsPanel from "../components/ConversationArtifactsPanel";
+import SendLaterInline from "../components/SendLaterInline";
 import { useMoodTheme } from "../hooks/useMoodTheme";
+import { useAuth } from "../contexts/AuthContext";
 
 function getOrCreateVisitorId() {
   let id = localStorage.getItem("visitor_id");
@@ -23,6 +25,7 @@ const SHARE_WORTHY_THRESHOLD = 80;
 
 export default function PublicClone() {
   const { slug } = useParams();
+  const { user } = useAuth();
   const [clone, setClone] = useState(null);
   const [stats, setStats] = useState({ share_count: 0, message_count: 0, visitor_count: 0 });
   const [error, setError] = useState("");
@@ -216,6 +219,19 @@ export default function PublicClone() {
         <p className="text-center text-xs text-muted mt-5 font-mono uppercase tracking-widest">
           Built on aiclonechats.com · <a href="/" className="underline hover:text-amber-soft">Make your own →</a>
         </p>
+
+        {/* Send later — only authenticated users; visitors don't get a delayed inbox */}
+        {user && clone?.clone_id && messages.length > 0 && (
+          <div className="mt-5" data-testid="send-later-section">
+            <div className="flex items-center gap-2 mb-1">
+              <SendLaterInline
+                cloneId={clone.clone_id}
+                conversationId={conversationId}
+                prefillBody={[...messages].reverse().find((m) => m.sender === "visitor")?.text || ""}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Conversation Artifacts — pull-only, no nudges */}
         <ConversationArtifactsPanel conversationId={conversationId} visitorId={visitorId.current} />

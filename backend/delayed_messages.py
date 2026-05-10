@@ -56,7 +56,7 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "aiclonechats.com <hello@aiclonechats.com>")
 
 EMOTIONAL_CATEGORIES = {"future_self", "apology", "memory", "motivation", "love", "grief", "custom"}
-RECIPIENT_TYPES = {"self", "email", "clone_user"}
+RECIPIENT_TYPES = {"self", "email", "clone_user", "clone"}
 DELIVERY_CHANNELS = {"in_app", "email", "both"}
 SCHEDULER_POLL_SEC = int(os.environ.get("DELAYED_SCHEDULER_POLL_SEC", "30"))
 EMAIL_RATE_LIMIT_PER_DAY = 5
@@ -72,6 +72,8 @@ class CreateDelayedMessageRequest(BaseModel):
     recipient_type: str = Field(default="self")
     recipient_email: Optional[EmailStr] = None
     recipient_user_id: Optional[str] = None
+    clone_id: Optional[str] = None  # required when recipient_type == "clone"
+    source_conversation_id: Optional[str] = None  # link back to the originating clone conversation
     delivery_time: str  # ISO8601 future timestamp
     timezone: Optional[str] = Field(default="UTC")
     delivery_channel: str = Field(default="in_app")
@@ -156,6 +158,8 @@ def _public(d: dict) -> dict:
         "recipient_type": d.get("recipient_type"),
         "recipient_user_id": d.get("recipient_user_id"),
         "recipient_email": d.get("recipient_email"),
+        "clone_id": d.get("clone_id"),
+        "source_conversation_id": d.get("source_conversation_id"),
         "title": d.get("title"),
         "message_body": d.get("message_body"),
         "emotional_category": d.get("emotional_category"),
@@ -215,6 +219,7 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
     # Recipient resolution
     recipient_email = None
     recipient_user_id = None
+    clone_id_resolved: Optional[str] = None
     if payload.recipient_type == "self":
         recipient_user_id = user["user_id"]
     elif payload.recipient_type == "email":
@@ -230,6 +235,20 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
         if not target:
             raise HTTPException(404, "Recipient user not found")
         recipient_user_id = payload.recipient_user_id
+    elif payload.recipient_type == "clone":
+        # Sealed message addressed to a clone — delivered to the SENDER'S inbox
+        # at delivery time, tagged with the clone so they can re-enter that
+        # conversation with the message visible. The clone does NOT autonomously
+        # do anything with it. The sender remains the only audience.
+        if not payload.clone_id:
+            raise HTTPException(400, "clone_id required for type=clone")
+        clone_doc = await db.clones.find_one({"clone_id": payload.clone_id}, {"_id": 0, "clone_id": 1})
+        if not clone_doc:
+            raise HTTPException(404, "Clone not found")
+        clone_id_resolved = payload.clone_id
+        recipient_user_id = user["user_id"]  # delivered into sender's inbox
+        if payload.delivery_channel != "in_app":
+            raise HTTPException(400, "type=clone requires delivery_channel=in_app")
 
     # Per-user cap (active = scheduled + queued)
     active = await db.delayed_messages.count_documents({
@@ -279,6 +298,8 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
         "recipient_type": payload.recipient_type,
         "recipient_user_id": recipient_user_id,
         "recipient_email": recipient_email,
+        "clone_id": clone_id_resolved,
+        "source_conversation_id": payload.source_conversation_id,
         "title": payload.title.strip(),
         "message_body": payload.message_body.strip(),
         "emotional_category": payload.emotional_category,

@@ -36,6 +36,7 @@ GUARDED_FRONTEND = [
     "../frontend/src/pages/AdminDelayedMessages.jsx",
     "../frontend/src/components/ConversationArtifactsPanel.jsx",
     "../frontend/src/pages/ConversationMemory.jsx",
+    "../frontend/src/components/SendLaterInline.jsx",
 ]
 
 # Forbidden terms — anything that manufactures user return rather than trusting it.
