@@ -272,23 +272,28 @@ class TestTranscribe:
         assert r.status_code == 400
 
 
-# -------- Tests: track --------
+# -------- Tests: track (JSON body) --------
 class TestTrack:
     def test_track_allowed_event(self, device_id):
-        r = requests.post(f"{BASE_URL}/api/voice/track", data={"event_name": "voice_page_viewed"},
-                          headers={"X-Device-Id": device_id}, timeout=10)
+        r = requests.post(f"{BASE_URL}/api/voice/track", json={"event_name": "voice_page_viewed"},
+                          headers={"X-Device-Id": device_id, "Content-Type": "application/json"}, timeout=10)
         assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
 
     def test_track_rejects_unknown(self, device_id):
-        r = requests.post(f"{BASE_URL}/api/voice/track", data={"event_name": "totally_made_up_event"},
-                          headers={"X-Device-Id": device_id}, timeout=10)
+        r = requests.post(f"{BASE_URL}/api/voice/track", json={"event_name": "totally_made_up_event"},
+                          headers={"X-Device-Id": device_id, "Content-Type": "application/json"}, timeout=10)
         assert r.status_code == 400
 
     def test_track_all_allowed_events(self, device_id):
-        events = ["voice_record_started", "voice_example_clicked", "voice_signup_wall_shown"]
+        events = [
+            "voice_page_viewed", "voice_record_started", "voice_record_stopped",
+            "voice_history_opened", "voice_message_regenerated", "voice_example_clicked",
+            "voice_signup_wall_shown",
+        ]
         for ev in events:
-            r = requests.post(f"{BASE_URL}/api/voice/track", data={"event_name": ev},
-                              headers={"X-Device-Id": device_id}, timeout=10)
+            r = requests.post(f"{BASE_URL}/api/voice/track", json={"event_name": ev},
+                              headers={"X-Device-Id": device_id, "Content-Type": "application/json"}, timeout=10)
             assert r.status_code == 200, f"event {ev}: {r.text}"
 
 

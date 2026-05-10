@@ -604,7 +604,8 @@ async def usage(actor: dict = Depends(voice_actor)):
 
 
 @router.post("/track")
-async def track(event_name: str = Form(...), actor: dict = Depends(voice_actor)):
+async def track(payload: dict, actor: dict = Depends(voice_actor)):
+    event_name = (payload or {}).get("event_name", "")
     allowed = {
         "voice_page_viewed", "voice_record_started", "voice_record_stopped",
         "voice_history_opened", "voice_message_regenerated", "voice_example_clicked",

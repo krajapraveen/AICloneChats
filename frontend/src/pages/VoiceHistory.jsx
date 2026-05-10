@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
+import { copyToClipboard } from "../lib/clipboard";
 import { useAuth } from "../contexts/AuthContext";
 import Navbar from "../components/Navbar";
 
@@ -32,12 +33,9 @@ export default function VoiceHistory() {
   }, [user, authLoading, navigate]);
 
   async function copy(text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("Copied");
-    } catch {
-      toast.error("Copy failed");
-    }
+    const ok = await copyToClipboard(text);
+    if (ok) toast.success("Copied");
+    else toast.error("Copy failed");
   }
 
   if (authLoading || !user) {

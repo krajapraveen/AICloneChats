@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
+import { copyToClipboard } from "../lib/clipboard";
 import { useAuth } from "../contexts/AuthContext";
 import Navbar from "../components/Navbar";
 import VoiceSignupWall from "../components/VoiceSignupWall";
@@ -49,9 +50,7 @@ function fmtTime(sec) {
 }
 
 function track(event_name) {
-  const fd = new FormData();
-  fd.append("event_name", event_name);
-  api.post("/voice/track", fd).catch(() => { /* analytics best-effort */ });
+  api.post("/voice/track", { event_name }).catch(() => { /* analytics best-effort */ });
 }
 
 export default function VoiceMessaging() {
@@ -226,13 +225,13 @@ export default function VoiceMessaging() {
   }
 
   async function copyMessage(m) {
-    try {
-      await navigator.clipboard.writeText(m.message);
-      setCopiedId(m.message_id);
-      api.post("/voice/copy-event", { message_id: m.message_id }).catch(() => { /* analytics best-effort */ });
-    } catch {
-      toast.error("Copy failed");
+    const ok = await copyToClipboard(m.message);
+    if (!ok) {
+      toast.error("Copy failed — long-press the text to copy manually.");
+      return;
     }
+    setCopiedId(m.message_id);
+    api.post("/voice/copy-event", { message_id: m.message_id }).catch(() => { /* analytics best-effort */ });
   }
 
   async function handleFile(file) {
