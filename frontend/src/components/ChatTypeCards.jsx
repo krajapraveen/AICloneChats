@@ -86,6 +86,26 @@ const CHAT_INFO = {
     safety:
       "Audio is transcribed in memory and never persisted. Public share links are off by default and require explicit confirmation; phone numbers, emails, OTPs, addresses, and links are auto-redacted before any share is created.",
   },
+  anonymous: {
+    id: "anonymous",
+    kicker: "OPTION 05 · COMING SOON",
+    title: "What is Anonymous Reality?",
+    body:
+      "Topic-based anonymous rooms where strangers talk honestly without identity pressure, fake flexing, or toxicity. AI moderation keeps every room emotionally safe so you can say what you actually feel — and be heard, not judged.",
+    how_to: [
+      "Enter anonymously — no email, no name, no profile.",
+      "Pick a room: Loneliness, Family Pressure, Money Reality, Relationships, Mental Load, and more.",
+      "Talk honestly. The AI blocks toxicity and harassment before any message goes public.",
+      "Self-harm content is met with supportive responses, never shaming.",
+      "Report what feels off. Admins keep small healthy rooms over large chaotic ones.",
+    ],
+    example: {
+      input: "I'm exhausted and I haven't told anyone.",
+      output: "(another anonymous handle) I felt that exact thing last week. You're not alone in it.",
+    },
+    safety:
+      "Built on a different kind of trust: no public profiles, no followers, no likes, no leaderboards. Just rooms where honesty is the only currency.",
+  },
 };
 
 export default function ChatTypeCards() {
@@ -114,6 +134,14 @@ export default function ChatTypeCards() {
       // Funnel separation: voice events live on voice_usage_events, NOT clone_analytics.
       api.post("/voice/track", { event_name: "voice_page_viewed" }).catch(() => {});
       navigate("/voice");
+    } else if (chat_type === "anonymous") {
+      // Coming soon — log interest only. Different product, different domain in future.
+      api.post("/analytics/event", {
+        event_name: "anonymous_reality_interest_clicked",
+        metadata: { source: "chat_type_cards", state: "coming_soon" },
+      }).catch(() => {});
+      // Open the info modal instead of navigating (no live route yet)
+      setOpenInfo("anonymous");
     }
   };
 
@@ -122,13 +150,13 @@ export default function ChatTypeCards() {
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-16 md:py-24">
         <div className="max-w-2xl mb-10">
           <span className="tag mb-4 inline-block">Pick your tool</span>
-          <h2 className="heading-display text-3xl md:text-5xl mb-3">Four ways to talk.</h2>
+          <h2 className="heading-display text-3xl md:text-5xl mb-3">Five ways to talk.</h2>
           <p className="text-muted font-medium leading-relaxed">
-            Personality-first, emotion-first, paste-and-reply, or speak-it-clean. Pick the one that fits the moment.
+            Personality-first, emotion-first, paste-and-reply, speak-it-clean — and soon, anonymous topic rooms with AI moderation. Pick the one that fits the moment.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-5">
           {/* AI Clone Chat */}
           <div className="brutal-card p-7 flex flex-col" data-testid="card-clone-chat">
             <div className="flex items-center justify-between gap-3 mb-2">
@@ -208,6 +236,29 @@ export default function ChatTypeCards() {
               Try Voice →
             </button>
           </div>
+
+          {/* Anonymous Reality (coming soon) */}
+          <div className="brutal-card p-7 flex flex-col relative overflow-hidden" data-testid="card-anonymous">
+            <div className="absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest text-rose-300/80 bg-rose-500/10 border border-rose-400/30 rounded-full px-2 py-0.5" data-testid="anonymous-coming-soon-badge">
+              Coming soon
+            </div>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="tag tag-rose">ANONYMOUS-FIRST</span>
+              <InfoIcon onClick={() => setOpenInfo("anonymous")} label="What is Anonymous Reality?" testId="info-icon-anonymous" />
+            </div>
+            <h3 className="heading-display text-2xl md:text-3xl mb-3">Anonymous Reality</h3>
+            <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5">
+              Topic rooms where strangers talk honestly. No names. No fake flexing. AI moderation keeps it safe.
+            </p>
+            <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
+              <li className="flex items-start gap-2"><span className="text-rose-300 mt-0.5">●</span> Anonymous handles · no profile</li>
+              <li className="flex items-start gap-2"><span className="text-rose-300 mt-0.5">●</span> Real-time topic-based rooms</li>
+              <li className="flex items-start gap-2"><span className="text-rose-300 mt-0.5">●</span> Toxicity blocked before broadcast</li>
+            </ul>
+            <button onClick={() => select("anonymous")} className="btn-ghost mt-auto" data-testid="cta-anonymous">
+              Learn more →
+            </button>
+          </div>
         </div>
       </div>
 
@@ -230,6 +281,23 @@ export default function ChatTypeCards() {
         open={openInfo === "voice"}
         onClose={() => setOpenInfo(null)}
         info={{ ...CHAT_INFO.voice, cta: { label: "Try Voice →", onClick: () => select("voice") } }}
+      />
+      <ChatInfoModal
+        open={openInfo === "anonymous"}
+        onClose={() => setOpenInfo(null)}
+        info={{
+          ...CHAT_INFO.anonymous,
+          cta: {
+            label: "Coming soon",
+            onClick: () => {
+              api.post("/analytics/event", {
+                event_name: "anonymous_reality_interest_clicked",
+                metadata: { source: "info_modal_cta", state: "coming_soon" },
+              }).catch(() => {});
+              setOpenInfo(null);
+            },
+          },
+        }}
       />
     </section>
   );

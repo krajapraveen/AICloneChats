@@ -36,6 +36,32 @@ function WorkspaceCard({ tone, kicker, title, body, primary, secondary, icon, te
   );
 }
 
+function ComingSoonCard({ tone, kicker, title, body, icon, testId, onInterest }) {
+  return (
+    <div className="brutal-card p-6 flex flex-col h-full relative overflow-hidden" data-testid={testId}>
+      <div className="absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest text-rose-300/80 bg-rose-500/10 border border-rose-400/30 rounded-full px-2 py-0.5">
+        Coming soon
+      </div>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <span className={`tag ${tone}`}>{kicker}</span>
+        <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-base">
+          {icon}
+        </div>
+      </div>
+      <h3 className="heading-display text-2xl mb-2">{title}</h3>
+      <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5 flex-1">{body}</p>
+      <button
+        type="button"
+        onClick={onInterest}
+        className="btn-ghost text-sm self-start"
+        data-testid={`${testId}-interest`}
+      >
+        Notify me when it's live
+      </button>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -145,10 +171,10 @@ export default function Dashboard() {
           <div className="flex items-end justify-between gap-3 mb-4">
             <div>
               <p className="label-brutal mb-1">Tools in your workspace</p>
-              <h2 className="heading-display text-2xl sm:text-3xl">Four ways to talk to AI.</h2>
+              <h2 className="heading-display text-2xl sm:text-3xl">Five ways to talk to AI.</h2>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             <WorkspaceCard
               testId="workspace-card-clone"
               tone="tag-amber"
@@ -187,6 +213,21 @@ export default function Dashboard() {
               body="Speak it, upload a voice note, or paste rough text. We write 6 polished tone-matched messages instantly. Audio is never stored."
               primary={{ to: "/voice", label: "Open Voice studio" }}
               secondary={{ to: "/voice/history", label: "History" }}
+            />
+            <ComingSoonCard
+              testId="workspace-card-anonymous"
+              tone="tag-rose"
+              kicker="ANONYMOUS-FIRST"
+              icon="◌"
+              title="Anonymous Reality"
+              body="Topic-based anonymous rooms where strangers talk honestly. No names, no fake flexing, AI moderation. Building separately — coming soon."
+              onInterest={() => {
+                api.post("/analytics/event", {
+                  event_name: "anonymous_reality_interest_clicked",
+                  metadata: { source: "dashboard_workspace", state: "coming_soon" },
+                }).catch(() => {});
+                toast.success("Logged. We'll let you know when Anonymous Reality goes live.");
+              }}
             />
           </div>
         </section>
