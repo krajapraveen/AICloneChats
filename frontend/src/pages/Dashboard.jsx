@@ -36,10 +36,13 @@ function WorkspaceCard({ tone, kicker, title, body, primary, secondary, icon, te
   );
 }
 
-function ComingSoonCard({ tone, kicker, title, body, icon, testId, onInterest }) {
+function ComingSoonCard({ tone, kicker, title, body, icon, testId, onInterest, accent = "rose" }) {
+  const accentText = accent === "sky" ? "text-sky-300/80" : "text-rose-300/80";
+  const accentBg = accent === "sky" ? "bg-sky-500/10" : "bg-rose-500/10";
+  const accentBorder = accent === "sky" ? "border-sky-400/30" : "border-rose-400/30";
   return (
     <div className="brutal-card p-6 flex flex-col h-full relative overflow-hidden" data-testid={testId}>
-      <div className="absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest text-rose-300/80 bg-rose-500/10 border border-rose-400/30 rounded-full px-2 py-0.5">
+      <div className={`absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest ${accentText} ${accentBg} border ${accentBorder} rounded-full px-2 py-0.5`}>
         Coming soon
       </div>
       <div className="flex items-center justify-between gap-3 mb-3">
@@ -171,10 +174,10 @@ export default function Dashboard() {
           <div className="flex items-end justify-between gap-3 mb-4">
             <div>
               <p className="label-brutal mb-1">Tools in your workspace</p>
-              <h2 className="heading-display text-2xl sm:text-3xl">Five ways to talk to AI.</h2>
+              <h2 className="heading-display text-2xl sm:text-3xl">Six ways to talk to AI.</h2>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <WorkspaceCard
               testId="workspace-card-clone"
               tone="tag-amber"
@@ -227,6 +230,22 @@ export default function Dashboard() {
                   metadata: { source: "dashboard_workspace", state: "coming_soon" },
                 }).catch(() => {});
                 toast.success("Logged. We'll let you know when Anonymous Reality goes live.");
+              }}
+            />
+            <ComingSoonCard
+              testId="workspace-card-debate"
+              tone="tag-sky"
+              kicker="DEBATE-FIRST"
+              icon="⚖"
+              title="AI Debate Rooms"
+              body="Live debate rooms with AI scoring, crowd voting, and real-time ranking. Pick a side, argue your case, win a shareable badge. Building separately — coming soon."
+              accent="sky"
+              onInterest={() => {
+                api.post("/analytics/event", {
+                  event_name: "ai_debate_rooms_interest_clicked",
+                  metadata: { source: "dashboard_workspace", state: "coming_soon" },
+                }).catch(() => {});
+                toast.success("Logged. We'll let you know when AI Debate Rooms goes live.");
               }}
             />
           </div>

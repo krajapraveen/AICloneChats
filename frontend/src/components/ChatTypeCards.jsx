@@ -106,6 +106,26 @@ const CHAT_INFO = {
     safety:
       "Built on a different kind of trust: no public profiles, no followers, no likes, no leaderboards. Just rooms where honesty is the only currency.",
   },
+  debate: {
+    id: "debate",
+    kicker: "OPTION 06 · COMING SOON",
+    title: "What is AI Debate Rooms?",
+    body:
+      "Live debate rooms where you pick a side and argue for or against a topic. AI scores your logic, clarity, evidence, and rebuttal strength in real time; the crowd votes; the ranking updates live; winners get a shareable result card.",
+    how_to: [
+      "Browse trending debate topics or create your own.",
+      "Pick a side: for, against, or spectate.",
+      "Submit your argument — moderation runs before broadcast.",
+      "AI scores you across 5 dimensions: logic, clarity, evidence, rebuttal, civility.",
+      "Crowd votes layer on top. Live ranking shifts in real time. Winner gets a shareable badge.",
+    ],
+    example: {
+      input: "Topic: Should phones be banned in classrooms?",
+      output: "Debate ends → winner card with your top argument, AI score, and crowd vote breakdown — copy link, share anywhere.",
+    },
+    safety:
+      "Strong debate against ideas, never against people. Personal attacks, harassment, and hate are blocked before broadcast. Civility is part of the score.",
+  },
 };
 
 export default function ChatTypeCards() {
@@ -142,6 +162,13 @@ export default function ChatTypeCards() {
       }).catch(() => {});
       // Open the info modal instead of navigating (no live route yet)
       setOpenInfo("anonymous");
+    } else if (chat_type === "debate") {
+      // Coming soon — separate Emergent project (not built; demand-signal capture only).
+      api.post("/analytics/event", {
+        event_name: "ai_debate_rooms_interest_clicked",
+        metadata: { source: "chat_type_cards", state: "coming_soon" },
+      }).catch(() => {});
+      setOpenInfo("debate");
     }
   };
 
@@ -150,13 +177,13 @@ export default function ChatTypeCards() {
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-16 md:py-24">
         <div className="max-w-2xl mb-10">
           <span className="tag mb-4 inline-block">Pick your tool</span>
-          <h2 className="heading-display text-3xl md:text-5xl mb-3">Five ways to talk.</h2>
+          <h2 className="heading-display text-3xl md:text-5xl mb-3">Six ways to talk.</h2>
           <p className="text-muted font-medium leading-relaxed">
-            Personality-first, emotion-first, paste-and-reply, speak-it-clean — and soon, anonymous topic rooms with AI moderation. Pick the one that fits the moment.
+            Personality-first, emotion-first, paste-and-reply, speak-it-clean — and soon, anonymous topic rooms and live AI-judged debates. Pick the one that fits the moment.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
           {/* AI Clone Chat */}
           <div className="brutal-card p-7 flex flex-col" data-testid="card-clone-chat">
             <div className="flex items-center justify-between gap-3 mb-2">
@@ -259,6 +286,29 @@ export default function ChatTypeCards() {
               Learn more →
             </button>
           </div>
+
+          {/* AI Debate Rooms (coming soon) */}
+          <div className="brutal-card p-7 flex flex-col relative overflow-hidden" data-testid="card-debate">
+            <div className="absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest text-sky-300/80 bg-sky-500/10 border border-sky-400/30 rounded-full px-2 py-0.5" data-testid="debate-coming-soon-badge">
+              Coming soon
+            </div>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="tag tag-sky">DEBATE-FIRST</span>
+              <InfoIcon onClick={() => setOpenInfo("debate")} label="What is AI Debate Rooms?" testId="info-icon-debate" />
+            </div>
+            <h3 className="heading-display text-2xl md:text-3xl mb-3">AI Debate Rooms</h3>
+            <p className="text-sm font-medium text-ink/70 leading-relaxed mb-5">
+              Pick a side. Argue live. AI scores logic + clarity, the crowd votes, ranking shifts in real time.
+            </p>
+            <ul className="space-y-1.5 text-xs text-ink/70 mb-7">
+              <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> For / against / spectate · live rooms</li>
+              <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> AI scoring + crowd voting</li>
+              <li className="flex items-start gap-2"><span className="text-sky-300 mt-0.5">●</span> Real-time ranking · shareable wins</li>
+            </ul>
+            <button onClick={() => select("debate")} className="btn-ghost mt-auto" data-testid="cta-debate">
+              Learn more →
+            </button>
+          </div>
         </div>
       </div>
 
@@ -292,6 +342,23 @@ export default function ChatTypeCards() {
             onClick: () => {
               api.post("/analytics/event", {
                 event_name: "anonymous_reality_interest_clicked",
+                metadata: { source: "info_modal_cta", state: "coming_soon" },
+              }).catch(() => {});
+              setOpenInfo(null);
+            },
+          },
+        }}
+      />
+      <ChatInfoModal
+        open={openInfo === "debate"}
+        onClose={() => setOpenInfo(null)}
+        info={{
+          ...CHAT_INFO.debate,
+          cta: {
+            label: "Coming soon",
+            onClick: () => {
+              api.post("/analytics/event", {
+                event_name: "ai_debate_rooms_interest_clicked",
                 metadata: { source: "info_modal_cta", state: "coming_soon" },
               }).catch(() => {});
               setOpenInfo(null);
