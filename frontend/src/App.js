@@ -21,6 +21,9 @@ import SmartReplyFavorites from "./pages/SmartReplyFavorites";
 import VoiceMessaging from "./pages/VoiceMessaging";
 import VoiceHistory from "./pages/VoiceHistory";
 import VoiceSharePublic from "./pages/VoiceSharePublic";
+import AnonymousReality from "./pages/AnonymousReality";
+import AnonymousRoom from "./pages/AnonymousRoom";
+import AnonymousAdmin from "./pages/AnonymousAdmin";
 import AdminLoginIntelligence from "./pages/AdminLoginIntelligence";
 import AdminVoiceMetrics from "./pages/AdminVoiceMetrics";
 
@@ -43,8 +46,11 @@ function AppRouter() {
       <Route path="/voice" element={<VoiceMessaging />} />
       <Route path="/voice/history" element={<VoiceHistory />} />
       <Route path="/v/:shareId" element={<VoiceSharePublic />} />
+      <Route path="/anonymous-reality" element={<AnonymousReality />} />
+      <Route path="/anonymous-reality/:slug" element={<AnonymousRoom />} />
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
+      <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />

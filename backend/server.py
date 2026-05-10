@@ -20,6 +20,7 @@ import smart_reply  # noqa: E402
 import admin  # noqa: E402
 import voice  # noqa: E402
 import voice_metrics  # noqa: E402
+import anonymous  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -47,6 +48,8 @@ app.include_router(smart_reply.router)
 app.include_router(admin.router)
 app.include_router(voice.router)
 app.include_router(voice_metrics.router)
+app.include_router(anonymous.router)
+app.include_router(anonymous.admin_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -110,6 +113,20 @@ async def on_startup():
     await _db.voice_shares.create_index([("user_id", 1), ("created_at", -1)])
     await _db.voice_shares.create_index([("device_id", 1), ("created_at", -1)])
     await _db.voice_shares.create_index("message_id")
+    # Anonymous Reality
+    await _db.anonymous_sessions.create_index("session_id", unique=True)
+    await _db.anonymous_sessions.create_index("device_id", unique=True)
+    await _db.anonymous_sessions.create_index("anonymous_handle")
+    await _db.anonymous_rooms.create_index("slug", unique=True)
+    await _db.anonymous_messages.create_index("message_id", unique=True)
+    await _db.anonymous_messages.create_index([("room_slug", 1), ("created_at", -1)])
+    await _db.anonymous_messages.create_index([("session_id", 1), ("created_at", -1)])
+    await _db.anonymous_messages.create_index([("moderation_status", 1), ("created_at", -1)])
+    await _db.anonymous_reports.create_index([("status", 1), ("created_at", -1)])
+    await _db.anonymous_analytics.create_index([("created_at", -1)])
+    await _db.anonymous_moderation_logs.create_index([("created_at", -1)])
+    # Seed rooms + starter conversations (idempotent)
+    await anonymous.ensure_rooms_and_seed()
     # Seed env ADMIN_EMAILS into DB (idempotent) so admin status survives redeploys
     try:
         from admin import seed_admins_from_env

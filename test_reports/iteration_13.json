@@ -1,0 +1,45 @@
+{
+  "summary": "Tested Anonymous Reality Phase 1 end-to-end. Backend: 23/23 pytest tests passed. Frontend: 8 rooms render with quoted seed previews + house rules + handle badge; chat room renders seeded messages, composer with correct placeholder, blocked notice, supportive self-harm system reply, working Rules drawer; admin Moderation Desk renders all 4 tabs with metrics, transcript with [seed]/[BLOCKED \u00b7 toxicity]/[BLOCKED \u00b7 doxxing] tags and per-message REMOVE buttons; landing teaser navigates to /anonymous-reality. One UI defect: status pill stays at 'CONNECTING\u2026' indefinitely \u2014 it never transitions to 'Polling' or 'Live' even though messages ARE being fetched (active_count updates from 0 \u2192 8) \u2014 fallback flag in useAnonymousChat hook is not propagated to the pill label.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AnonymousRoom status pill (useAnonymousChat hook)",
+        "issue": "Pill remains 'CONNECTING\u2026' forever even though polling is clearly working (active_count and new messages update correctly). Hook never flips its connection-state to 'polling' or 'live' in the UI. WebSocket appears unreachable through ingress in this preview env (expected per agent_to_agent_context_note), but the polling fallback should drive the label to 'Polling \u2022 N here'.",
+        "selector": "[data-testid='status-pill'] (or the pill in <header> showing 'CONNECTING\u2026 \u2022 N HERE')",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_anonymous_reality.py",
+    "/app/test_reports/pytest/anonymous_reality.xml"
+  ],
+  "action_items": [
+    "Fix useAnonymousChat.js so when WebSocket connection fails twice and polling kicks in, the exposed connection-state ('connecting' | 'live' | 'polling') is updated to 'polling' so the pill label shows 'Polling \u2022 N here' instead of indefinite 'Connecting\u2026'. Likewise once the WS hello frame is received, set state to 'live'."
+  ],
+  "critical_code_review_comments": [
+    "anonymous.py L322: the 'no since + no msgs' fallback fetches descending then reverses \u2014 but the prior query already includes seeds (moderation_status=allowed includes seeds). The fallback query is identical to the primary; the 'since' guard above already guarantees we never hit this branch with seeds present. Dead-ish code but harmless.",
+    "anonymous_moderation.py L91: the `if raw.startswith('json')` block strips `json` prefix but does NOT also strip a leading code-fence backtick, then calls json.loads. Because L89 already does .strip('`'), works for `\u200b```json\\n{...}\\n```\u200b` cases. Acceptable.",
+    "anonymous.py: rate-limit counts ALL messages (including blocked/system) by session in last 60s for cap of 12. A user repeatedly posting blocked content will hit the 429 \u2014 desirable, but blocked attempts are also persisted then counted. Document this if intentional.",
+    "anonymous.py admin_metrics: `block_rate_pct = blocked / (total_messages + blocked)` but `total_messages` already counts user-type messages including allowed; blocked messages are also user-type, so they're double-counted in denominator. Should be `blocked / max(1, total_user_messages)` where total_user_messages includes both allowed+blocked, OR exclude blocked from `total_messages`. Current 23.8% in admin desk for 16 user msgs / 5 blocked is mathematically wrong (5/(16+5)=23.8% but real rate is 5/16=31.3%). LOW priority but visible to admins."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_anonymous_reality.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23)",
+    "frontend": "92% \u2014 all functional flows pass; status pill state-machine bug is the only UI defect"
+  },
+  "test_credentials": "Admin: sr-tester@example.com / TestPass123! \u2014 verified working",
+  "seed_data_creation": "None new \u2014 backend's ensure_rooms_and_seed() already populates 8 rooms with 4-5 seeded messages each. Tests created throwaway anonymous sessions via random X-Device-Id headers and posted user messages into Loneliness room.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file: /app/backend/tests/test_anonymous_reality.py covers session create/idempotent/me, rooms list + detail + seeds, clean+toxic+doxxing+self-harm moderation including system message verification, self-report 400, cross-user reports, track allow/reject, polling-since filter, admin RBAC, metrics, reports list (hydrated), flagged, transcript (seed+user+blocked), remove, freeze/unfreeze/423, ban/403. Run with: pytest /app/backend/tests/test_anonymous_reality.py -v. Frontend: status pill never flips out of 'Connecting\u2026' \u2014 messages still flow via polling so it's a state-label bug only. WebSocket is unreachable through preview ingress as expected.",
+  "rca of the issue": "Status pill stuck at 'CONNECTING\u2026': useAnonymousChat.js opens a WebSocket; on failure it should retry twice then engage long-polling fallback AND update an exposed `mode` (connecting|live|polling) state. Evidence that polling works: (1) active_count badge updates from 0\u21928 over ~12s, (2) seeded + user messages render. Evidence that label never transitions: pill text remained 'CONNECTING\u2026' across 16s of waiting (8 polling intervals at 2s each). Likely fix: in the hook, after the WS upgrade fails and the polling interval is started, setMode('polling'); also after the first successful poll response, setMode('polling') if not already 'live'. On WS hello frame setMode('live')."
+}

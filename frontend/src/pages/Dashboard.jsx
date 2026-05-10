@@ -217,20 +217,14 @@ export default function Dashboard() {
               primary={{ to: "/voice", label: "Open Voice studio" }}
               secondary={{ to: "/voice/history", label: "History" }}
             />
-            <ComingSoonCard
+            <WorkspaceCard
               testId="workspace-card-anonymous"
               tone="tag-rose"
               kicker="ANONYMOUS-FIRST"
               icon="◌"
               title="Anonymous Reality"
-              body="Topic-based anonymous rooms where strangers talk honestly. No names, no fake flexing, AI moderation. Building separately — coming soon."
-              onInterest={() => {
-                api.post("/analytics/event", {
-                  event_name: "anonymous_reality_interest_clicked",
-                  metadata: { source: "dashboard_workspace", state: "coming_soon" },
-                }).catch(() => {});
-                toast.success("Logged. We'll let you know when Anonymous Reality goes live.");
-              }}
+              body="Topic rooms where strangers talk honestly. No names, no fake flexing. AI moderation keeps every room emotionally safe."
+              primary={{ to: "/anonymous-reality", label: "Enter anonymously" }}
             />
             <ComingSoonCard
               testId="workspace-card-debate"

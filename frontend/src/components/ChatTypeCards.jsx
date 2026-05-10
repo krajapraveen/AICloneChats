@@ -88,7 +88,7 @@ const CHAT_INFO = {
   },
   anonymous: {
     id: "anonymous",
-    kicker: "OPTION 05 · COMING SOON",
+    kicker: "OPTION 05",
     title: "What is Anonymous Reality?",
     body:
       "Topic-based anonymous rooms where strangers talk honestly without identity pressure, fake flexing, or toxicity. AI moderation keeps every room emotionally safe so you can say what you actually feel — and be heard, not judged.",
@@ -155,13 +155,11 @@ export default function ChatTypeCards() {
       api.post("/voice/track", { event_name: "voice_page_viewed" }).catch(() => {});
       navigate("/voice");
     } else if (chat_type === "anonymous") {
-      // Coming soon — log interest only. Different product, different domain in future.
       api.post("/analytics/event", {
-        event_name: "anonymous_reality_interest_clicked",
-        metadata: { source: "chat_type_cards", state: "coming_soon" },
+        event_name: "anonymous_reality_card_clicked",
+        metadata: { source: "chat_type_cards" },
       }).catch(() => {});
-      // Open the info modal instead of navigating (no live route yet)
-      setOpenInfo("anonymous");
+      navigate("/anonymous-reality");
     } else if (chat_type === "debate") {
       // Coming soon — separate Emergent project (not built; demand-signal capture only).
       api.post("/analytics/event", {
@@ -264,12 +262,9 @@ export default function ChatTypeCards() {
             </button>
           </div>
 
-          {/* Anonymous Reality (coming soon) */}
-          <div className="brutal-card p-7 flex flex-col relative overflow-hidden" data-testid="card-anonymous">
-            <div className="absolute top-3 right-3 text-[10px] font-mono uppercase tracking-widest text-rose-300/80 bg-rose-500/10 border border-rose-400/30 rounded-full px-2 py-0.5" data-testid="anonymous-coming-soon-badge">
-              Coming soon
-            </div>
-            <div className="flex items-center gap-3 mb-2">
+          {/* Anonymous Reality (live) */}
+          <div className="brutal-card p-7 flex flex-col" data-testid="card-anonymous">
+            <div className="flex items-center justify-between gap-3 mb-2">
               <span className="tag tag-rose">ANONYMOUS-FIRST</span>
               <InfoIcon onClick={() => setOpenInfo("anonymous")} label="What is Anonymous Reality?" testId="info-icon-anonymous" />
             </div>
@@ -282,8 +277,8 @@ export default function ChatTypeCards() {
               <li className="flex items-start gap-2"><span className="text-rose-300 mt-0.5">●</span> Real-time topic-based rooms</li>
               <li className="flex items-start gap-2"><span className="text-rose-300 mt-0.5">●</span> Toxicity blocked before broadcast</li>
             </ul>
-            <button onClick={() => select("anonymous")} className="btn-ghost mt-auto" data-testid="cta-anonymous">
-              Learn more →
+            <button onClick={() => select("anonymous")} className="btn-brutal mt-auto" data-testid="cta-anonymous">
+              Enter anonymously →
             </button>
           </div>
 
@@ -337,16 +332,7 @@ export default function ChatTypeCards() {
         onClose={() => setOpenInfo(null)}
         info={{
           ...CHAT_INFO.anonymous,
-          cta: {
-            label: "Coming soon",
-            onClick: () => {
-              api.post("/analytics/event", {
-                event_name: "anonymous_reality_interest_clicked",
-                metadata: { source: "info_modal_cta", state: "coming_soon" },
-              }).catch(() => {});
-              setOpenInfo(null);
-            },
-          },
+          cta: { label: "Enter anonymously →", onClick: () => select("anonymous") },
         }}
       />
       <ChatInfoModal
