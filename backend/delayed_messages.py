@@ -34,7 +34,6 @@ import uuid
 import logging
 import asyncio
 import secrets
-import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -67,12 +66,9 @@ MAX_DELIVERY_ATTEMPTS = 3
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def _make_open_token() -> tuple[str, str]:
-    """Returns (raw_token, sha256_hash). Raw is shown to recipient once.
-    Hash is what's stored. Lookup by hash, then issue a one-time view."""
-    raw = secrets.token_urlsafe(32)
-    hashed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    return raw, hashed
+def _make_open_token() -> str:
+    """Returns an unguessable capability token. Looked up by exact match."""
+    return secrets.token_urlsafe(32)
 
 
 # ---- Models ----
@@ -127,27 +123,41 @@ async def _emit(event_name: str, *, message_id: Optional[str] = None, user_id: O
 
 
 # ---- Vendor: Resend (email) ----
-async def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, Optional[str]]:
-    """Returns (success, error_message). No-op success=False when key missing."""
+async def _send_email(to_email: str, subject: str, body: str, open_url: Optional[str] = None) -> tuple[bool, Optional[str]]:
+    """Returns (success, error_message). No-op success=False when key missing.
+    If open_url is provided, the message body is plain context only — the
+    email surfaces a clear CTA to open the full sealed message on the web
+    (where the noindex reveal page lives). Recipients without an account
+    can therefore still read what was written for them."""
     if not RESEND_API_KEY:
         return False, "resend_api_key_missing"
     try:
         import requests
         # Build a tiny HTML version. Plain text first, then minimally wrapped.
         safe_body = body.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        cta_html = ""
+        cta_text = ""
+        if open_url:
+            cta_html = f"""<div style="margin:24px 0">
+<a href="{open_url}" style="display:inline-block;padding:12px 22px;border:2px solid #111;border-radius:999px;background:#111;color:#fff;text-decoration:none;font-family:ui-monospace,monospace;font-size:13px;letter-spacing:0.08em;text-transform:uppercase">Open the message</a>
+</div>
+<div style="font-size:12px;color:#666;word-break:break-all">If the button doesn't work, paste this link in your browser:<br/>{open_url}</div>"""
+            cta_text = f"\n\nOpen the full message:\n{open_url}\n"
         html = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:24px;line-height:1.55;color:#111;">
 <h2 style="margin:0 0 12px">{subject}</h2>
 <div style="white-space:pre-wrap">{safe_body}</div>
+{cta_html}
 <hr style="margin:24px 0;border:none;border-top:1px solid #e5e5e5"/>
-<div style="font-size:12px;color:#666">Delivered via aiclonechats.com — Delayed Emotional Chat</div>
+<div style="font-size:12px;color:#666">Delivered via aiclonechats.com — Delayed Emotional Chat. The system delivers; it does not chase.</div>
 </div>"""
+        text_body = body + cta_text
 
         def _do() -> tuple[bool, Optional[str]]:
             try:
                 r = requests.post(
                     "https://api.resend.com/emails",
                     headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                    json={"from": RESEND_FROM, "to": [to_email], "subject": subject, "text": body, "html": html},
+                    json={"from": RESEND_FROM, "to": [to_email], "subject": subject, "text": text_body, "html": html},
                     timeout=20,
                 )
                 if r.status_code in (200, 201, 202):
@@ -304,7 +314,7 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
             raise HTTPException(429, f"email_rate_limit ({EMAIL_RATE_LIMIT_PER_DAY}/24h)")
 
     delayed_id = f"dm_{uuid.uuid4().hex[:14]}"
-    raw_token, token_hash = _make_open_token()
+    open_token = _make_open_token()
     doc = {
         "delayed_message_id": delayed_id,
         "sender_user_id": user["user_id"],
@@ -320,7 +330,7 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
         "timezone": payload.timezone or "UTC",
         "status": "scheduled",
         "delivery_channel": payload.delivery_channel,
-        "open_token_hash": token_hash,
+        "open_token": open_token,
         "delivery_attempts": 0,
         "opened_at": None,
         "delivered_at": None,
@@ -332,9 +342,9 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
     await db.delayed_messages.insert_one(dict(doc))
     await _emit("created", message_id=delayed_id, user_id=user["user_id"], metadata={"category": payload.emotional_category, "channel": payload.delivery_channel, "type": payload.recipient_type})
     public = _public(doc)
-    # Return raw token ONCE on create — sender can include it in any custom share.
-    # Hash is what we store; raw is never persisted server-side.
-    public["open_token"] = raw_token
+    # Raw token returned ONCE on create. Used for the email reveal URL and
+    # for senders who want to forward a link manually.
+    public["open_token"] = open_token
     return {"delayed_message": public}
 
 
@@ -436,6 +446,13 @@ async def cancel_one(delayed_id: str, user: dict = Depends(get_current_user)):
 
 
 # ---- Delivery worker ----
+def _build_open_url(token: str) -> Optional[str]:
+    base = (os.environ.get("FRONTEND_PUBLIC_URL") or os.environ.get("BACKEND_PUBLIC_URL") or "").rstrip("/")
+    if not base:
+        return None
+    return f"{base}/open/{token}"
+
+
 async def _deliver_one(d: dict) -> None:
     delayed_id = d["delayed_message_id"]
     channel = d.get("delivery_channel") or "in_app"
@@ -452,7 +469,11 @@ async def _deliver_one(d: dict) -> None:
 
     if channel in ("email", "both"):
         if d.get("recipient_email"):
-            ok, err = await _send_email(d["recipient_email"], d["title"], d["message_body"])
+            # Embed the message's open_token in the URL so unauthenticated
+            # email recipients can read the full message on the noindex
+            # /open/:token reveal page.
+            open_url = _build_open_url(d.get("open_token") or "") if d.get("open_token") else None
+            ok, err = await _send_email(d["recipient_email"], d["title"], d["message_body"], open_url=open_url)
             if ok:
                 delivered_email = True
             else:
@@ -497,18 +518,17 @@ async def _deliver_one(d: dict) -> None:
 # ---- Token-based reveal (recipient opens via shareable link without auth) ----
 @router.get("/open/{token}")
 async def open_via_token(token: str, response: Response):
-    """One-time-style reveal endpoint. The recipient receives a raw token in
-    their email/share link; we look up by hash. Status guard: only delivered
-    messages can be opened via token. The opened_at timestamp is set on first
-    successful read; subsequent reads return the same data idempotently.
+    """Reveal endpoint for email recipients (no auth required). The recipient
+    receives the raw token in their email; the message is sealed (403) until
+    its delivery time passes. Successful first-open records `opened_at`;
+    subsequent reads return the same data idempotently.
 
     No-index headers prevent search engines from caching reveal payloads."""
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
     if not token or len(token) < 16:
         raise HTTPException(404, "Not found")
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    doc = await db.delayed_messages.find_one({"open_token_hash": token_hash}, {"_id": 0})
+    doc = await db.delayed_messages.find_one({"open_token": token}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
     if doc.get("status") != "delivered":
@@ -525,7 +545,7 @@ async def open_via_token(token: str, response: Response):
     return {"delayed_message": _public(doc)}
 
 
-
+async def _scheduler_tick() -> int:
     """Runs every poll. Returns count of deliveries attempted."""
     now = datetime.now(timezone.utc).isoformat()
     # Find due scheduled messages, atomically flip them to "queued" so concurrent ticks don't double-deliver.

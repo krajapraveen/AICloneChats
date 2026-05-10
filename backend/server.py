@@ -162,6 +162,7 @@ async def on_startup():
     await _db.delayed_messages.create_index([("sender_user_id", 1), ("created_at", -1)])
     await _db.delayed_messages.create_index([("recipient_user_id", 1), ("status", 1), ("delivered_at", -1)])
     await _db.delayed_messages.create_index([("status", 1), ("delivery_time", 1)])
+    await _db.delayed_messages.create_index("open_token", sparse=True)
     await _db.delayed_message_events.create_index([("created_at", -1)])
     await _db.delayed_message_events.create_index([("event_type", 1), ("created_at", -1)])
     # Clone Artifacts indexes

@@ -169,3 +169,76 @@ def test_admin_protected_anon():
     with httpx.Client(timeout=10) as c:
         r = c.get(f"{API}/admin/delayed-messages/metrics")
         assert r.status_code in (401, 403)
+
+
+# ---- Open-token reveal flow (recipient with no account) ----
+def test_open_token_returned_on_create(headers):
+    with httpx.Client(timeout=15) as c:
+        r = c.post(f"{API}/delayed-messages", headers=headers, json={
+            "title": "Token check", "message_body": "hi from past me",
+            "recipient_type": "self", "delivery_time": _future(900), "delivery_channel": "in_app",
+        })
+        msg = r.json()["delayed_message"]
+        assert isinstance(msg.get("open_token"), str)
+        assert len(msg["open_token"]) >= 32
+
+
+def test_open_token_sealed_before_delivery(headers):
+    with httpx.Client(timeout=15) as c:
+        r = c.post(f"{API}/delayed-messages", headers=headers, json={
+            "title": "Sealed", "message_body": "secret",
+            "recipient_type": "self", "delivery_time": _future(900), "delivery_channel": "in_app",
+        })
+        token = r.json()["delayed_message"]["open_token"]
+        # Anonymous read attempt — must be 403 because not yet delivered
+        r = c.get(f"{API}/delayed-messages/open/{token}")
+        assert r.status_code == 403
+
+
+def test_open_token_invalid_returns_404():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/delayed-messages/open/this-is-clearly-not-a-real-token-abcdefghijklmnop")
+        assert r.status_code == 404
+
+
+def test_open_token_short_returns_404():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/delayed-messages/open/short")
+        assert r.status_code == 404
+
+
+def test_open_token_after_delivery_reveals_message(headers):
+    with httpx.Client(timeout=20) as c:
+        r = c.post(f"{API}/delayed-messages", headers=headers, json={
+            "title": "Reveal after delivery", "message_body": "the body to reveal",
+            "recipient_type": "self", "delivery_time": _future(900), "delivery_channel": "in_app",
+        })
+        msg = r.json()["delayed_message"]
+        mid = msg["delayed_message_id"]
+        token = msg["open_token"]
+        # Force-deliver, then open via token (no auth)
+        r = c.post(f"{API}/admin/delayed-messages/{mid}/force-deliver", headers=headers)
+        assert r.status_code == 200
+        r = c.get(f"{API}/delayed-messages/open/{token}")
+        assert r.status_code == 200, r.text
+        body = r.json()["delayed_message"]
+        assert body["title"] == "Reveal after delivery"
+        assert body["message_body"] == "the body to reveal"
+        assert body["status"] == "delivered"
+        assert body.get("opened_at")
+        # noindex header set
+        assert "noindex" in (r.headers.get("X-Robots-Tag") or "").lower()
+        # Idempotent: a second open returns the same data
+        r2 = c.get(f"{API}/delayed-messages/open/{token}")
+        assert r2.status_code == 200
+        assert r2.json()["delayed_message"]["delayed_message_id"] == mid
+
+
+def test_open_token_not_in_listing_payload(headers):
+    """Listing/admin payloads must NOT leak open_token. Only the create response
+    surfaces the raw token (returned once)."""
+    with httpx.Client(timeout=15) as c:
+        r = c.get(f"{API}/delayed-messages", headers=headers)
+        assert r.status_code == 200
+        for m in r.json()["messages"]:
+            assert "open_token" not in m, f"open_token leaked in listing for {m.get('delayed_message_id')}"

@@ -22,6 +22,33 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-02-12 (Open-token reveal flow for emailed delayed messages — final delta)** — **Three-item delta. Closes the recipient-without-account gap so the email channel is genuinely useful.**
+  - **Backend** (`backend/delayed_messages.py`):
+    - **`open_token`** field minted at create time (`secrets.token_urlsafe(32)`, ~43 chars). Returned ONCE in the create response (`delayed_message.open_token`) and never again — sender must capture it at that moment if they want to share manually. Listing/admin payloads (`_public()`) deliberately do NOT expose the token (test asserts this).
+    - **`GET /api/delayed-messages/open/{token}`** — public unauthenticated reveal endpoint. Looks up by exact `open_token` match. Returns 404 for missing/invalid/short tokens, 403 if the message is still sealed (status != "delivered"), 200 otherwise. Sets `X-Robots-Tag: noindex, nofollow, noarchive` and `Cache-Control: no-store, no-cache, must-revalidate, private` on the response. Sets `opened_at` on first read; idempotent on subsequent reads.
+    - **`delivery_attempts` counter + retry policy** in `_deliver_one`. Each pass through increments. On non-fatal failure under `MAX_DELIVERY_ATTEMPTS=3`, the message drops back to `scheduled` with `delivery_time = max(now, current_dt) + 60s × attempt` so the next tick picks it up. At/over the limit, terminal-fail with `failure_reason` recording the attempt count. Emits `delivery_attempt_failed` per non-terminal failure, `failed` on terminal.
+    - **`_send_email(to, subject, body, open_url=None)`** now optionally embeds the reveal link as a CTA button + plain-text fallback in both HTML and text bodies. Worker passes `_build_open_url(open_token)` (resolved from `FRONTEND_PUBLIC_URL` then `BACKEND_PUBLIC_URL`).
+    - **`_scheduler_tick` def restored** — the previous edit left a dangling docstring and the `_scheduler_loop` was calling an undefined function. Fixed; backend now starts cleanly with the cron enabled.
+    - Removed `hashlib` import + `open_token_hash` field. The hash-then-lookup pattern was incompatible with the worker needing the raw token to embed in the email URL; storing both raw and hash in the same DB defeats the hash. Kept the simpler capability-token model: a single high-entropy secret as the URL parameter.
+  - **Frontend** (`frontend/src/pages/DelayedMessageReveal.jsx` + `App.js`):
+    - New `/open/:token` route, registered BEFORE the `/:slug` catch-all so it doesn't get hijacked by `PublicClone`.
+    - Page mounts and injects three meta tags at runtime: `robots: noindex,nofollow,noarchive,nosnippet`, `Cache-Control: no-store...`, `referrer: no-referrer`. Cleaned up on unmount.
+    - Three render states: loading / error (404 or 403-sealed) / success card with title + delivered-at + body. Footer reads "The system delivers; it does not chase." No CTA, no signup wall, no related-content section. The reveal is the entire experience.
+    - Direct `axios.get(BACKEND_URL/api/...)` — no auth header (recipient is unauthenticated by design).
+  - **Persistence** (`server.py`): added `delayed_messages.open_token` sparse index for the lookup path. `FRONTEND_PUBLIC_URL` env added (falls back to `BACKEND_PUBLIC_URL`).
+  - **Tests** (`backend/tests/test_delayed_messages.py`): +5 tests for the open-token flow:
+    - `test_open_token_returned_on_create`: create response surfaces a ≥32-char token
+    - `test_open_token_sealed_before_delivery`: 403 before delivery
+    - `test_open_token_invalid_returns_404`: garbage token → 404
+    - `test_open_token_short_returns_404`: short token → 404 (entropy guard)
+    - `test_open_token_after_delivery_reveals_message`: force-deliver → open via token → 200, body matches, `opened_at` set, idempotent on second open
+    - `test_open_token_not_in_listing_payload`: listing/inbox responses don't leak token
+  - **Constitutional CI**: 5/5 pass. `DelayedMessageReveal.jsx` not in the guarded frontend list (pure presentation; nothing to chase). All forbidden-term scans clean.
+  - **Tests verified**: 46/46 pass across delayed_messages + clone_delayed_recipient + clone_artifacts + avatar_chat + no_chasing_mechanisms. 283/284 pass full suite — the one remaining failure (`test_fake_code_returns_401` exact text match) is pre-existing, unrelated, and documented in earlier handoffs.
+  - **Smoke**: `/open/some-fake-token` reveal page rendered the error state with correct copy, robots/referrer meta verified injected at runtime via DOM inspection.
+  - **Operator note**: `RESEND_API_KEY` and `FRONTEND_PUBLIC_URL` (or `BACKEND_PUBLIC_URL`) must both be set in production for emails to carry working reveal links. Missing either → email channel still degrades gracefully (text-only body, no CTA), and the in-app channel is unaffected. Sender can also copy the `open_token` from the create response and share manually.
+
+
 - **2026-02-12 (Three-addition pass — clone recipient + source_conversation_id + inline Send Later)** — **Subtractive review of the Delayed Emotional Chat re-spec found 90% already built. Executed only the three genuine deltas. Refused 7 items as feature drift.**
   - **`recipient_type: "clone"`** (`backend/delayed_messages.py`): new sealed-message addressee. Clone-addressed delayed messages deliver to the SENDER's voluntary inbox at delivery time, tagged with the clone so the user can return to that conversation with the message visible. The clone does NOT autonomously act on receipt — there is no auto-reply, auto-react, or notification hook. `delivery_channel="in_app"` only (no email leak). Standard self-harm crisis path applies.
   - **`source_conversation_id`** field added to `delayed_messages` schema (non-breaking, additive). Lets the frontend deep-link a delivered message back to the originating clone conversation.

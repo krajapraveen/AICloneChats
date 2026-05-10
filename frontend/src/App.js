@@ -42,6 +42,7 @@ import AvatarProfiles from "./pages/AvatarProfiles";
 import AdminAvatarChat from "./pages/AdminAvatarChat";
 import DelayedChat from "./pages/DelayedChat";
 import AdminDelayedMessages from "./pages/AdminDelayedMessages";
+import DelayedMessageReveal from "./pages/DelayedMessageReveal";
 import ConversationMemory from "./pages/ConversationMemory";
 
 function LegacyAuthRedirect() {
@@ -86,6 +87,7 @@ function AppRouter() {
       <Route path="/scheduled-messages" element={<DelayedChat />} />
       <Route path="/admin/delayed-messages" element={<AdminDelayedMessages />} />
       <Route path="/conversation-memory" element={<ConversationMemory />} />
+      <Route path="/open/:token" element={<DelayedMessageReveal />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
