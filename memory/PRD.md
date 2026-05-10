@@ -24,7 +24,7 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 ## Changelog
 - **2026-02-12 (P1: production env wired + real Resend E2E verified)** — **Email channel proven live end-to-end. Public flag flipped on in preview. Production deploy block prepared.**
   - **Preview env updated** (`backend/.env`):
-    - `RESEND_API_KEY=re_jVN4T1zs_G86j9kGm4FEq1WpDLE7fW3qm`
+    - `RESEND_API_KEY=<redacted — rotate before reuse>`
     - `RESEND_FROM=aiclonechats.com <admin@aiclonechats.com>`
     - `FRONTEND_PUBLIC_URL=https://digital-twin-119.preview.emergentagent.com` (preview value; production must be `https://aiclonechats.com`)
     - `DELAYED_EMOTIONAL_CHAT_ENABLED=true`
@@ -32,7 +32,7 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
   - **Real E2E verified** (no mocks): created delayed message with `recipient_type=email`, `recipient_email=krajapraveen@aiclonechats.com`, `delivery_channel=email` → admin force-delivered → Resend returned 2xx (no failure_reason, `delivery_attempts=1`, `status=delivered`) → anonymous `GET /api/delayed-messages/open/{token}` returned 200 with `X-Robots-Tag: noindex, nofollow` and the full message body → `opened_at` set on first read → frontend `/open/:token` reveal page rendered the real title/body/delivered-at with all noindex+referrer metas correctly injected.
   - **Production env block** to apply via Emergent deploy panel for `https://aiclonechats.com`:
     ```
-    RESEND_API_KEY=re_jVN4T1zs_G86j9kGm4FEq1WpDLE7fW3qm
+    RESEND_API_KEY=<paste freshly rotated Resend key here>
     RESEND_FROM=aiclonechats.com <admin@aiclonechats.com>
     FRONTEND_PUBLIC_URL=https://aiclonechats.com
     DELAYED_EMOTIONAL_CHAT_ENABLED=true
