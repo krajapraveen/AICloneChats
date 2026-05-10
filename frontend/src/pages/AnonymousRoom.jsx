@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, memo } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
@@ -33,7 +33,7 @@ function StatusPill({ status, mode, activeCount }) {
   );
 }
 
-function MessageBubble({ msg, mySessionId, onReport }) {
+function MessageBubbleImpl({ msg, mySessionId, onReport }) {
   const isMine = msg.session_id && msg.session_id === mySessionId;
   const isSystem = msg.message_type === "system";
   const isSeed = msg.message_type === "seed";
@@ -67,6 +67,26 @@ function MessageBubble({ msg, mySessionId, onReport }) {
     </div>
   );
 }
+
+/**
+ * Memoized to prevent repaint flicker during polling refresh.
+ * Re-renders only when message content / moderation state actually changes,
+ * or the viewer's session context changes.
+ */
+const MessageBubble = memo(MessageBubbleImpl, (prev, next) => {
+  if (prev.mySessionId !== next.mySessionId) return false;
+  if (prev.onReport !== next.onReport) return false;
+  const a = prev.msg, b = next.msg;
+  if (a === b) return true;
+  return (
+    a?.message_id === b?.message_id &&
+    a?.content === b?.content &&
+    a?.moderation_status === b?.moderation_status &&
+    a?.message_type === b?.message_type &&
+    a?.anonymous_handle === b?.anonymous_handle &&
+    a?.created_at === b?.created_at
+  );
+});
 
 function ReportModal({ open, onClose, onSubmit, message }) {
   const [reason, setReason] = useState("");
@@ -203,6 +223,9 @@ export default function AnonymousRoom() {
 
   const otherTyping = useMemo(() => typingHandles.filter((h) => h !== session?.anonymous_handle), [typingHandles, session]);
 
+  // Stable callback so memoized MessageBubble doesn't re-render on every parent paint.
+  const handleReport = useMemo(() => (msg) => setReportTarget(msg), []);
+
   const isFrozen = room?.status === "frozen" || status === "frozen";
 
   return (
@@ -230,7 +253,7 @@ export default function AnonymousRoom() {
             <div className="text-center text-xs font-mono text-muted py-12">Loading conversation…</div>
           )}
           {messages.map((m) => (
-            <MessageBubble key={m.message_id} msg={m} mySessionId={session?.session_id} onReport={(msg) => setReportTarget(msg)} />
+            <MessageBubble key={m.message_id} msg={m} mySessionId={session?.session_id} onReport={handleReport} />
           ))}
           {otherTyping.length > 0 && (
             <div className="text-[11px] font-mono text-muted italic px-2 py-1" data-testid="anon-typing-indicator">
