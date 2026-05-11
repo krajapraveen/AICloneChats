@@ -78,11 +78,21 @@ export default function PublicClone() {
         visitor_name: visitorName || null,
         conversation_id: conversationId,
       });
-      setConversationId(data.conversation_id);
-      setMessages((m) => [...m, { sender: "clone", text: data.reply, key: Date.now() + 1, prevQuestion: text }]);
-      if (data.mood_ui) updateMoodUI(data.mood_ui);
+      if (data?.conversation_id) setConversationId(data.conversation_id);
+      const reply = (typeof data?.reply === "string" && data.reply.trim()) || "(no reply)";
+      setMessages((m) => [...m, { sender: "clone", text: reply, key: Date.now() + 1, prevQuestion: text }]);
+      if (data?.mood_ui) updateMoodUI(data.mood_ui);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Couldn't send");
+      // Backend may return either a string detail or the new structured
+      // {code, message, request_id} object. Coerce to a safe string so
+      // toast.error never receives an object (which would crash render).
+      const detail = err?.response?.data?.detail;
+      let msg;
+      if (typeof detail === "string") msg = detail;
+      else if (detail && typeof detail === "object") msg = detail.message || detail.code || "Couldn't send";
+      else if (err?.message === "Network Error") msg = "Network error — try again.";
+      else msg = "Couldn't send";
+      toast.error(msg);
       setMessages((m) => [...m, { sender: "clone", text: "(Hmm, I couldn't reply just now. Try again?)", key: Date.now() + 1, prevQuestion: text }]);
     } finally {
       setSending(false);

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { formatApiError } from "../lib/apiErrors";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
@@ -158,7 +159,7 @@ export default function VideoAvatarChat() {
     } catch (e) {
       const code = e?.response?.status;
       if (code === 503) toast.error("Avatar Chat is currently disabled for public users.");
-      else toast.error(e?.response?.data?.detail || "Could not send message");
+      else toast.error(formatApiError(e, "Could not send message"));
     } finally {
       setSending(false);
     }
@@ -173,7 +174,7 @@ export default function VideoAvatarChat() {
       const u = r?.data?.message;
       if (u) setMessages((prev) => prev.map((m) => (m.message_id === messageId ? u : m)));
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Retry failed");
+      toast.error(formatApiError(e, "Retry failed"));
     }
   }, []);
 

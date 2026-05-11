@@ -12,6 +12,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { formatApiError } from "../lib/apiErrors";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
@@ -259,7 +260,7 @@ export default function DebateRoom() {
       toast.success(`You're on side ${side}.`);
       refresh();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not join");
+      toast.error(formatApiError(e, "Could not join"));
     } finally {
       setBusy(false);
     }
@@ -279,7 +280,7 @@ export default function DebateRoom() {
       refresh();
       return true;
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not submit");
+      toast.error(formatApiError(e, "Could not submit"));
       return false;
     } finally {
       setBusy(false);
@@ -292,7 +293,7 @@ export default function DebateRoom() {
       await api.post(`/debates/arguments/${argument_id}/vote`, { vote_type });
       refresh();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Vote failed");
+      toast.error(formatApiError(e, "Vote failed"));
     }
   }, [requireAuth, refresh]);
 
@@ -305,7 +306,7 @@ export default function DebateRoom() {
       toast.success("Reported. Admins will review.");
       refresh();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Report failed");
+      toast.error(formatApiError(e, "Report failed"));
     }
   }, [requireAuth, refresh]);
 

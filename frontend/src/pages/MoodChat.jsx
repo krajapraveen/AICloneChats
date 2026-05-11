@@ -9,6 +9,7 @@ import InfoIcon from "../components/InfoIcon";
 import ChatInfoModal from "../components/ChatInfoModal";
 import { useMoodTheme } from "../hooks/useMoodTheme";
 import { useAuth } from "../contexts/AuthContext";
+import { formatApiError } from "../lib/apiErrors";
 
 const COMPANION_SLUG = "companion";
 
@@ -81,11 +82,12 @@ export default function MoodChat() {
         visitor_id: visitorId.current,
         conversation_id: conversationId,
       });
-      setConversationId(data.conversation_id);
-      setMessages((m) => [...m, { sender: "clone", text: data.reply, key: Date.now() + 1 }]);
-      if (data.mood_ui) updateMoodUI(data.mood_ui);
+      if (data?.conversation_id) setConversationId(data.conversation_id);
+      const reply = (typeof data?.reply === "string" && data.reply.trim()) || "(no reply)";
+      setMessages((m) => [...m, { sender: "clone", text: reply, key: Date.now() + 1 }]);
+      if (data?.mood_ui) updateMoodUI(data.mood_ui);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Couldn't send");
+      toast.error(formatApiError(err, "Couldn't send"));
       setMessages((m) => [...m, { sender: "clone", text: "(I hit a snag. Try again?)", key: Date.now() + 1 }]);
     } finally {
       setSending(false);

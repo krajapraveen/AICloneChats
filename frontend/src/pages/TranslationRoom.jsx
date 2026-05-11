@@ -7,6 +7,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
+import { formatApiError } from "../lib/apiErrors";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import useTranslationChat from "../hooks/useTranslationChat";
@@ -105,7 +106,7 @@ function JoinForm({ onJoin, defaultLang }) {
         onClick={async () => {
           if (!name.trim()) { toast.error("Display name required"); return; }
           setBusy(true);
-          try { await onJoin(name.trim(), lang); } catch (e) { toast.error(e?.response?.data?.detail || "Could not join"); }
+          try { await onJoin(name.trim(), lang); } catch (e) { toast.error(formatApiError(e, "Could not join")); }
           finally { setBusy(false); }
         }}
         disabled={busy}
@@ -168,7 +169,7 @@ export default function TranslationRoom() {
       await send(text);
       setDraft("");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not send");
+      toast.error(formatApiError(e, "Could not send"));
     } finally {
       setSending(false);
     }
