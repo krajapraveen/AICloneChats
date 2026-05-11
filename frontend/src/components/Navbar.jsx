@@ -73,7 +73,6 @@ export default function Navbar() {
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-4 lg:gap-5 flex-shrink-0" data-testid="nav-desktop" aria-label="Primary">
           <NavLink to="/explore" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-explore">Explore</NavLink>
-          <NavLink to="/debates" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-debates">Debates</NavLink>
           {user && (
             <NavLink to="/dashboard" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-dashboard">Dashboard</NavLink>
           )}
@@ -132,7 +131,6 @@ export default function Navbar() {
               className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`}
               data-testid="nav-mobile-explore"
             >Explore</NavLink>
-            <NavLink to="/debates" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-debates">Debates</NavLink>
             {user && (
               <NavLink to="/dashboard" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-dashboard">Dashboard</NavLink>
             )}
