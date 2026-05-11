@@ -22,6 +22,12 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (PublicClone Auth-Gate Removal — P0 Bug Fix)** — Public sharing restored.
+  - **`PublicClone.jsx`**: Removed the page-level `useEffect` that auto-redirected unauthenticated visitors to `/login`. Logged-out users can now load `/<slug>` and see the clone header, marquee disclaimer, stats, and chat empty-state. Replaced the chat input form with a `[data-testid=signin-to-chat-cta]` card containing `Sign in →` and `Sign up` buttons when `!user`. The `send()` handler still defends with an explicit `!user` guard → toast + `navigate('/login?redirect=/<slug>')`. Authenticated users see the visitor-name form and chat form exactly as before. Backend chat endpoint behavior unchanged (auth + atomic credit deduction).
+  - **`App.js`**: Added `/signup` route alias that mounts `<Register />` (the public CTA copy says "Sign up", which previously fell through to `/:slug` and rendered the 404 clone-not-found card).
+  - **`Login.jsx` + `Register.jsx`**: Post-login redirect now reads `searchParams.get('redirect') || searchParams.get('next') || '/dashboard'` so the round-trip from PublicClone → Login → back to `/<slug>` works.
+  - **Verified** (testing_agent_v3_fork iteration_17 + self-screenshot): logged-out user views `/maya-demo`, clicks Sign in, logs in as `subscriber-tester@example.com`, lands back on `/maya-demo` with visitor-name form visible. Sign-up button now correctly opens the Register page. Authenticated chat send + 402 paywall path also re-verified.
+
 - **2026-05-11 (IP / Compliance Cleanup + Landing Contact Strip)** — Visibility, not new features.
   - **ContactBar:** new `/app/frontend/src/components/ContactBar.jsx` rendered directly under the Navbar on `/` (landing only). Shows `admin@aiclonechats.com` + `krajapraveen@aiclonechats.com` as mailto links plus a tagline "Original AI personas only. Use only content you own or have rights to use." Mobile-stacking (tagline hidden ≤640px). Zero horizontal overflow at 390/768/1920px.
   - **Legal pages:** `/terms`, `/privacy`, `/acceptable-use` — three full documents on a shared `LegalPage` shell. Footer legal links added; both contact emails surfaced in footer + every legal page footer.

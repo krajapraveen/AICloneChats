@@ -22,7 +22,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      const next = searchParams.get("next") || "/dashboard";
+      const next = searchParams.get("redirect") || searchParams.get("next") || "/dashboard";
       navigate(next, { replace: true });
     } catch (err) {
       const detail = err?.response?.data?.detail;

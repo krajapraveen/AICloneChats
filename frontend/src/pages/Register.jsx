@@ -22,7 +22,7 @@ export default function Register() {
     setLoading(true);
     try {
       await register(email, password, name);
-      const next = searchParams.get("next") || "/dashboard";
+      const next = searchParams.get("redirect") || searchParams.get("next") || "/dashboard";
       navigate(next, { replace: true });
     } catch (err) {
       let detail = err?.response?.data?.detail;
