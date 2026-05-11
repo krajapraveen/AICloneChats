@@ -291,6 +291,147 @@ def test_admin_credit_adjust_blocks_negative(admin_headers):
         assert "negative" in r.text.lower()
 
 
+# ============================================================
+# Global currency / country pricing tests
+# ============================================================
+def test_currency_my_currency_endpoint_works():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/my-currency")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["country_code"]
+        assert d["currency_code"]
+        assert d["source"] in ("fallback", "ip_header", "profile", "preference", "query_override")
+
+
+def test_currency_india_user_sees_inr():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/catalog?country=IN")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["country_code"] == "IN"
+        assert d["currency_code"] == "INR"
+        assert d["prices"]["starter"]["display_amount"] == 499.0
+        assert d["prices"]["starter"]["charge_currency"] == "INR"
+        assert d["prices"]["starter"]["requires_currency_disclosure"] is False
+
+
+def test_currency_usa_user_sees_usd():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/catalog?country=US")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["currency_code"] == "USD"
+        assert d["prices"]["starter"]["display_amount"] == 9.0
+        assert d["prices"]["starter"]["charge_currency"] == "INR"  # Cashfree India only does INR
+        assert d["prices"]["starter"]["requires_currency_disclosure"] is True
+
+
+def test_currency_uk_user_sees_gbp():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/catalog?country=GB")
+        d = r.json()
+        assert d["currency_code"] == "GBP"
+        assert d["prices"]["pro"]["display_amount"] == 22.0
+
+
+def test_currency_uae_user_sees_aed():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/catalog?country=AE")
+        d = r.json()
+        assert d["currency_code"] == "AED"
+        assert d["prices"]["premium"]["display_amount"] == 269.0
+
+
+def test_currency_eu_user_sees_eur():
+    """Germany, France, Italy, Spain all should map to EUR."""
+    for cc in ("DE", "FR", "IT", "ES"):
+        with httpx.Client(timeout=10) as c:
+            r = c.get(f"{API}/pricing/catalog?country={cc}")
+            d = r.json()
+            assert d["currency_code"] == "EUR", f"{cc} should map to EUR"
+
+
+def test_currency_japan_user_sees_jpy_no_decimals():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/catalog?country=JP")
+        d = r.json()
+        assert d["currency_code"] == "JPY"
+        # JPY is no-decimal — display_decimals should be 0
+        assert d["prices"]["starter"]["display_decimals"] == 0
+        # And display should be a whole number
+        assert d["prices"]["starter"]["display_amount"] == int(d["prices"]["starter"]["display_amount"])
+
+
+def test_currency_unknown_country_fallback_to_usd():
+    with httpx.Client(timeout=10) as c:
+        r = c.get(f"{API}/pricing/catalog?country=ZZ")
+        d = r.json()
+        assert d["currency_code"] == "USD"
+        # USD anchor prices come through verbatim
+        assert d["prices"]["starter"]["display_amount"] == 9.0
+
+
+def test_currency_disclosure_flag_set_for_non_gateway_currencies():
+    with httpx.Client(timeout=10) as c:
+        # Non-INR markets must surface disclosure
+        for cc in ("US", "GB", "DE", "JP", "AE", "AU", "CA", "SG"):
+            r = c.get(f"{API}/pricing/catalog?country={cc}")
+            assert r.status_code == 200
+            for pid, price in r.json()["prices"].items():
+                assert price["requires_currency_disclosure"] is True, f"{cc}/{pid} should require disclosure"
+
+
+def test_currency_order_creation_amount_is_server_authored(admin_headers):
+    """Even if the body has amount/currency, those are ignored. Backend reads
+    from PLAN_INDEX + country detection only."""
+    # Use a freshly verified user (admin can't pay, so use a regular user)
+    fresh_email = f"curr-tester-{uuid.uuid4().hex[:8]}@example.com"
+    with httpx.Client(timeout=20) as c:
+        r = c.post(f"{API}/auth/register", json={"email": fresh_email, "password": "TestPass123!", "name": "T"})
+        token = r.json()["session_token"]
+        user_id = r.json()["user"]["user_id"]
+        # Force-verify (test shortcut — bypasses OTP)
+        import os as _os
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+        client = AsyncIOMotorClient(_os.environ["MONGO_URL"])
+        db = client[_os.environ["DB_NAME"]]
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(db.users.update_one({"user_id": user_id}, {"$set": {"email_verified": True, "country_code": "US"}}))
+        # Try to tamper amount/currency in the request body
+        r = c.post(f"{API}/payments/create-order", headers={"Authorization": f"Bearer {token}"}, json={
+            "plan_id": "starter",
+            "amount": 1,
+            "currency": "BTC",
+            "amount_inr": 1,
+        })
+        if r.status_code != 200:
+            pytest.skip(f"Cashfree sandbox unavailable for this test: {r.status_code} {r.text[:200]}")
+        d = r.json()
+        # Server-authored display + charge — body fields ignored
+        assert d["display_currency"] == "USD"  # because we set country=US above
+        assert d["display_amount"] == 9.0
+        assert d["charge_currency"] == "INR"
+        assert d["country_code"] == "US"
+        assert d["requires_currency_disclosure"] is True
+
+
+def test_admin_pricing_catalog_lists_all_supported_countries(admin_headers):
+    with httpx.Client(timeout=15) as c:
+        r = c.get(f"{API}/admin/billing/pricing-catalog", headers=admin_headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["countries_supported"] >= 80  # we have ~85
+        # Sanity check on a few markets
+        assert "IN" in d["matrix"]
+        assert "US" in d["matrix"]
+        assert "JP" in d["matrix"]
+        assert d["matrix"]["IN"]["starter"]["display_amount"] == 499.0
+        assert d["matrix"]["US"]["starter"]["display_amount"] == 9.0
+
+
 # ---- Free-credit grant: device-fingerprint dedup ----
 def test_free_credit_grant_blocked_for_duplicate_device(admin_headers):
     """We can't easily run the full email-OTP loop in this test runner without

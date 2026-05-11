@@ -7,15 +7,24 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from db import db
-from auth import get_current_user
+from auth import get_current_user, get_optional_user
 from credits import (
     PLANS,
     CREDIT_COST,
     get_user_credit_state,
     is_admin_unlimited_user,
+)
+from pricing import (
+    catalog_for_country,
+    detect_country_from_request,
+    country_to_currency,
+    COUNTRY_TO_CURRENCY,
+    EXCHANGE_SOURCE,
+    EXCHANGE_VERSION,
+    GATEWAY_CHARGE_CURRENCIES,
 )
 from models import now_iso
 
@@ -36,6 +45,37 @@ async def list_plans():
     return {"plans": PLANS, "credit_costs": CREDIT_COST}
 
 
+# ---- Country-aware pricing endpoints ----
+@public_router.get("/api/pricing/catalog")
+async def pricing_catalog(request: Request, country: Optional[str] = None, user: Optional[dict] = Depends(get_optional_user)):
+    """Public — returns the price record for each PAID plan, in the user's
+    detected (or requested) country/currency. Frontend renders these EXACTLY,
+    never recomputes.
+    """
+    if country:
+        country_code = country.upper()
+        source = "query_override"
+    else:
+        country_code, source = detect_country_from_request(request, user)
+    paid_plan_ids = [p["plan_id"] for p in PLANS if p["plan_id"] != "free" and p.get("is_active")]
+    cat = catalog_for_country(country_code, paid_plan_ids)
+    cat["country_source"] = source
+    cat["gateway_currencies"] = sorted(GATEWAY_CHARGE_CURRENCIES)
+    cat["exchange_source"] = EXCHANGE_SOURCE
+    cat["exchange_version"] = EXCHANGE_VERSION
+    return cat
+
+
+@public_router.get("/api/pricing/my-currency")
+async def my_currency(request: Request, user: Optional[dict] = Depends(get_optional_user)):
+    country_code, source = detect_country_from_request(request, user)
+    return {
+        "country_code": country_code,
+        "currency_code": country_to_currency(country_code),
+        "source": source,
+    }
+
+
 @public_router.get("/api/me/credits")
 async def my_credits(user: dict = Depends(get_current_user)):
     state = await get_user_credit_state(user)
@@ -47,6 +87,25 @@ async def my_credits(user: dict = Depends(get_current_user)):
 
 
 # ----- Admin -----
+@admin_router.get("/pricing-catalog")
+async def admin_pricing_catalog(_admin: dict = Depends(_require_admin)):
+    """Inspect every plan × every supported country. Useful for sanity-checking
+    the long-tail derivation rules. Read-only."""
+    from credits import PLAN_INDEX as _PI
+    paid = [pid for pid in _PI if pid != "free"]
+    matrix = {}
+    for cc in COUNTRY_TO_CURRENCY:
+        cat = catalog_for_country(cc, paid)
+        matrix[cc] = cat["prices"]
+    return {
+        "exchange_source": EXCHANGE_SOURCE,
+        "exchange_version": EXCHANGE_VERSION,
+        "gateway_currencies": sorted(GATEWAY_CHARGE_CURRENCIES),
+        "countries_supported": len(COUNTRY_TO_CURRENCY),
+        "matrix": matrix,
+    }
+
+
 @admin_router.get("/overview")
 async def admin_billing_overview(_admin: dict = Depends(_require_admin), days: int = Query(default=30, ge=1, le=365)):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

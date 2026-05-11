@@ -44,6 +44,7 @@ from credits import (
     is_admin_unlimited_user,
     _log_fraud_signal,
 )
+from pricing import compute_price_for_plan, detect_country_from_request
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 logger = logging.getLogger(__name__)
@@ -98,11 +99,19 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
     plan = PLAN_INDEX.get(payload.plan_id)
     if not plan or not plan.get("is_active") or plan["plan_id"] == "free":
         raise HTTPException(400, "Invalid plan")
-    if plan["price_inr"] <= 0:
-        raise HTTPException(400, "This plan is free; no payment required.")
 
     if not user.get("email_verified"):
         raise HTTPException(403, {"code": "email_not_verified", "message": "Verify your email before purchasing."})
+
+    # ---- Resolve country & price (server is the single source of truth) ----
+    country_code, country_source = detect_country_from_request(request, user)
+    price = compute_price_for_plan(plan["plan_id"], country_code)
+    if price["charge_amount"] <= 0:
+        raise HTTPException(400, "This plan is free; no payment required.")
+
+    # Persist the user's detected country on first hit so we don't re-detect every order
+    if not user.get("country_code"):
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"country_code": country_code, "country_source": country_source}})
 
     order_id = f"order_{user['user_id']}_{int(datetime.now(timezone.utc).timestamp())}_{uuid.uuid4().hex[:6]}"
 
@@ -115,8 +124,8 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
 
     body = {
         "order_id": order_id,
-        "order_amount": float(plan["price_inr"]),
-        "order_currency": "INR",
+        "order_amount": float(price["charge_amount"]),
+        "order_currency": price["charge_currency"],
         "customer_details": {
             "customer_id": user["user_id"],
             "customer_email": user["email"],
@@ -128,7 +137,7 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
             "notify_url": notify_url,
         },
         "order_note": f"aiclonechats.com — {plan['name']} plan",
-        "order_tags": {"plan_id": plan["plan_id"], "user_id": user["user_id"]},
+        "order_tags": {"plan_id": plan["plan_id"], "user_id": user["user_id"], "country": country_code, "display_currency": price["currency_code"]},
     }
 
     try:
@@ -152,7 +161,20 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
         "user_id": user["user_id"],
         "email": user["email"],
         "plan_id": plan["plan_id"],
-        "amount_inr": float(plan["price_inr"]),
+        # Legacy field kept for backward-compat with older tests/admin views.
+        "amount_inr": float(price["charge_amount"]) if price["charge_currency"] == "INR" else None,
+        # New canonical pricing fields
+        "country_code": country_code,
+        "country_source": country_source,
+        "display_currency": price["currency_code"],
+        "display_amount": price["display_amount"],
+        "charge_currency": price["charge_currency"],
+        "charge_amount": price["charge_amount"],
+        "amount_minor": price["amount_minor"],
+        "requires_currency_disclosure": price["requires_currency_disclosure"],
+        "exchange_source": price["exchange_source"],
+        "exchange_version": price["exchange_version"],
+        # Credits
         "credits": plan["monthly_credits"],
         "status": "created",
         "cashfree_order_id": cf.get("cf_order_id"),
@@ -166,8 +188,15 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
     return {
         "order_id": order_id,
         "payment_session_id": payment_session_id,
-        "amount_inr": plan["price_inr"],
-        "currency": "INR",
+        # Legacy field for backward-compat with the existing pricing UI
+        "amount_inr": price["charge_amount"] if price["charge_currency"] == "INR" else None,
+        # Canonical price record
+        "display_amount": price["display_amount"],
+        "display_currency": price["currency_code"],
+        "charge_amount": price["charge_amount"],
+        "charge_currency": price["charge_currency"],
+        "requires_currency_disclosure": price["requires_currency_disclosure"],
+        "country_code": country_code,
         "plan_id": plan["plan_id"],
         "mode": CASHFREE_MODE.lower(),
     }
@@ -331,12 +360,19 @@ async def cashfree_webhook(request: Request, response: Response):
         await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "order_not_found"}})
         return {"ok": True, "order_not_found": True}
 
-    # Amount-tampering guard
+    # Amount + currency tampering guard
     cf_amount = float(order_data.get("order_amount") or payment_data.get("payment_amount") or 0)
-    if cf_amount and abs(cf_amount - float(order["amount_inr"])) > 0.01:
+    cf_currency = (order_data.get("order_currency") or payment_data.get("payment_currency") or "").upper()
+    stored_charge_amount = float(order.get("charge_amount") or order.get("amount_inr") or 0)
+    stored_charge_currency = (order.get("charge_currency") or "INR").upper()
+    if cf_amount and abs(cf_amount - stored_charge_amount) > 0.01:
         await _log_fraud_signal(order["user_id"], order["email"], None, None, "webhook_amount_mismatch", severity=5)
         await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "amount_mismatch"}})
         raise HTTPException(400, "Amount mismatch")
+    if cf_currency and cf_currency != stored_charge_currency:
+        await _log_fraud_signal(order["user_id"], order["email"], None, None, "webhook_currency_mismatch", severity=5)
+        await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "currency_mismatch"}})
+        raise HTTPException(400, "Currency mismatch")
 
     await db.payment_orders.update_one(
         {"order_id": order_id},

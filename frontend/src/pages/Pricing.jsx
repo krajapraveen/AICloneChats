@@ -35,6 +35,7 @@ export default function Pricing() {
 
   const [plans, setPlans] = useState([]);
   const [costs, setCosts] = useState({});
+  const [catalog, setCatalog] = useState(null);  // { country_code, currency_code, prices: {plan_id: {...}}, country_source }
   const [busyPlan, setBusyPlan] = useState(null);
   const [cashfreeMode, setCashfreeMode] = useState("test");
 
@@ -42,14 +43,16 @@ export default function Pricing() {
     let cancelled = false;
     (async () => {
       try {
-        const [{ data: plansData }, { data: cfg }] = await Promise.all([
+        const [{ data: plansData }, { data: cfg }, { data: cat }] = await Promise.all([
           api.get("/plans"),
           api.get("/payments/config"),
+          api.get("/pricing/catalog"),
         ]);
         if (cancelled) return;
         setPlans(plansData.plans || []);
         setCosts(plansData.credit_costs || {});
         setCashfreeMode(cfg?.mode || "test");
+        setCatalog(cat || null);
       } catch (e) {
         toast.error("Could not load plans. Try refresh.");
       }
@@ -102,6 +105,21 @@ export default function Pricing() {
             Every chat costs credits. Costs are public, server-enforced, and never charged twice.
             Free users get 50 credits after verifying their email. Refunds happen automatically when the AI fails.
           </p>
+          {catalog && (
+            <div className="text-[11px] font-mono uppercase tracking-widest text-muted flex items-center gap-2 flex-wrap" data-testid="pricing-locale-banner">
+              <span>Detected country: <span className="text-ink">{catalog.country_code}</span></span>
+              <span className="opacity-50">·</span>
+              <span>Currency: <span className="text-ink">{catalog.currency_code}</span></span>
+              {catalog.country_source && (
+                <>
+                  <span className="opacity-50">·</span>
+                  <span>via {catalog.country_source.replace("_", " ")}</span>
+                </>
+              )}
+              <span className="opacity-50">·</span>
+              <span className="opacity-80">Prices shown in your local currency based on your detected country.</span>
+            </div>
+          )}
           {credits.email_verified && credits.admin_unlimited && (
             <div className="brutal-card p-3 inline-flex items-center gap-2 bg-violet-500/10 border-violet/30" data-testid="pricing-admin-banner">
               <span className="text-xs font-mono uppercase tracking-widest text-violet-soft">Admin · unlimited credits</span>
@@ -131,6 +149,18 @@ export default function Pricing() {
           {plans.map((p) => {
             const tone = planTone(p.tier_rank);
             const isCurrent = credits.plan_id === p.plan_id && credits.email_verified;
+            const localPrice = catalog?.prices?.[p.plan_id];
+            // Free plan never has a localized record — show "Free"
+            const displayLabel = p.plan_id === "free"
+              ? "Free"
+              : (localPrice
+                  ? new Intl.NumberFormat(undefined, {
+                      style: "currency",
+                      currency: localPrice.currency_code,
+                      maximumFractionDigits: localPrice.display_decimals,
+                      minimumFractionDigits: localPrice.display_decimals,
+                    }).format(localPrice.display_amount)
+                  : `₹${p.price_inr.toLocaleString("en-IN")}`);
             return (
               <article key={p.plan_id} className={`brutal-card p-5 flex flex-col gap-3 ${tone.border}`} data-testid={`pricing-card-${p.plan_id}`}>
                 <div>
@@ -138,11 +168,16 @@ export default function Pricing() {
                   <h3 className="font-display text-xl font-bold mt-1">{p.name}</h3>
                 </div>
                 <div className="flex items-baseline gap-1">
-                  <span className="font-display text-3xl font-bold">
-                    {p.price_inr === 0 ? "Free" : `₹${p.price_inr.toLocaleString("en-IN")}`}
+                  <span className="font-display text-3xl font-bold" data-testid={`pricing-display-${p.plan_id}`}>
+                    {displayLabel}
                   </span>
                   {p.price_inr > 0 && <span className="text-xs text-muted">/ month</span>}
                 </div>
+                {localPrice?.requires_currency_disclosure && (
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-amber/80" data-testid={`pricing-disclosure-${p.plan_id}`}>
+                    Charged as {new Intl.NumberFormat(undefined, { style: "currency", currency: localPrice.charge_currency, maximumFractionDigits: 0 }).format(localPrice.charge_amount)}
+                  </div>
+                )}
                 <div className="text-sm font-display font-bold text-ink">
                   {p.monthly_credits.toLocaleString("en-IN")} credits{p.price_inr > 0 ? " / month" : ""}
                 </div>
@@ -180,7 +215,7 @@ export default function Pricing() {
                     className="btn-brutal text-xs"
                     data-testid={`pricing-cta-${p.plan_id}`}
                   >
-                    {busyPlan === p.plan_id ? "Opening checkout…" : `Subscribe · ₹${p.price_inr.toLocaleString("en-IN")}`}
+                    {busyPlan === p.plan_id ? "Opening checkout…" : `Subscribe · ${displayLabel}`}
                   </button>
                 )}
               </article>

@@ -22,6 +22,20 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-02-13 (Global currency / country pricing + webhook currency verification)** — Backend-controlled global pricing for 80+ countries, 5-tier country detection, fixed prices for 8 anchor markets, derived prices with market-friendly rounding for the long tail, charge-currency disclosure where gateway can't natively process.
+  - **Backend (new)**: `pricing.py` — country↔currency catalog (ISO-3166-1 → ISO-4217), `FIXED_PRICES` for INR/USD/GBP/EUR/AED/CAD/AUD/SGD, USD-anchor derivation with market-friendly rounding (`_round_market_friendly`), no-decimal handling for JPY/KRW/IDR/VND, `compute_price_for_plan(plan_id, country)` and `detect_country_from_request(request, user)` (5-tier priority).
+  - **Endpoints added**:
+    - `GET /api/pricing/catalog?country=XX` — public, returns per-plan price record (display_amount, display_currency, charge_amount, charge_currency, requires_currency_disclosure, exchange_source, exchange_version) for every paid plan
+    - `GET /api/pricing/my-currency` — quick country/currency lookup
+    - `GET /api/admin/billing/pricing-catalog` — admin matrix of every supported country × every plan
+  - **Order schema** (`payment_orders`) now carries: `country_code`, `country_source`, `display_currency`, `display_amount`, `charge_currency`, `charge_amount`, `amount_minor`, `requires_currency_disclosure`, `exchange_source`, `exchange_version`. Legacy `amount_inr` kept for backward-compat.
+  - **Webhook hardening**: amount AND currency must both match the stored order. Mismatch on either → 400 + fraud signal logged. Existing replay/signature checks unchanged.
+  - **Frontend**: Pricing page consumes `/api/pricing/catalog`, renders `Intl.NumberFormat` localized labels for each plan card. Country/currency banner ("Detected country: IN · Currency: INR · via fallback · Prices shown in your local currency based on your detected country."). Disclosure pill appears under display price when `charge_currency !== display_currency`.
+  - **Cashfree reality**: Cashfree India processes INR only on standard merchant accounts. Non-INR users see localized display prices but are CHARGED in INR with a clear "Charged as ₹X" disclosure under the price. When Cashfree International is enabled (or Stripe added), flip `GATEWAY_CHARGE_CURRENCIES` env to include the new gateway-native currencies. Schema and webhook handler already support multi-currency processing.
+  - **Tests**: 12 new tests (`test_currency_*`): IN→INR, US→USD, GB→GBP, AE→AED, EU(DE/FR/IT/ES)→EUR, JP→JPY no-decimals, unknown→USD fallback, disclosure flag set for non-gateway currencies, server-authored amount/currency (body tampering ignored), admin pricing catalog completeness. **26/26 backend tests pass total.**
+  - **E2E verified**: US user → display $9, charge ₹747 → Cashfree accepts INR order → signed webhook with correct INR amount → credits granted. Tampered currency (USD in webhook for INR order) → 400 + fraud signal. ✓
+
+
 - **2026-02-13 (Cashfree billing + credit ledger + email-OTP gate — Phase 1)** — Monetization foundation, all security tests passing, real LLM-backed credit deduction proven E2E.
   - **Backend modules** (all new):
     - `credits.py`: `PLANS` (5 tiers), `CREDIT_COST` matrix, atomic `deduct_credits` with `find_one_and_update` balance guard, `refund_credits` on LLM failure, `credit_payment` for paid orders, `is_admin_unlimited_user` (env-driven), `grant_signup_credits_if_eligible` with device/IP/email dedup, fraud-signal logging + cumulative scoring + 12h cooldown action.
