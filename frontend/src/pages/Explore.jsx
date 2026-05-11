@@ -68,8 +68,8 @@ export default function Explore() {
 
   const goBuildClone = () => {
     if (authLoading) return;
-    if (user) navigate("/clones/new");
-    else navigate("/login?next=/clones/new");
+    if (user) navigate("/create");
+    else navigate("/login?next=/create");
   };
 
   useEffect(() => {

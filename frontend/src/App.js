@@ -115,6 +115,7 @@ function AppRouter() {
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />
+      <Route path="/create" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/edit" element={<CloneEditor />} />
       <Route path="/clones/:cloneId/memories" element={<MemoryManager />} />
       <Route path="/:slug" element={<PublicClone />} />

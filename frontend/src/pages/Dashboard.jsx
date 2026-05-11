@@ -153,7 +153,7 @@ export default function Dashboard() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2 mt-6 relative">
-              <Link to="/clones/new" className="btn-brutal text-sm" data-testid="hero-action-create-clone">+ Create AI Clone</Link>
+              <Link to="/create" className="btn-brutal text-sm" data-testid="hero-action-create-clone">+ Create clone</Link>
               <Link to="/mood-chat" className="btn-violet text-sm" data-testid="hero-action-mood-chat">Mood-Based Chat</Link>
               <Link to="/smart-reply" className="btn-ghost text-sm" data-testid="hero-action-smart-reply">Smart Reply</Link>
               <Link to="/voice" className="btn-ghost text-sm" data-testid="hero-action-voice">Voice → Message</Link>
@@ -185,8 +185,8 @@ export default function Dashboard() {
               icon="◉"
               title="AI Clone Chat"
               body="Build and chat with AI personalities that respond with custom tone, memory, and behavior. Your clone, your rules."
-              primary={{ to: hasClones ? "/explore" : "/clones/new", label: hasClones ? "Explore clones" : "Create clone" }}
-              secondary={{ to: "/clones/new", label: "New clone" }}
+              primary={{ to: hasClones ? "/explore" : "/create", label: hasClones ? "Explore clones" : "Create clone" }}
+              secondary={hasClones ? { to: "/create", label: "Create clone" } : undefined}
             />
             <WorkspaceCard
               testId="workspace-card-mood"
@@ -276,7 +276,7 @@ export default function Dashboard() {
               <h2 className="heading-display text-2xl sm:text-3xl">My AI Clones</h2>
               <p className="text-sm font-medium text-muted mt-1">Your personalized AI personalities and public experiences.</p>
             </div>
-            <Link to="/clones/new" className="btn-brutal text-sm" data-testid="my-clones-new-btn">+ New clone</Link>
+            <Link to="/create" className="btn-brutal text-sm" data-testid="my-clones-new-btn">+ Create clone</Link>
           </div>
 
           {loading ? (
