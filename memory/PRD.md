@@ -22,6 +22,26 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Multi-Provider Email Reliability Layer — Infra)** — Production onboarding/payment flow now survives Resend outages.
+  - **Architecture**:
+    - New module `/app/backend/email_sender.py` with provider abstraction (`SendResult` dataclass, `PROVIDERS` registry, `send_email()` chain walker). Per-attempt timeouts (Resend 20s, SMTP 15s). Every attempt persisted to `db.email_send_events` with `{event_id, event_group, timestamp, provider, purpose, recipient_domain (no full email), ok, error_code, latency_ms}`. Same `event_group` across all attempts of one logical send for failover tracing.
+    - Two providers shipped: **Resend** (httpx HTTP) and **SMTP** (stdlib smtplib in worker thread; TLS 587 default, SSL 465 supported, Zoho/Gmail Workspace/custom-mailbox compatible).
+    - Provider chain configurable via env: `EMAIL_PROVIDER_ORDER=resend,smtp` (default). Unknown providers ignored; empty chain falls back to `["resend"]`.
+    - Skipped intentionally for current scale: circuit breaker, quota prediction, SMS OTP, manual override (chain itself is the retry; flag-based gate already shipped).
+  - **Integration**:
+    - `email_verify.py::_send_otp_email` and `password_reset.py::_send_reset_email` refactored to call `multi_send_email`. All Resend-specific code paths removed from these files.
+    - `.env` adds `EMAIL_PROVIDER_ORDER` + `SMTP_HOST/PORT/USER/PASSWORD/FROM/USE_TLS`. SMTP keys left blank in preview (Resend is sufficient there).
+  - **Observability**:
+    - New endpoint `GET /api/admin/email/health` (admin-only) returns `{configured, totals_24h, per_provider_24h, recent[50]}`.
+    - New endpoint `GET /api/email/health` (anonymous lightweight probe) returns only `{healthy, last_24h_attempts}` — no provider names, no error codes, no recipients leak.
+    - New page `/admin/email-health` (`AdminEmailHealth.jsx`) shows Configuration cards, 24h totals, per-provider rollup table, and last-50 attempts log. Added to AdminIndex Operations section.
+  - **Google OAuth auto-trust** (req #7): already shipped in `auth.py:382` — Google-verified emails are marked `email_verified=True` on first OAuth login. No code change needed; verified intact.
+  - **Verified (testing_agent_v3_fork iteration_18, 100% pass rate)**:
+    - Backend: 9/9 pytest tests in new `/app/backend/tests/test_email_pipeline.py` covering: anonymous probe leak-safety, admin gating (401/403/200), OTP send writes correct event row, forced failover invariant (two events under one `event_group` when primary fails), forgot-password still neutral-200, no secret leakage in any HTTP body.
+    - Frontend: anon redirect, non-admin 403 card, admin full dashboard render, zero "mock mode" / "check backend logs" phrasing, recipient domains only (no full emails in UI).
+    - Live failover demonstrated in admin recent-attempts log: `test_smtp_fail_resend_ok` group → SMTP `exc_OSError` (4ms) → Resend `OK` (224ms).
+  - **Note**: Preview only. Redeploy to push. For production failover, configure SMTP secondary (Zoho `smtp.zoho.com:587` recommended — SPF/DKIM-verified `admin@aiclonechats.com` mailbox).
+
 - **2026-05-11 (Email Verification Gate Disabled — P0 Production Unblock)** — Revenue path must not depend on broken email infrastructure.
   - **Bug**: Production showed "Email sending is not configured in this environment" + "Check the backend logs for the OTP" in the verify-email page. Reason likely: `RESEND_API_KEY` missing in prod env OR `aiclonechats.com` sender domain not verified at Resend. Users couldn't get past the verify gate → couldn't subscribe → revenue path dead.
   - **Decision**: Per founder directive — harden frontend AND remove the gate (Option A + B). Re-enable verification only after Resend domain verification.
