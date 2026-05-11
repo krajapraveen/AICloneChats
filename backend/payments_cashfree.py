@@ -40,8 +40,10 @@ from auth import get_current_user
 from models import now_iso
 from credits import (
     PLAN_INDEX,
+    TOPUP_INDEX,
     credit_payment,
     is_admin_unlimited_user,
+    is_active_subscriber,
     _log_fraud_signal,
 )
 from pricing import compute_price_for_plan, detect_country_from_request
@@ -202,6 +204,130 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
     }
 
 
+class CreateTopupOrderRequest(BaseModel):
+    pack_id: str = Field(min_length=1, max_length=40)
+
+
+@router.post("/create-topup-order")
+async def create_topup_order(payload: CreateTopupOrderRequest, request: Request, user: dict = Depends(get_current_user)):
+    """Top-up packs: balance-only purchases reserved for ACTIVE subscribers.
+
+    Server-side gate is the source of truth — even if the frontend exposes
+    the button, this 403s for free/expired users.
+    """
+    if not _is_configured():
+        raise HTTPException(503, "Payments are not configured. Try again later.")
+
+    if is_admin_unlimited_user(user):
+        raise HTTPException(400, "Admin account has unlimited credits and does not need to pay.")
+
+    pack = TOPUP_INDEX.get(payload.pack_id)
+    if not pack or not pack.get("is_active"):
+        raise HTTPException(400, "Invalid top-up pack")
+
+    # Hard subscriber gate — re-read the user from DB so a stale dep dict can't bypass.
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
+    if not is_active_subscriber(fresh or user):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "subscription_required_for_topup",
+                "message": "Top-up packs are available to active subscribers only. Subscribe to a plan first.",
+            },
+        )
+
+    if not (fresh or user).get("email_verified"):
+        raise HTTPException(403, {"code": "email_not_verified", "message": "Verify your email before purchasing."})
+
+    country_code, country_source = detect_country_from_request(request, fresh or user)
+    price = compute_price_for_plan(pack["pack_id"], country_code)
+    if price["charge_amount"] <= 0:
+        raise HTTPException(400, "This pack has no chargeable amount.")
+
+    if not (fresh or user).get("country_code"):
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"country_code": country_code, "country_source": country_source}})
+
+    order_id = f"topup_{user['user_id']}_{int(datetime.now(timezone.utc).timestamp())}_{uuid.uuid4().hex[:6]}"
+
+    return_url = f"{FRONTEND_PUBLIC_URL}/pay/return?order_id={order_id}" if FRONTEND_PUBLIC_URL else None
+    backend_public = os.environ.get("BACKEND_PUBLIC_URL", "").rstrip("/") or os.environ.get("FRONTEND_PUBLIC_URL", "").rstrip("/")
+    notify_url = f"{backend_public}/api/payments/webhook/cashfree" if backend_public else None
+
+    body = {
+        "order_id": order_id,
+        "order_amount": float(price["charge_amount"]),
+        "order_currency": price["charge_currency"],
+        "customer_details": {
+            "customer_id": user["user_id"],
+            "customer_email": user["email"],
+            "customer_name": user.get("name") or user["email"].split("@")[0],
+            "customer_phone": user.get("phone") or "9999999999",
+        },
+        "order_meta": {"return_url": return_url, "notify_url": notify_url},
+        "order_note": f"aiclonechats.com — {pack['name']} top-up",
+        "order_tags": {"kind": "topup", "pack_id": pack["pack_id"], "user_id": user["user_id"], "country": country_code, "display_currency": price["currency_code"]},
+    }
+
+    try:
+        r = requests.post(f"{CF_BASE}/orders", headers=_cf_headers(), json=body, timeout=20)
+    except Exception as e:
+        logger.exception("cashfree create topup order request failed")
+        raise HTTPException(502, f"Payment provider unavailable: {e}")
+    if r.status_code not in (200, 201):
+        logger.error("cashfree create topup non-2xx: %s %s", r.status_code, r.text[:500])
+        raise HTTPException(502, f"Payment provider error: {r.text[:200]}")
+
+    cf = r.json()
+    payment_session_id = cf.get("payment_session_id")
+    if not payment_session_id:
+        raise HTTPException(502, "Payment provider returned no session id")
+
+    await db.payment_orders.insert_one({
+        "order_id": order_id,
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "kind": "topup",
+        "pack_id": pack["pack_id"],
+        # No plan_id — top-ups don't change subscription status
+        "plan_id": None,
+        "amount_inr": float(price["charge_amount"]) if price["charge_currency"] == "INR" else None,
+        "country_code": country_code,
+        "country_source": country_source,
+        "display_currency": price["currency_code"],
+        "display_amount": price["display_amount"],
+        "charge_currency": price["charge_currency"],
+        "charge_amount": price["charge_amount"],
+        "amount_minor": price["amount_minor"],
+        "requires_currency_disclosure": price["requires_currency_disclosure"],
+        "exchange_source": price["exchange_source"],
+        "exchange_version": price["exchange_version"],
+        "credits": pack["credits"],
+        "status": "created",
+        "cashfree_order_id": cf.get("cf_order_id"),
+        "payment_session_id": payment_session_id,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "credited_at": None,
+        "webhook_count": 0,
+    })
+
+    return {
+        "order_id": order_id,
+        "payment_session_id": payment_session_id,
+        "amount_inr": price["charge_amount"] if price["charge_currency"] == "INR" else None,
+        "display_amount": price["display_amount"],
+        "display_currency": price["currency_code"],
+        "charge_amount": price["charge_amount"],
+        "charge_currency": price["charge_currency"],
+        "requires_currency_disclosure": price["requires_currency_disclosure"],
+        "country_code": country_code,
+        "pack_id": pack["pack_id"],
+        "credits": pack["credits"],
+        "mode": CASHFREE_MODE.lower(),
+        "kind": "topup",
+    }
+
+
 @router.get("/order/{order_id}")
 async def get_order_status(order_id: str, user: dict = Depends(get_current_user)):
     """Server-side truth read. Frontend ALWAYS polls this after Cashfree redirect.
@@ -250,6 +376,9 @@ def _verify_webhook_signature(raw_body: bytes, timestamp: str, signature: str) -
         return hmac.compare_digest(expected, signature)
     except Exception:
         return False
+
+
+from typing import Optional
 
 
 async def _record_admin_alert(*, kind: str, severity: int, order_id: Optional[str], user_id: Optional[str], summary: str, payload: Optional[dict] = None) -> None:
@@ -316,6 +445,8 @@ async def _handle_paid_event(order: dict) -> str:
         credits=order["credits"],
         order_id=order["order_id"],
         plan_id=order["plan_id"],
+        kind=order.get("kind", "subscription"),
+        pack_id=order.get("pack_id"),
     )
     await db.payment_audit_log.insert_one({
         "event_id": uuid.uuid4().hex,

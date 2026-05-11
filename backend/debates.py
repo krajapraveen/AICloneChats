@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from db import db
 from auth import get_current_user, get_optional_user
+from credit_guard import charge_credits_or_402, fresh_user
 from models import now_iso
 import debates_scoring as scoring_svc
 from debates_seed import DEBATES as SEED_DEBATES
@@ -325,9 +326,17 @@ async def submit_argument(slug: str, payload: SubmitArgumentRequest, user: dict 
 
     await _check_arg_rate_limit(user["user_id"])
 
+    # ---- Credit gate (debate_chat = 2 credits). Refunded if AI scoring fails. ----
+    user_doc = await fresh_user(user)
+    credit_handle = await charge_credits_or_402(user_doc, surface="debate_chat")
+
     # Score with AI (always returns a stable dict — never raises)
     side_label = d["side_a_label"] if side == "A" else d["side_b_label"]
-    score = await scoring_svc.score_argument(payload.content, d["title"], side, side_label)
+    try:
+        score = await scoring_svc.score_argument(payload.content, d["title"], side, side_label)
+    except Exception:
+        await credit_handle.refund(reason="scoring_failure")
+        raise HTTPException(502, "Scoring service unavailable, try again.")
 
     argument_id = f"da_{uuid.uuid4().hex[:14]}"
     rs = _rank_score(int(score["final_score"]), 0, 0)

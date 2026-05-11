@@ -131,6 +131,11 @@ FIXED_PRICES: dict[str, dict[str, int]] = {
     "pro":      {"INR": 1499,  "USD": 29,   "GBP": 22,   "EUR": 26,   "AED": 99,   "CAD": 39,   "AUD": 44,   "SGD": 39},
     "premium":  {"INR": 3999,  "USD": 79,   "GBP": 59,   "EUR": 69,   "AED": 269,  "CAD": 109,  "AUD": 119,  "SGD": 109},
     "ultimate": {"INR": 9999,  "USD": 199,  "GBP": 149,  "EUR": 179,  "AED": 729,  "CAD": 269,  "AUD": 299,  "SGD": 269},
+    # Top-up packs — same fixed-price mechanism so users see clean local prices.
+    "topup_small":  {"INR": 299,   "USD": 5,    "GBP": 4,    "EUR": 5,    "AED": 19,   "CAD": 7,    "AUD": 8,    "SGD": 7},
+    "topup_medium": {"INR": 999,   "USD": 19,   "GBP": 15,   "EUR": 17,   "AED": 69,   "CAD": 25,   "AUD": 29,   "SGD": 25},
+    "topup_large":  {"INR": 2999,  "USD": 59,   "GBP": 45,   "EUR": 52,   "AED": 199,  "CAD": 79,   "AUD": 89,   "SGD": 79},
+    "topup_mega":   {"INR": 7999,  "USD": 159,  "GBP": 119,  "EUR": 139,  "AED": 549,  "CAD": 209,  "AUD": 239,  "SGD": 209},
 }
 
 # USD anchor used to derive long-tail country prices.

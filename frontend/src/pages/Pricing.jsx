@@ -36,23 +36,27 @@ export default function Pricing() {
   const [plans, setPlans] = useState([]);
   const [costs, setCosts] = useState({});
   const [catalog, setCatalog] = useState(null);  // { country_code, currency_code, prices: {plan_id: {...}}, country_source }
+  const [topups, setTopups] = useState({ packs: [], country_code: "", is_active_subscriber: false });
   const [busyPlan, setBusyPlan] = useState(null);
+  const [busyTopup, setBusyTopup] = useState(null);
   const [cashfreeMode, setCashfreeMode] = useState("test");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [{ data: plansData }, { data: cfg }, { data: cat }] = await Promise.all([
+        const [{ data: plansData }, { data: cfg }, { data: cat }, { data: tu }] = await Promise.all([
           api.get("/plans"),
           api.get("/payments/config"),
           api.get("/pricing/catalog"),
+          api.get("/topups/catalog"),
         ]);
         if (cancelled) return;
         setPlans(plansData.plans || []);
         setCosts(plansData.credit_costs || {});
         setCashfreeMode(cfg?.mode || "test");
         setCatalog(cat || null);
+        setTopups(tu || { packs: [], is_active_subscriber: false });
       } catch (e) {
         toast.error("Could not load plans. Try refresh.");
       }
@@ -94,16 +98,43 @@ export default function Pricing() {
     }
   };
 
+  const checkoutTopup = async (packId) => {
+    if (!user) {
+      navigate("/login?redirect=/pricing");
+      return;
+    }
+    if (!topups.is_active_subscriber) {
+      toast.error("Top-up packs are for active subscribers only. Subscribe to a plan first.");
+      return;
+    }
+    setBusyTopup(packId);
+    try {
+      const { data: order } = await api.post("/payments/create-topup-order", { pack_id: packId });
+      const cashfree = await loadCashfree({ mode: cashfreeMode });
+      await cashfree.checkout({
+        paymentSessionId: order.payment_session_id,
+        returnUrl: `${window.location.origin}/pay/return?order_id=${order.order_id}`,
+        redirectTarget: "_self",
+      });
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const msg = typeof detail === "object" ? detail?.message : detail;
+      toast.error(msg || "Could not start top-up checkout.");
+    } finally {
+      setBusyTopup(null);
+    }
+  };
+
   return (
     <div className="min-h-screen page-bg" data-testid="pricing-page">
       <Navbar />
       <div className="max-w-6xl mx-auto px-4 sm:px-8 py-10 space-y-10">
         <header className="space-y-3 max-w-3xl">
           <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-amber">PRICING</div>
-          <h1 className="heading-display text-3xl sm:text-4xl">Pay for what you use. Nothing else.</h1>
+          <h1 className="heading-display text-3xl sm:text-4xl">Premium AI conversations. Built for serious users.</h1>
           <p className="text-sm text-muted">
             Every chat costs credits. Costs are public, server-enforced, and never charged twice.
-            Free users get 50 credits after verifying their email. Refunds happen automatically when the AI fails.
+            New accounts start at 0 credits — subscribe to begin. Refunds happen automatically when the AI fails.
           </p>
           {catalog && (
             <div className="text-[11px] font-mono uppercase tracking-widest text-muted flex items-center gap-2 flex-wrap" data-testid="pricing-locale-banner">
@@ -129,7 +160,7 @@ export default function Pricing() {
             <div className="brutal-card p-4 border-amber/40 bg-amber-500/10 flex items-center justify-between gap-3" data-testid="pricing-verify-banner">
               <div>
                 <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Verify your email first</div>
-                <div className="text-sm">We'll send a 6-digit code to your inbox. Once verified, your 50 free credits drop in.</div>
+                <div className="text-sm">We'll send a 6-digit code to your inbox. Required before subscribing.</div>
               </div>
               <button onClick={() => navigate("/verify-email")} className="btn-brutal text-xs" data-testid="pricing-verify-cta">Verify email</button>
             </div>
@@ -200,10 +231,10 @@ export default function Pricing() {
                   ) : (
                     <button
                       onClick={() => user ? navigate("/verify-email") : navigate("/register")}
-                      className="btn-brutal text-xs"
+                      className="btn-ghost text-xs"
                       data-testid={`pricing-cta-${p.plan_id}`}
                     >
-                      {user ? "Verify email · Free 50 credits" : "Get started · Free"}
+                      {user ? "Verify email" : "Create account"}
                     </button>
                   )
                 ) : isCurrent ? (
@@ -221,6 +252,64 @@ export default function Pricing() {
               </article>
             );
           })}
+        </section>
+
+        <section className="space-y-4" data-testid="pricing-topup-section">
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-soft">SUBSCRIBER TOP-UPS</div>
+              <h2 className="heading-display text-xl">Need more credits this month?</h2>
+              <p className="text-sm text-muted max-w-2xl mt-1">
+                Top-up packs are available to active subscribers only. They never change your plan or renewal date —
+                just add credits to your balance.
+              </p>
+            </div>
+            {!topups.is_active_subscriber && user && (
+              <span className="text-[11px] font-mono uppercase tracking-widest text-amber/80" data-testid="topup-locked-hint">
+                Subscribe to a plan to unlock top-ups
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            {(topups.packs || []).map((pack) => {
+              const tp = pack.price;
+              const label = tp
+                ? new Intl.NumberFormat(undefined, {
+                    style: "currency",
+                    currency: tp.currency_code,
+                    maximumFractionDigits: tp.display_decimals,
+                    minimumFractionDigits: tp.display_decimals,
+                  }).format(tp.display_amount)
+                : `₹${pack.price_inr}`;
+              const locked = !topups.is_active_subscriber;
+              return (
+                <article key={pack.pack_id} className={`brutal-card p-4 flex flex-col gap-2 ${pack.is_popular ? "border-violet/40" : "border-white/10"} ${locked ? "opacity-60" : ""}`} data-testid={`topup-card-${pack.pack_id}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-soft">{pack.name}</div>
+                    {pack.is_popular && <span className="tag tag-violet text-[9px]">POPULAR</span>}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="font-display text-2xl font-bold" data-testid={`topup-display-${pack.pack_id}`}>{label}</span>
+                  </div>
+                  {tp?.requires_currency_disclosure && (
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-amber/80">
+                      Charged as {new Intl.NumberFormat(undefined, { style: "currency", currency: tp.charge_currency, maximumFractionDigits: 0 }).format(tp.charge_amount)}
+                    </div>
+                  )}
+                  <div className="text-sm font-display font-bold text-ink">{pack.credits.toLocaleString("en-IN")} credits</div>
+                  <p className="text-xs text-muted flex-1">{pack.blurb}</p>
+                  <button
+                    onClick={() => checkoutTopup(pack.pack_id)}
+                    disabled={locked || busyTopup === pack.pack_id}
+                    className="btn-brutal text-xs"
+                    data-testid={`topup-cta-${pack.pack_id}`}
+                  >
+                    {busyTopup === pack.pack_id ? "Opening checkout…" : locked ? "Subscribers only" : `Buy · ${label}`}
+                  </button>
+                </article>
+              );
+            })}
+          </div>
         </section>
 
         <section className="space-y-3" data-testid="pricing-cost-table">

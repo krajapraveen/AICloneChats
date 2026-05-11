@@ -8,7 +8,8 @@ from typing import List, Optional
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 from db import db
-from auth import get_optional_user
+from auth import get_current_user
+from credit_guard import charge_credits_or_402, fresh_user
 from models import ChatRequest, ChatResponse, now_iso
 from mood import (
     MOOD_ENABLED,
@@ -157,7 +158,7 @@ async def get_recent_messages(conversation_id: str, limit: int = 20) -> List[dic
 
 # ---------- routes ----------
 @router.post("/{clone_id_or_slug}/chat")
-async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
+async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest, user: dict = Depends(get_current_user)):
     # Try slug first then id
     clone = await db.clones.find_one({"slug": clone_id_or_slug.lower()}, {"_id": 0})
     if not clone:
@@ -171,6 +172,11 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
 
     clone_id = clone["clone_id"]
     visitor_id = payload.visitor_id or f"v_{uuid.uuid4().hex[:10]}"
+
+    # ---- Credit gate: surface differentiates clone vs mood (slug-based) ----
+    surface = "mood_chat" if (clone.get("slug") or "").lower() == "companion" else "clone_chat"
+    user_doc = await fresh_user(user)
+    credit_handle = await charge_credits_or_402(user_doc, surface=surface)
 
     # Conversation
     conversation_id = payload.conversation_id
@@ -262,6 +268,7 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
 
     # Call LLM
     if not EMERGENT_LLM_KEY:
+        await credit_handle.refund(reason="llm_not_configured")
         reply = "(LLM is not configured. Please set EMERGENT_LLM_KEY.)"
     else:
         try:
@@ -274,6 +281,7 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest):
             reply_text = await chat.send_message(user_msg)
             reply = (reply_text or "").strip() or "Hmm, give me a sec — try saying that again?"
         except Exception as e:
+            await credit_handle.refund(reason="llm_failure")
             logger.exception("LLM call failed")
             reply = f"(I hit a snag generating a reply. {type(e).__name__})"
 

@@ -50,6 +50,7 @@ import Pricing from "./pages/Pricing";
 import VerifyEmail from "./pages/VerifyEmail";
 import PaymentReturn from "./pages/PaymentReturn";
 import BackButton from "./components/BackButton";
+import GlobalPaywallModal from "./components/GlobalPaywallModal";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -121,6 +122,7 @@ function ConfiguredApp() {
       <AuthProvider>
         <BackButton />
         <AppRouter />
+        <GlobalPaywallModal />
         <Toaster position="top-center" richColors closeButton />
       </AuthProvider>
     </BrowserRouter>

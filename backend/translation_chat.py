@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from db import db
 from auth import get_current_user, get_optional_user
+from credit_guard import charge_credits_or_402, fresh_user
 from models import now_iso
 from safety_filter import moderate_user_input, log_moderation_event
 
@@ -327,7 +328,7 @@ async def _check_rate_limit(member_id: str) -> None:
 
 
 @router.post("/rooms/{room_id}/messages")
-async def send_message(room_id: str, payload: SendMessageRequest, user: Optional[dict] = Depends(get_optional_user), x_tx_device_id: Optional[str] = Header(default=None)):
+async def send_message(room_id: str, payload: SendMessageRequest, user: dict = Depends(get_current_user), x_tx_device_id: Optional[str] = Header(default=None)):
     member_id, _ = await _identify(user, x_tx_device_id)
     member = await db.translation_room_members.find_one({"room_id": room_id, "member_id": member_id}, {"_id": 0})
     if not member:
@@ -345,11 +346,19 @@ async def send_message(room_id: str, payload: SendMessageRequest, user: Optional
 
     await _check_rate_limit(member_id)
 
+    # ---- Credit gate (translation_chat = 1 credit) ----
+    user_doc = await fresh_user(user)
+    credit_handle = await charge_credits_or_402(user_doc, surface="translation_chat")
+
     src_lang = (payload.source_language or "").lower()
     if src_lang not in SUPPORTED_LANGS:
         src_lang = detect_language_heuristic(text) or member.get("preferred_language") or "en"
 
-    translations = await translate_message(text, src_lang, SUPPORTED_LANGS)
+    try:
+        translations = await translate_message(text, src_lang, SUPPORTED_LANGS)
+    except Exception:
+        await credit_handle.refund(reason="translation_failed")
+        raise HTTPException(502, "Translation service unavailable, try again.")
     msg_id = f"txm_{uuid.uuid4().hex[:16]}"
     now = now_iso()
     msg_doc = {

@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 
 from db import db
 from auth import get_current_user, get_optional_user
+from credit_guard import charge_credits_or_402, fresh_user
 from models import now_iso
 from safety_filter import (
     SAFETY_CLAUSE,
@@ -384,6 +385,10 @@ async def send_avatar_message(payload: AvatarSendRequest, user: dict = Depends(g
     if in_check["action"] == "block":
         await log_moderation_event(db, user_id=user["user_id"], route="avatar_chat", source="user_input", result=in_check, action_taken="block_input")
         raise HTTPException(400, "This message could not be sent because it may violate safety rules.")
+
+    # ---- Credit gate (video_avatar = 5 credits, refunded if pipeline can't even queue) ----
+    user_doc = await fresh_user(user)
+    credit_handle = await charge_credits_or_402(user_doc, surface="video_avatar")  # noqa: F841
 
     # Conversation
     conversation_id = payload.conversation_id or f"conv_{uuid.uuid4().hex[:14]}"

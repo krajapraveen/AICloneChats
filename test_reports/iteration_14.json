@@ -1,0 +1,43 @@
+{
+  "summary": "Credit Economics Hard Reset (2026-05-11) end-to-end testing. Backend 10/11 passed, 1 skipped, 1 real bug. Frontend /pricing renders all 5 plan cards + 4 topup cards + 10 cost surfaces + correct header copy. Anonymous topup CTAs show 'Subscribers only'; logged-in subscriber sees 'Buy · ₹299.00' CTAs. GlobalPaywallModal renders correctly on window paywall:hit event.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/pricing/catalog", "issue": "Spec requires localized pricing for the 4 topup packs (topup_small/medium/large/mega) in addition to paid plans; current response only includes starter/pro/premium/ultimate. /api/topups/catalog does return localized topup pricing, so frontend works, but the consolidated /api/pricing/catalog endpoint omits them. Fix in billing_api.py pricing_catalog by extending paid_plan_ids with [p['pack_id'] for p in TOP_UP_PACKS if p['is_active']]."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Pricing Free card CTA (subscriber-tester logged in)", "issue": "Shows 'Verify email' CTA on Free plan card even though subscriber-tester is email_verified=true. Minor logic mismatch — could be checking a different flag.", "selector": "[data-testid=\"pricing-cta-free\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/pricing anonymous", "issues": ["topup-locked-hint element is not visible when anonymous user views the page (only the CTA text 'Subscribers only' communicates the gate). Minor — gating still functional."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_credit_economics_reset.py",
+    "/app/test_reports/pytest/credit_economics_reset.xml"
+  ],
+  "action_items": [
+    "Extend /api/pricing/catalog response to also include topup_small/medium/large/mega in 'prices' dict so frontend has a single source for localized pricing (currently topups have to be fetched via /api/topups/catalog).",
+    "(Low) Re-check Pricing.jsx Free-card CTA logic — verified subscriber still shows 'Verify email' on the Free card; should likely render 'Current plan: Pro' context or hide CTA."
+  ],
+  "critical_code_review_comments": [
+    "credit_guard.charge_credits_or_402: tier rank logic for 'video_avatar' correctly maps to 'ultimate'; SURFACES_PRO_PLUS correctly includes all 7 Pro+ surfaces. Refund handle is idempotent (refunded flag).",
+    "credits.deduct_credits uses atomic find_one_and_update with $gte guard — race-safe and cannot create negative balance. Daily-cap rollover via aggregation pipeline is correct.",
+    "auth.get_current_user prefers Cookie over Authorization header — could cause subtle test cross-contamination when reusing requests.Session across users (fixed by using fresh session in admin test).",
+    "Signup grants are correctly disabled — grant_signup_credits_if_eligible returns granted=False unconditionally; new users registered via /api/auth/register confirmed to have credits_balance=0.",
+    "Admin bypass uses ADMIN_UNLIMITED_EMAIL env at module load time; backend reads only the authenticated user's email — cannot be spoofed via client-supplied fields. ✓"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_credit_economics_reset.py"
+  ],
+  "success_rate": {"backend": "91% (10/11, 1 skipped video_avatar=AVATAR_CHAT_ENABLED=false)", "frontend": "100% for all P0 flows tested"},
+  "test_credentials": "subscriber-tester@example.com / TestPass123! (Pro, 2500 cr), sr-tester@example.com / TestPass123! (Free, 0 cr), admin: krajapraveen@gmail.com via Mongo session injection",
+  "seed_data_creation": "subscriber-tester user reseeded via Mongo (plan_id=pro, plan_status=active, email_verified=True, credits_balance=2500). Test users with prefix TEST_reset_* created via /api/auth/register.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 8 monetized surfaces are wired via credit_guard. Verified: clone_chat/companion deducts 1 credit (mood_chat surface), free user blocked with 402 subscription_required, free user blocked from topup with 403 subscription_required_for_topup, subscriber can create topup_small order (payment_orders doc kind=topup, credits=300), admin gets admin_unlimited=True and no deduction. Tier-gate test for video_avatar skipped because AVATAR_CHAT_ENABLED=false in .env; if main agent enables it, re-run that test. /api/pricing/catalog is missing topup pack prices — known minor gap. Frontend GlobalPaywallModal verified by dispatching window.paywall:hit event from console; modal renders correct copy 'SUBSCRIPTION REQUIRED' + 'See plans' CTA + 'Dismiss'.",
+  "rca_of_the_issue": "Single real gap: /api/pricing/catalog only iterates PLANS (paid). Fix is one line in /app/backend/billing_api.py:91 — also pass [p['pack_id'] for p in TOP_UP_PACKS if p.get('is_active')] into catalog_for_country (assuming pricing.compute_price_for_plan already accepts topup pack_ids, which it does — verified by /api/topups/catalog returning prices). No other functional defects found in the credit economics reset."
+}

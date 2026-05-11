@@ -13,9 +13,11 @@ from db import db
 from auth import get_current_user, get_optional_user
 from credits import (
     PLANS,
+    TOP_UP_PACKS,
     CREDIT_COST,
     get_user_credit_state,
     is_admin_unlimited_user,
+    is_active_subscriber,
 )
 from pricing import (
     catalog_for_country,
@@ -43,6 +45,35 @@ def _require_admin(user: dict = Depends(get_current_user)) -> dict:
 @public_router.get("/api/plans")
 async def list_plans():
     return {"plans": PLANS, "credit_costs": CREDIT_COST}
+
+
+@public_router.get("/api/topups/catalog")
+async def topups_catalog(request: Request, country: Optional[str] = None, user: Optional[dict] = Depends(get_optional_user)):
+    """Public top-up catalog with country-aware pricing.
+    Purchase is server-gated to active subscribers; this endpoint just lists.
+    """
+    from pricing import compute_price_for_plan
+    if country:
+        country_code = country.upper()
+        source = "query_override"
+    else:
+        country_code, source = detect_country_from_request(request, user)
+    packs_with_price = []
+    for pack in TOP_UP_PACKS:
+        if not pack.get("is_active"):
+            continue
+        try:
+            price = compute_price_for_plan(pack["pack_id"], country_code)
+        except Exception:
+            continue
+        packs_with_price.append({**pack, "price": price})
+    return {
+        "country_code": country_code,
+        "country_source": source,
+        "subscriber_only": True,
+        "packs": packs_with_price,
+        "is_active_subscriber": is_active_subscriber(user) if user else False,
+    }
 
 
 # ---- Country-aware pricing endpoints ----

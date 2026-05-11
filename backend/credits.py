@@ -149,6 +149,66 @@ PLANS = [
 PLAN_INDEX = {p["plan_id"]: p for p in PLANS}
 
 
+# ----- Top-up packs (subscribers-only) -----
+# Founder-locked 2026-05-11. Top-ups never carry a recurring plan; they only
+# top up the balance of an ACTIVE subscriber. Server-side enforcement lives
+# in payments_cashfree.create_topup_order — frontend gating is cosmetic.
+TOP_UP_PACKS = [
+    {
+        "pack_id": "topup_small",
+        "name": "Small Top-Up",
+        "price_inr": 299,
+        "credits": 300,
+        "blurb": "300 extra credits — perfect for a few late-night chats.",
+        "tier_rank": 1,
+        "is_active": True,
+    },
+    {
+        "pack_id": "topup_medium",
+        "name": "Medium Top-Up",
+        "price_inr": 999,
+        "credits": 1200,
+        "blurb": "1,200 credits — keeps you going for a couple of weeks.",
+        "tier_rank": 2,
+        "is_active": True,
+        "is_popular": True,
+    },
+    {
+        "pack_id": "topup_large",
+        "name": "Large Top-Up",
+        "price_inr": 2999,
+        "credits": 4000,
+        "blurb": "4,000 credits — for power users between renewals.",
+        "tier_rank": 3,
+        "is_active": True,
+    },
+    {
+        "pack_id": "topup_mega",
+        "name": "Creator Top-Up",
+        "price_inr": 7999,
+        "credits": 12000,
+        "blurb": "12,000 credits — for creators and heavy users.",
+        "tier_rank": 4,
+        "is_active": True,
+    },
+]
+
+TOPUP_INDEX = {p["pack_id"]: p for p in TOP_UP_PACKS}
+
+
+def is_active_subscriber(user: dict) -> bool:
+    """Top-up purchase guard. True iff the user holds a non-free plan that is
+    currently active. Admin-unlimited users are NOT considered subscribers
+    (they have no plan to top up)."""
+    if not user:
+        return False
+    if is_admin_unlimited_user(user):
+        return False
+    plan_id = (user.get("plan_id") or "free").lower()
+    plan_status = (user.get("plan_status") or "").lower()
+    return plan_id != "free" and plan_status == "active"
+
+
 async def ensure_plans_seeded() -> None:
     """Upsert plans on every boot. Plans are CODE, not user data."""
     for p in PLANS:
@@ -299,23 +359,29 @@ async def refund_credits(user: dict, surface: str, request_id: Optional[str] = N
         await _emit_credit_event(user_id, "refund", cost, res.get("credits_balance", 0) - cost, res.get("credits_balance", 0), surface=surface, request_id=request_id)
 
 
-async def credit_payment(user_id: str, credits: int, order_id: str, plan_id: str) -> int:
+async def credit_payment(user_id: str, credits: int, order_id: str, plan_id: Optional[str] = None, kind: str = "subscription", pack_id: Optional[str] = None) -> int:
     """Add credits from a verified Cashfree webhook. Idempotency is the caller's
     responsibility — this function is only ever called from inside the webhook
     handler after the order's credited_at marker is checked.
+
+    For kind="subscription": sets plan_id, marks plan as active, increments credits.
+    For kind="topup":         credits-only top up. Plan/status untouched.
     """
+    set_fields: dict = {}
+    if kind == "subscription" and plan_id:
+        set_fields = {"plan_id": plan_id, "plan_status": "active", "plan_renewed_at": now_iso()}
+    update_doc: dict = {"$inc": {"credits_balance": credits}}
+    if set_fields:
+        update_doc["$set"] = set_fields
     res = await db.users.find_one_and_update(
         {"user_id": user_id},
-        {"$set": {
-            "plan_id": plan_id,
-            "plan_status": "active",
-            "plan_renewed_at": now_iso(),
-        }, "$inc": {"credits_balance": credits}},
+        update_doc,
         return_document=True,
         projection={"_id": 0, "credits_balance": 1},
     )
     new_balance = (res or {}).get("credits_balance", credits)
-    await _emit_credit_event(user_id, "grant", credits, new_balance - credits, new_balance, surface=f"payment:{plan_id}", request_id=order_id)
+    surface_label = f"payment:{plan_id}" if kind == "subscription" else f"topup:{pack_id or 'unknown'}"
+    await _emit_credit_event(user_id, "grant", credits, new_balance - credits, new_balance, surface=surface_label, request_id=order_id)
     return new_balance
 
 

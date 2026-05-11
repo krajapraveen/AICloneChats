@@ -130,7 +130,7 @@ class Memory(BaseModel):
 # ---------- CHAT ----------
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
-    visitor_id: str
+    visitor_id: Optional[str] = None
     visitor_name: Optional[str] = None
     conversation_id: Optional[str] = None
 

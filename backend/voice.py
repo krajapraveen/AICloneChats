@@ -31,7 +31,8 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.openai import OpenAISpeechToText
 
 from db import db
-from auth import get_optional_user
+from auth import get_current_user, get_optional_user
+from credit_guard import charge_credits_or_402, fresh_user as _cg_fresh_user
 from models import now_iso
 from pii_redact import redact
 
@@ -129,12 +130,15 @@ async def voice_actor(
     user: Optional[dict] = Depends(get_optional_user),
     x_device_id: Optional[str] = Header(default=None, alias="X-Device-Id"),
 ) -> dict:
-    """Returns {is_anonymous: bool, user_id: str|None, device_id: str|None, ip_hash: str}."""
-    if user:
-        return {"is_anonymous": False, "user_id": user["user_id"], "user": user, "device_id": None, "ip_hash": _hash_ip(request)}
-    if not x_device_id or len(x_device_id) < 8:
-        raise HTTPException(status_code=400, detail="X-Device-Id header required for anonymous trial")
-    return {"is_anonymous": True, "user_id": None, "user": None, "device_id": x_device_id[:64], "ip_hash": _hash_ip(request)}
+    """Returns {is_anonymous: False, user_id, user, device_id, ip_hash}.
+
+    As of the 2026-05-11 monetization reset, anonymous voice generation is
+    OFF. Every call must be from an authenticated user; credits are
+    deducted at /generate, /generate-all and /refine.
+    """
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "auth_required", "message": "Sign in to use Voice."})
+    return {"is_anonymous": False, "user_id": user["user_id"], "user": user, "device_id": x_device_id[:64] if x_device_id else None, "ip_hash": _hash_ip(request)}
 
 
 # -------------- Usage gating --------------
@@ -442,7 +446,15 @@ async def generate(payload: GenerateRequest, actor: dict = Depends(voice_actor))
     if not cleaned:
         raise HTTPException(status_code=400, detail="No transcript on this session")
 
-    msg = await _generate_message(cleaned, payload.tone)
+    # ---- Credit gate (voice_message = 3 credits) ----
+    user_doc = await _cg_fresh_user(actor.get("user"))
+    credit_handle = await charge_credits_or_402(user_doc, surface="voice_message")
+
+    try:
+        msg = await _generate_message(cleaned, payload.tone)
+    except Exception:
+        await credit_handle.refund(reason="generation_failed")
+        raise HTTPException(502, "Voice message generation failed, try again.")
     message_id = f"vm_{uuid.uuid4().hex[:14]}"
     await db.generated_messages.insert_one({
         "message_id": message_id,
@@ -470,10 +482,19 @@ async def generate_all(payload: GenerateAllRequest, actor: dict = Depends(voice_
     if not cleaned:
         raise HTTPException(status_code=400, detail="No transcript on this session")
 
+    # ---- Credit gate. We charge ONCE for the bundle (3 credits, same as /generate)
+    # because /generate-all is a UX convenience around a single creative intent.
+    user_doc = await _cg_fresh_user(actor.get("user"))
+    credit_handle = await charge_credits_or_402(user_doc, surface="voice_message")
+
     results = await asyncio.gather(
         *[_generate_message(cleaned, t) for t in TONES],
         return_exceptions=True,
     )
+    # If ALL tones failed, refund and surface error
+    if all(isinstance(r, Exception) for r in results):
+        await credit_handle.refund(reason="all_tones_failed")
+        raise HTTPException(502, "Voice generation failed across all tones, try again.")
     out = []
     for tone, res in zip(TONES, results):
         if isinstance(res, Exception):
@@ -508,7 +529,16 @@ async def refine(payload: RefineRequest, actor: dict = Depends(voice_actor)):
     )
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
-    rewritten = await _refine_message(msg["generated_message"], payload.refine_type)
+
+    # ---- Credit gate (refining = same cost as generation: 3 credits) ----
+    user_doc = await _cg_fresh_user(actor.get("user"))
+    credit_handle = await charge_credits_or_402(user_doc, surface="voice_message")
+
+    try:
+        rewritten = await _refine_message(msg["generated_message"], payload.refine_type)
+    except Exception:
+        await credit_handle.refund(reason="refine_failed")
+        raise HTTPException(502, "Refine failed, try again.")
 
     new_id = f"vm_{uuid.uuid4().hex[:14]}"
     await db.generated_messages.insert_one({

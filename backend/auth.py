@@ -295,6 +295,10 @@ async def google_callback(payload: GoogleCallbackRequest, request: Request, resp
             "picture": picture,
             "auth_provider": "google",
             "role": "user",
+            "email_verified": True,  # Google email is already verified per check above
+            "credits_balance": 0,
+            "plan_id": "free",
+            "plan_status": "pending_subscription",
             "created_at": now_iso(),
         })
 

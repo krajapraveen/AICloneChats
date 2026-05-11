@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
@@ -8,6 +8,7 @@ import MoodSignalPill from "../components/MoodSignalPill";
 import InfoIcon from "../components/InfoIcon";
 import ChatInfoModal from "../components/ChatInfoModal";
 import { useMoodTheme } from "../hooks/useMoodTheme";
+import { useAuth } from "../contexts/AuthContext";
 
 const COMPANION_SLUG = "companion";
 
@@ -42,6 +43,8 @@ function getOrCreateVisitorId() {
 }
 
 export default function MoodChat() {
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -50,6 +53,12 @@ export default function MoodChat() {
   const visitorId = useRef(getOrCreateVisitorId());
   const scrollRef = useRef(null);
   const { moodUI, theme: moodTheme, updateMoodUI } = useMoodTheme();
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/login?redirect=/mood-chat");
+    }
+  }, [authLoading, user, navigate]);
 
   useEffect(() => {
     api.post("/analytics/event", { event_name: "mood_chat_started" }).catch(() => {});

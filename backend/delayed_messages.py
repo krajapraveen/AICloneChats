@@ -42,6 +42,7 @@ from pydantic import BaseModel, Field, EmailStr
 
 from db import db
 from auth import get_current_user
+from credit_guard import charge_credits_or_402, fresh_user
 from models import now_iso
 from safety_filter import moderate_user_input, log_moderation_event
 
@@ -312,6 +313,10 @@ async def create_delayed(payload: CreateDelayedMessageRequest, user: dict = Depe
         })
         if recent_emails >= EMAIL_RATE_LIMIT_PER_DAY:
             raise HTTPException(429, f"email_rate_limit ({EMAIL_RATE_LIMIT_PER_DAY}/24h)")
+
+    # ---- Credit gate (delayed_create = 4 credits, charged on creation) ----
+    user_doc = await fresh_user(user)
+    credit_handle = await charge_credits_or_402(user_doc, surface="delayed_create")  # noqa: F841
 
     delayed_id = f"dm_{uuid.uuid4().hex[:14]}"
     open_token = _make_open_token()

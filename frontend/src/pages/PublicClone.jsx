@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
 import { formatCount } from "../lib/format";
@@ -25,7 +25,8 @@ const SHARE_WORTHY_THRESHOLD = 80;
 
 export default function PublicClone() {
   const { slug } = useParams();
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
   const [clone, setClone] = useState(null);
   const [stats, setStats] = useState({ share_count: 0, message_count: 0, visitor_count: 0 });
   const [error, setError] = useState("");
@@ -39,6 +40,12 @@ export default function PublicClone() {
   const visitorId = useRef(getOrCreateVisitorId());
   const scrollRef = useRef(null);
   const { moodUI, theme: moodTheme, updateMoodUI } = useMoodTheme();
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate(`/login?redirect=/c/${slug}`);
+    }
+  }, [authLoading, user, navigate, slug]);
 
   useEffect(() => {
     (async () => {

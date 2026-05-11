@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from db import db
 from auth import get_current_user
+from credit_guard import charge_credits_or_402, fresh_user as _cg_fresh_user
 from models import now_iso
 import anonymous_moderation as mod
 from anonymous_seed import ROOMS, SEED_CONVERSATIONS
@@ -338,7 +339,7 @@ async def _check_rate_limit(session_id: str) -> None:
 
 
 @router.post("/rooms/{slug}/messages")
-async def send_message(slug: str, payload: SendMessageRequest, session: dict = Depends(session_dep)):
+async def send_message(slug: str, payload: SendMessageRequest, session: dict = Depends(session_dep), auth_user: dict = Depends(get_current_user)):
     if session.get("is_banned"):
         raise HTTPException(403, "This session is banned from posting.")
     room = await db.anonymous_rooms.find_one({"slug": slug}, {"_id": 0})
@@ -355,7 +356,16 @@ async def send_message(slug: str, payload: SendMessageRequest, session: dict = D
     if pre["action"] == "block":
         await _safety_log(db, user_id=session["session_id"], route="anonymous_chat", source="user_input", result=pre, action_taken="block_input")
         raise HTTPException(400, "Please keep messages safe and respectful.")
-    moderation = await mod.moderate_message(content)
+
+    # ---- Credit gate (anonymous_chat = 3 credits) ----
+    user_doc = await _cg_fresh_user(auth_user)
+    credit_handle = await charge_credits_or_402(user_doc, surface="anonymous_chat")
+
+    try:
+        moderation = await mod.moderate_message(content)
+    except Exception:
+        await credit_handle.refund(reason="moderation_failed")
+        raise HTTPException(502, "Moderation service failed, try again.")
     decision = moderation["decision"]
     message_id = f"am_{uuid.uuid4().hex[:14]}"
 

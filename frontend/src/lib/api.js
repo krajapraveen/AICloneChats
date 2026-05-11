@@ -28,4 +28,25 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Global paywall hook: when any monetized API returns 402 with a structured
+// detail, emit a window event so a top-level <GlobalPaywallModal /> can
+// surface it. Routes that already manage their own paywall (smart_reply,
+// voice) can opt-out by adding config.suppressPaywall=true.
+api.interceptors.response.use(
+  (r) => r,
+  (error) => {
+    const status = error?.response?.status;
+    const detail = error?.response?.data?.detail;
+    const cfg = error?.config || {};
+    if ((status === 402 || (status === 403 && typeof detail === "object" && detail?.code === "subscription_required_for_topup")) && typeof detail === "object" && !cfg.suppressPaywall) {
+      try {
+        window.dispatchEvent(new CustomEvent("paywall:hit", { detail }));
+      } catch {
+        // ignore
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default api;
