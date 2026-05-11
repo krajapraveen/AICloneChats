@@ -22,6 +22,17 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Credit Economics Hard Reset + Top-Up Packs + Full Paywall Enforcement)** — Free tier abolished. All non-admin users wiped to 0 credits via `/app/backend/migrations/reset_credits_2026_05_11.py`. Signup grants permanently disabled (`SIGNUP_GRANTS_DISABLED=True` in `credits.py`). Admin `krajapraveen@gmail.com` retains server-side unlimited bypass via `is_admin_unlimited_user`.
+  - **Plans (locked):** Starter ₹499 / 500 cr · Pro ₹1,499 / 2,500 cr · Premium ₹3,999 / 8,000 cr · Ultimate ₹9,999 / 25,000 cr.
+  - **Top-Up Packs (subscribers-only):** ₹299→300 / ₹999→1,200 / ₹2,999→4,000 / ₹7,999→12,000. Local currency pricing via `FIXED_PRICES` extended into `pricing.py`.
+  - **New module `credit_guard.py`** — central `charge_credits_or_402()` wraps deduct + tier-gate + refund handle. Used by all 8 monetized chat surfaces.
+  - **Surfaces wired (all server-side enforced):**
+    - clone_chat=1, mood_chat=1, translation_chat=1 (Starter+)
+    - smart_reply=2, debate_chat=2, conversation_memory=2, voice_message=3, anonymous_chat=3, delayed_create=4 (Pro+)
+    - video_avatar=5 (Ultimate-only)
+  - **New endpoints:** `POST /api/payments/create-topup-order` (403 for non-subscribers), `GET /api/topups/catalog`. `/api/pricing/catalog` now also includes top-up packs.
+  - **Frontend:** New `GlobalPaywallModal` listens on `paywall:hit` window event from axios 402 interceptor. New Top-Up section on `/pricing`. `MoodChat` + `PublicClone` now require auth.
+  - **Testing:** 10/11 backend tests pass (iteration_14), frontend 100% P0 pass.
 - **2026-02-13 (Global currency / country pricing + webhook currency verification)** — Backend-controlled global pricing for 80+ countries, 5-tier country detection, fixed prices for 8 anchor markets, derived prices with market-friendly rounding for the long tail, charge-currency disclosure where gateway can't natively process.
   - **Backend (new)**: `pricing.py` — country↔currency catalog (ISO-3166-1 → ISO-4217), `FIXED_PRICES` for INR/USD/GBP/EUR/AED/CAD/AUD/SGD, USD-anchor derivation with market-friendly rounding (`_round_market_friendly`), no-decimal handling for JPY/KRW/IDR/VND, `compute_price_for_plan(plan_id, country)` and `detect_country_from_request(request, user)` (5-tier priority).
   - **Endpoints added**:

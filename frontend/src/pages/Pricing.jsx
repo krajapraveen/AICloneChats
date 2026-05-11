@@ -228,6 +228,8 @@ export default function Pricing() {
                 {p.plan_id === "free" ? (
                   isCurrent ? (
                     <div className="btn-ghost text-xs text-center cursor-default" data-testid={`pricing-cta-${p.plan_id}`}>Your current plan</div>
+                  ) : credits.email_verified || credits.admin_unlimited ? (
+                    <div className="btn-ghost text-xs text-center cursor-default opacity-60" data-testid={`pricing-cta-${p.plan_id}`}>Free tier · no chats</div>
                   ) : (
                     <button
                       onClick={() => user ? navigate("/verify-email") : navigate("/register")}
@@ -264,9 +266,9 @@ export default function Pricing() {
                 just add credits to your balance.
               </p>
             </div>
-            {!topups.is_active_subscriber && user && (
+            {!topups.is_active_subscriber && (
               <span className="text-[11px] font-mono uppercase tracking-widest text-amber/80" data-testid="topup-locked-hint">
-                Subscribe to a plan to unlock top-ups
+                {user ? "Subscribe to a plan to unlock top-ups" : "Sign in & subscribe to unlock top-ups"}
               </span>
             )}
           </div>

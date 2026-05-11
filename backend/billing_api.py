@@ -89,7 +89,8 @@ async def pricing_catalog(request: Request, country: Optional[str] = None, user:
     else:
         country_code, source = detect_country_from_request(request, user)
     paid_plan_ids = [p["plan_id"] for p in PLANS if p["plan_id"] != "free" and p.get("is_active")]
-    cat = catalog_for_country(country_code, paid_plan_ids)
+    topup_ids = [t["pack_id"] for t in TOP_UP_PACKS if t.get("is_active")]
+    cat = catalog_for_country(country_code, paid_plan_ids + topup_ids)
     cat["country_source"] = source
     cat["gateway_currencies"] = sorted(GATEWAY_CHARGE_CURRENCIES)
     cat["exchange_source"] = EXCHANGE_SOURCE
