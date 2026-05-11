@@ -73,18 +73,26 @@ export default function GoogleSignInButton({ label = "Continue with Google", tes
   const { configured } = useGoogleAuthConfig();
 
   if (!configured) {
-    return (
-      <button
-        type="button"
-        disabled
-        className="btn-ghost w-full mb-5 opacity-50"
-        data-testid={testId}
-        title="Google sign-in is not configured yet"
-      >
-        <GoogleIcon />
-        Google sign-in unavailable
-      </button>
-    );
+    // Production-safe: hide the button entirely for users. Only show a
+    // diagnostic placeholder in development so the operator/admin notices
+    // the missing OAuth env vars (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).
+    if (process.env.NODE_ENV !== "production") {
+      return (
+        <div
+          className="brutal-card p-3 mb-5 border-amber/40 bg-amber-500/10"
+          data-testid={`${testId}-diagnostic`}
+        >
+          <div className="text-[10px] font-mono uppercase tracking-widest text-amber mb-1">
+            Dev diagnostic
+          </div>
+          <p className="text-xs text-muted">
+            Google OAuth is not configured. Set <code className="text-ink">GOOGLE_CLIENT_ID</code> and{" "}
+            <code className="text-ink">GOOGLE_CLIENT_SECRET</code> in <code className="text-ink">backend/.env</code> and restart the backend.
+          </p>
+        </div>
+      );
+    }
+    return null;
   }
 
   return <ActiveGoogleButton label={label} testId={testId} onSuccess={onSuccess} />;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useGoogleAuthConfig } from "../contexts/GoogleAuthConfigContext";
 import Navbar from "../components/Navbar";
 import GoogleSignInButton from "../components/GoogleSignInButton";
 
@@ -10,6 +11,7 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const { configured: googleConfigured } = useGoogleAuthConfig();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const oauthError = searchParams.get("error");
@@ -55,11 +57,13 @@ export default function Login() {
 
           <GoogleSignInButton testId="login-google-btn" />
 
-          <div className="flex items-center gap-3 my-5">
-            <div className="flex-1 h-px bg-white/10"></div>
-            <span className="font-mono text-xs uppercase tracking-widest text-muted">or</span>
-            <div className="flex-1 h-px bg-white/10"></div>
-          </div>
+          {googleConfigured && (
+            <div className="flex items-center gap-3 my-5">
+              <div className="flex-1 h-px bg-white/10"></div>
+              <span className="font-mono text-xs uppercase tracking-widest text-muted">or</span>
+              <div className="flex-1 h-px bg-white/10"></div>
+            </div>
+          )}
 
           <form onSubmit={onSubmit} className="space-y-4" data-testid="login-form">
             <div>

@@ -65,13 +65,7 @@ export default function PlansShowcase({ user, credits }) {
       {/* Subscriptions */}
       <div>
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-amber">PLANS</div>
-            <h2 className="heading-display text-2xl sm:text-3xl">Pick a plan to start using AI</h2>
-            <p className="text-sm text-muted mt-1 max-w-2xl">
-              Every interaction is credit-metered. Pricing reflects your region — set by the backend, not your browser.
-            </p>
-          </div>
+          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-amber">PLANS</div>
           <Link to="/pricing" className="btn-ghost text-xs whitespace-nowrap" data-testid="plans-see-all">See full pricing →</Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

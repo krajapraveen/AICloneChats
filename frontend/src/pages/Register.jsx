@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useGoogleAuthConfig } from "../contexts/GoogleAuthConfigContext";
 import Navbar from "../components/Navbar";
 import GoogleSignInButton from "../components/GoogleSignInButton";
 
@@ -11,6 +12,7 @@ export default function Register() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
+  const { configured: googleConfigured } = useGoogleAuthConfig();
   const navigate = useNavigate();
 
   const onSubmit = async (e) => {
@@ -47,11 +49,13 @@ export default function Register() {
 
           <GoogleSignInButton testId="register-google-btn" label="Sign up with Google" />
 
-          <div className="flex items-center gap-3 my-5">
-            <div className="flex-1 h-px bg-white/10"></div>
-            <span className="font-mono text-xs uppercase tracking-widest text-muted">or</span>
-            <div className="flex-1 h-px bg-white/10"></div>
-          </div>
+          {googleConfigured && (
+            <div className="flex items-center gap-3 my-5">
+              <div className="flex-1 h-px bg-white/10"></div>
+              <span className="font-mono text-xs uppercase tracking-widest text-muted">or</span>
+              <div className="flex-1 h-px bg-white/10"></div>
+            </div>
+          )}
 
           <form onSubmit={onSubmit} className="space-y-4" data-testid="register-form">
             <div>
