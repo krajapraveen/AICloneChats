@@ -224,7 +224,7 @@ async def get_order_status(order_id: str, user: dict = Depends(get_current_user)
                 cf = r.json()
                 cf_status = (cf.get("order_status") or "").upper()
                 if cf_status == "PAID" and not order.get("credited_at"):
-                    await _apply_paid_credits(order)
+                    await _handle_paid_event(order)
                     order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
                 elif cf_status in ("EXPIRED", "TERMINATED"):
                     await db.payment_orders.update_one(
@@ -252,31 +252,65 @@ def _verify_webhook_signature(raw_body: bytes, timestamp: str, signature: str) -
         return False
 
 
-async def _apply_paid_credits(order: dict) -> None:
-    """Idempotently grant credits + activate plan for a paid order.
+async def _record_admin_alert(*, kind: str, severity: int, order_id: Optional[str], user_id: Optional[str], summary: str, payload: Optional[dict] = None) -> None:
+    """Persist a manual-review alert. Surfaced in /admin/webhook-logs (manual_review_required filter)."""
+    await db.admin_alerts.insert_one({
+        "alert_id": uuid.uuid4().hex,
+        "kind": kind,
+        "severity": severity,
+        "order_id": order_id,
+        "user_id": user_id,
+        "summary": summary,
+        "payload_preview": (json.dumps(payload)[:600] if payload else None),
+        "resolved": False,
+        "created_at": now_iso(),
+    })
 
-    Uses a conditional update with `credited_at: None` as the guard.
-    Concurrent webhook deliveries collapse to a single credit grant.
+
+async def _used_credits_since_grant(user_id: str, order: dict) -> int:
+    """Best-effort: credits consumed since this order's grant. Used by the
+    refund path to decide whether to auto-reverse or escalate to manual review.
     """
+    credited_at = order.get("credited_at")
+    if not credited_at:
+        return 0
+    rows = await db.credit_events.aggregate([
+        {"$match": {"user_id": user_id, "kind": "deduct", "created_at": {"$gt": credited_at}}},
+        {"$group": {"_id": None, "used": {"$sum": {"$abs": "$delta"}}}},
+    ]).to_list(1)
+    return rows[0]["used"] if rows else 0
+
+
+# ---- Event-specific handlers ----
+async def _handle_paid_event(order: dict) -> str:
+    """Returns the verdict to write into webhook_logs.result."""
+    # Atomic guard: only the first arrival flips status + sets credited_at.
     res = await db.payment_orders.find_one_and_update(
-        {"order_id": order["order_id"], "credited_at": None},
-        {"$set": {
-            "status": "paid",
-            "credited_at": now_iso(),
-            "updated_at": now_iso(),
-        }},
+        {"order_id": order["order_id"], "credited_at": None, "status": {"$ne": "refunded"}},
+        {"$set": {"status": "paid", "credited_at": now_iso(), "updated_at": now_iso()}},
         return_document=True,
         projection={"_id": 0},
     )
     if not res:
-        # Already credited — duplicate webhook path. Audit and return.
         await db.payment_audit_log.insert_one({
             "event_id": uuid.uuid4().hex,
             "order_id": order["order_id"],
             "action": "duplicate_webhook_no_op",
             "created_at": now_iso(),
         })
-        return
+        return "duplicate_webhook_no_op"
+
+    # Expired/cancelled-before-success — money came in but order was abandoned.
+    # Still grant (the customer paid), but flag for admin review.
+    if order.get("status") in ("expired", "terminated", "user_dropped"):
+        await _record_admin_alert(
+            kind="payment_after_terminal",
+            severity=4,
+            order_id=order["order_id"],
+            user_id=order["user_id"],
+            summary=f"Order was {order.get('status')} but a PAID webhook arrived afterward.",
+        )
+
     new_balance = await credit_payment(
         user_id=order["user_id"],
         credits=order["credits"],
@@ -293,6 +327,198 @@ async def _apply_paid_credits(order: dict) -> None:
         "new_balance": new_balance,
         "created_at": now_iso(),
     })
+    return "accepted"
+
+
+async def _handle_failed_event(order: dict, *, event_type: str, status_label: str, full_payload: dict) -> str:
+    failure_reason = (full_payload.get("data") or {}).get("payment", {}).get("payment_message") or status_label or event_type
+    payment_method = (full_payload.get("data") or {}).get("payment", {}).get("payment_method")
+    if order.get("credited_at"):
+        # Edge case: a failed webhook for an already-credited order. Don't reverse —
+        # this is usually a delayed/duplicate from an earlier failed attempt. Flag.
+        await _record_admin_alert(
+            kind="failed_after_paid",
+            severity=3,
+            order_id=order["order_id"],
+            user_id=order["user_id"],
+            summary=f"FAILED webhook for an order already credited. event={event_type} reason={failure_reason}",
+            payload=full_payload,
+        )
+        return "manual_review_required"
+
+    await db.payment_orders.update_one(
+        {"order_id": order["order_id"], "credited_at": None},
+        {"$set": {
+            "status": "failed",
+            "updated_at": now_iso(),
+            "failure_reason": failure_reason,
+            "failure_event": event_type,
+            "payment_method": payment_method,
+        }},
+    )
+    return "failed"
+
+
+async def _handle_user_dropped(order: dict, *, event_type: str, full_payload: dict) -> str:
+    if order.get("credited_at"):
+        return "duplicate_webhook_no_op"
+    await db.payment_orders.update_one(
+        {"order_id": order["order_id"], "credited_at": None},
+        {"$set": {
+            "status": "user_dropped",
+            "updated_at": now_iso(),
+            "failure_event": event_type,
+            "checkout_session_id": (full_payload.get("data") or {}).get("payment", {}).get("payment_session_id"),
+        }},
+    )
+    return "user_dropped"
+
+
+async def _handle_refund_event(order: dict, *, event_type: str, full_payload: dict) -> str:
+    """Refund taxonomy:
+        REFUND_STATUS_WEBHOOK with refund_status=SUCCESS → reversal
+        REFUND_STATUS_WEBHOOK with refund_status=FAILED → log only
+    Idempotency: by refund_id (Cashfree-issued).
+    """
+    refund = (full_payload.get("data") or {}).get("refund") or {}
+    refund_id = refund.get("refund_id") or refund.get("cf_refund_id")
+    refund_amount = float(refund.get("refund_amount") or 0)
+    refund_currency = (refund.get("refund_currency") or order.get("charge_currency") or "INR").upper()
+    refund_status = (refund.get("refund_status") or "").upper()
+    refund_reason = refund.get("refund_note") or refund.get("refund_reason")
+
+    if not refund_id:
+        await _record_admin_alert(
+            kind="refund_missing_id",
+            severity=3,
+            order_id=order["order_id"],
+            user_id=order["user_id"],
+            summary="Refund webhook arrived without a refund_id; cannot dedup.",
+            payload=full_payload,
+        )
+        return "manual_review_required"
+
+    paid_amount = float(order.get("charge_amount") or order.get("amount_inr") or 0)
+    if refund_amount > paid_amount + 0.01:
+        await _log_fraud_signal(order["user_id"], order["email"], None, None, "refund_exceeds_paid", severity=5)
+        return "manual_review_required"
+    if (refund.get("refund_currency") or "").upper() and refund_currency != (order.get("charge_currency") or "INR").upper():
+        await _log_fraud_signal(order["user_id"], order["email"], None, None, "refund_currency_mismatch", severity=4)
+        return "currency_mismatch"
+
+    # Idempotent insert keyed on refund_id
+    try:
+        await db.payment_refunds.insert_one({
+            "refund_id": refund_id,
+            "order_id": order["order_id"],
+            "user_id": order["user_id"],
+            "amount": refund_amount,
+            "currency": refund_currency,
+            "status": refund_status or "UNKNOWN",
+            "reason": refund_reason,
+            "event_type": event_type,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        # duplicate refund_id → idempotent no-op
+        return "duplicate_webhook_no_op"
+
+    if refund_status not in ("SUCCESS", "PAID"):
+        # Refund failed or pending — log only
+        return "refund_failed" if refund_status == "FAILED" else "accepted"
+
+    # Refund succeeded — decide reversal vs manual review
+    is_partial = refund_amount < paid_amount - 0.01
+    new_order_status = "partially_refunded" if is_partial else "refunded"
+    await db.payment_orders.update_one(
+        {"order_id": order["order_id"]},
+        {"$set": {
+            "status": new_order_status,
+            "refund_status": new_order_status,
+            "refunded_at": now_iso(),
+            "updated_at": now_iso(),
+        }},
+    )
+
+    # Credit reversal logic: only if granted credits are still mostly unused
+    if not order.get("credited_at"):
+        # No credits were ever granted (refund of a failed order) — nothing to do
+        return "refunded"
+
+    granted = int(order.get("credits") or 0)
+    used = await _used_credits_since_grant(order["user_id"], order)
+    # Pro-rated reversal: reverse the unused portion proportional to the refund.
+    refund_ratio = min(1.0, refund_amount / paid_amount) if paid_amount > 0 else 1.0
+    target_reverse = int(round(granted * refund_ratio))
+    reversible = max(0, granted - used)
+
+    if reversible <= 0 and target_reverse > 0:
+        # All credits consumed — cannot auto-reverse without going negative
+        await _record_admin_alert(
+            kind="refund_after_usage",
+            severity=4,
+            order_id=order["order_id"],
+            user_id=order["user_id"],
+            summary=f"Refund {refund_amount} {refund_currency} succeeded but all {granted} credits already consumed. Manual review.",
+            payload=full_payload,
+        )
+        return "manual_review_required"
+
+    to_reverse = min(target_reverse, reversible)
+    if to_reverse > 0:
+        # Subtract from balance, never below zero
+        res = await db.users.find_one_and_update(
+            {"user_id": order["user_id"], "credits_balance": {"$gte": to_reverse}},
+            {"$inc": {"credits_balance": -to_reverse}},
+            return_document=True,
+            projection={"_id": 0, "credits_balance": 1},
+        )
+        if not res:
+            # Race — balance moved below threshold between read and write
+            await _record_admin_alert(
+                kind="refund_balance_race",
+                severity=3,
+                order_id=order["order_id"],
+                user_id=order["user_id"],
+                summary=f"Refund reversal of {to_reverse} credits aborted to avoid negative balance.",
+                payload=full_payload,
+            )
+            return "manual_review_required"
+        new_balance = res.get("credits_balance", 0)
+        await db.credit_events.insert_one({
+            "event_id": uuid.uuid4().hex,
+            "user_id": order["user_id"],
+            "kind": "refund_reversal",
+            "delta": -to_reverse,
+            "balance_before": new_balance + to_reverse,
+            "balance_after": new_balance,
+            "surface": f"refund:{refund_id}",
+            "request_id": refund_id,
+            "created_at": now_iso(),
+        })
+
+    return "partially_refunded" if is_partial else "refunded"
+
+
+async def _handle_chargeback_event(order: dict, *, event_type: str, full_payload: dict) -> str:
+    """Freeze and alert. Never auto-reverse credits — operators must review."""
+    await db.payment_orders.update_one(
+        {"order_id": order["order_id"]},
+        {"$set": {"dispute_event": event_type, "disputed_at": now_iso(), "updated_at": now_iso()}},
+    )
+    await _record_admin_alert(
+        kind="chargeback",
+        severity=5,
+        order_id=order["order_id"],
+        user_id=order["user_id"],
+        summary=f"Chargeback / dispute event: {event_type}. Plan/credits frozen pending review.",
+        payload=full_payload,
+    )
+    await db.users.update_one(
+        {"user_id": order["user_id"]},
+        {"$set": {"chargeback_frozen": True, "chargeback_frozen_at": now_iso()}},
+    )
+    return "manual_review_required"
 
 
 @router.post("/webhook/cashfree")
@@ -336,11 +562,28 @@ async def cashfree_webhook(request: Request, response: Response):
     except Exception:
         raise HTTPException(400, "Invalid JSON")
 
-    event_type = payload.get("type") or payload.get("event") or "unknown"
+    event_type = (payload.get("type") or payload.get("event") or "unknown").upper()
     data = payload.get("data") or {}
     order_data = data.get("order") or {}
     payment_data = data.get("payment") or {}
-    order_id = order_data.get("order_id") or payment_data.get("order_id") or data.get("order_id")
+    refund_data = data.get("refund") or {}
+    order_id = order_data.get("order_id") or payment_data.get("order_id") or refund_data.get("order_id") or data.get("order_id")
+    # Idempotency key: Cashfree event_id when present, fallback to signature
+    cf_event_id = (
+        payload.get("event_id")
+        or payment_data.get("cf_payment_id")
+        or refund_data.get("cf_refund_id")
+        or signature
+    )
+
+    # Idempotency guard — unique index on dedup_key in webhook_dedup will
+    # reject duplicates. We insert FIRST; if it fails, it's a duplicate.
+    dedup_key = f"{event_type}:{cf_event_id}:{order_id}"
+    try:
+        await db.webhook_dedup.insert_one({"dedup_key": dedup_key, "created_at": now_iso(), "event_type": event_type, "order_id": order_id})
+        is_duplicate = False
+    except Exception:
+        is_duplicate = True
 
     log_doc = {
         "event_id": uuid.uuid4().hex,
@@ -349,10 +592,26 @@ async def cashfree_webhook(request: Request, response: Response):
         "event_type": event_type,
         "order_id": order_id,
         "version": version,
+        "dedup_key": dedup_key,
+        "is_duplicate": is_duplicate,
     }
     await db.webhook_logs.insert_one(dict(log_doc))
 
+    if is_duplicate:
+        await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "duplicate_webhook_no_op"}})
+        return {"ok": True, "duplicate": True}
+
     if not order_id:
+        # Unknown event without order context — log and 200, no mutation.
+        await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "unknown_event", "body_preview": raw_body[:300].decode("utf-8", errors="replace")}})
+        await _record_admin_alert(
+            kind="unknown_event_no_order",
+            severity=2,
+            order_id=None,
+            user_id=None,
+            summary=f"Webhook arrived without an order_id. event_type={event_type}",
+            payload=payload,
+        )
         return {"ok": True, "no_order_id": True}
 
     order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
@@ -360,41 +619,68 @@ async def cashfree_webhook(request: Request, response: Response):
         await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "order_not_found"}})
         return {"ok": True, "order_not_found": True}
 
-    # Amount + currency tampering guard
-    cf_amount = float(order_data.get("order_amount") or payment_data.get("payment_amount") or 0)
-    cf_currency = (order_data.get("order_currency") or payment_data.get("payment_currency") or "").upper()
-    stored_charge_amount = float(order.get("charge_amount") or order.get("amount_inr") or 0)
-    stored_charge_currency = (order.get("charge_currency") or "INR").upper()
-    if cf_amount and abs(cf_amount - stored_charge_amount) > 0.01:
-        await _log_fraud_signal(order["user_id"], order["email"], None, None, "webhook_amount_mismatch", severity=5)
-        await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "amount_mismatch"}})
-        raise HTTPException(400, "Amount mismatch")
-    if cf_currency and cf_currency != stored_charge_currency:
-        await _log_fraud_signal(order["user_id"], order["email"], None, None, "webhook_currency_mismatch", severity=5)
-        await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "currency_mismatch"}})
-        raise HTTPException(400, "Currency mismatch")
+    # Amount + currency tampering guard — only check on payment events (refund
+    # has its own currency-match logic and a different amount semantics).
+    is_refund_event = "REFUND" in event_type
+    if not is_refund_event:
+        cf_amount = float(order_data.get("order_amount") or payment_data.get("payment_amount") or 0)
+        cf_currency = (order_data.get("order_currency") or payment_data.get("payment_currency") or "").upper()
+        stored_charge_amount = float(order.get("charge_amount") or order.get("amount_inr") or 0)
+        stored_charge_currency = (order.get("charge_currency") or "INR").upper()
+        if cf_amount and abs(cf_amount - stored_charge_amount) > 0.01:
+            await _log_fraud_signal(order["user_id"], order["email"], None, None, "webhook_amount_mismatch", severity=5)
+            await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "amount_mismatch"}})
+            raise HTTPException(400, "Amount mismatch")
+        if cf_currency and cf_currency != stored_charge_currency:
+            await _log_fraud_signal(order["user_id"], order["email"], None, None, "webhook_currency_mismatch", severity=5)
+            await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": "currency_mismatch"}})
+            raise HTTPException(400, "Currency mismatch")
 
     await db.payment_orders.update_one(
         {"order_id": order_id},
         {"$inc": {"webhook_count": 1}, "$set": {"last_webhook_at": now_iso(), "last_webhook_event": event_type}},
     )
 
-    cf_status = (order_data.get("order_status") or payment_data.get("payment_status") or "").upper()
-    is_paid_event = (
-        event_type in ("PAYMENT_SUCCESS_WEBHOOK",)
-        or cf_status in ("PAID", "SUCCESS")
-    )
-    is_failed_event = (
-        event_type in ("PAYMENT_FAILED_WEBHOOK", "PAYMENT_USER_DROPPED_WEBHOOK")
-        or cf_status in ("FAILED", "USER_DROPPED")
-    )
+    cf_order_status = (order_data.get("order_status") or "").upper()
+    cf_payment_status = (payment_data.get("payment_status") or "").upper()
 
-    if is_paid_event:
-        await _apply_paid_credits(order)
-    elif is_failed_event and order["status"] in ("created", "active"):
-        await db.payment_orders.update_one(
-            {"order_id": order_id, "credited_at": None},
-            {"$set": {"status": "failed", "updated_at": now_iso(), "failure_reason": cf_status or event_type}},
+    # ---- Dispatch by event_type ----
+    verdict = "accepted"
+    try:
+        if event_type == "PAYMENT_SUCCESS_WEBHOOK" or cf_order_status in ("PAID", "SUCCESS"):
+            verdict = await _handle_paid_event(order)
+        elif event_type == "PAYMENT_FAILED_WEBHOOK" or cf_payment_status == "FAILED":
+            verdict = await _handle_failed_event(order, event_type=event_type, status_label=cf_payment_status, full_payload=payload)
+        elif event_type == "PAYMENT_USER_DROPPED_WEBHOOK" or cf_payment_status == "USER_DROPPED" or cf_order_status == "USER_DROPPED":
+            verdict = await _handle_user_dropped(order, event_type=event_type, full_payload=payload)
+        elif "REFUND" in event_type:
+            verdict = await _handle_refund_event(order, event_type=event_type, full_payload=payload)
+        elif "CHARGEBACK" in event_type or "DISPUTE" in event_type:
+            verdict = await _handle_chargeback_event(order, event_type=event_type, full_payload=payload)
+        else:
+            # Unknown event — log + alert, no mutation
+            await _record_admin_alert(
+                kind="unknown_event",
+                severity=2,
+                order_id=order_id,
+                user_id=order.get("user_id"),
+                summary=f"Unrecognized event_type={event_type}",
+                payload=payload,
+            )
+            verdict = "unknown_event"
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("webhook handler failed for event=%s order=%s", event_type, order_id)
+        await _record_admin_alert(
+            kind="handler_exception",
+            severity=4,
+            order_id=order_id,
+            user_id=order.get("user_id"),
+            summary=f"Handler raised: {type(e).__name__}: {str(e)[:200]}",
+            payload=payload,
         )
+        verdict = "manual_review_required"
 
-    return {"ok": True}
+    await db.webhook_logs.update_one({"event_id": log_doc["event_id"]}, {"$set": {"result": verdict}})
+    return {"ok": True, "verdict": verdict}

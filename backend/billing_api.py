@@ -106,6 +106,52 @@ async def admin_pricing_catalog(_admin: dict = Depends(_require_admin)):
     }
 
 
+@admin_router.get("/alerts")
+async def admin_alerts(_admin: dict = Depends(_require_admin), resolved: Optional[bool] = None, kind: Optional[str] = None, limit: int = Query(default=100, ge=1, le=500)):
+    query: dict = {}
+    if resolved is not None:
+        query["resolved"] = resolved
+    if kind:
+        query["kind"] = kind
+    rows = await db.admin_alerts.find(query, {"_id": 0}).sort([("severity", -1), ("created_at", -1)]).limit(limit).to_list(limit)
+    open_count = await db.admin_alerts.count_documents({"resolved": False})
+    return {"alerts": rows, "open_count": open_count}
+
+
+@admin_router.post("/alerts/{alert_id}/resolve")
+async def admin_resolve_alert(alert_id: str, payload: dict, _admin: dict = Depends(_require_admin)):
+    note = (payload or {}).get("note") or ""
+    res = await db.admin_alerts.update_one(
+        {"alert_id": alert_id, "resolved": False},
+        {"$set": {"resolved": True, "resolved_at": now_iso(), "resolved_by": _admin.get("email"), "resolved_note": note}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Alert not found or already resolved")
+    return {"ok": True}
+
+
+@admin_router.get("/payment/{order_id}")
+async def admin_payment_detail(order_id: str, _admin: dict = Depends(_require_admin)):
+    """Comprehensive forensic view of a single order: order doc, all webhook
+    arrivals, all credit events tied to the order, all refunds, all alerts."""
+    order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Order not found")
+    webhook_arrivals = await db.webhook_logs.find({"order_id": order_id}, {"_id": 0}).sort("received_at", -1).limit(100).to_list(100)
+    credit_events = await db.credit_events.find({"request_id": order_id}, {"_id": 0}).sort("created_at", -1).limit(100).to_list(100)
+    refunds = await db.payment_refunds.find({"order_id": order_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    alerts = await db.admin_alerts.find({"order_id": order_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    audit = await db.payment_audit_log.find({"order_id": order_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {
+        "order": order,
+        "webhook_arrivals": webhook_arrivals,
+        "credit_events": credit_events,
+        "refunds": refunds,
+        "alerts": alerts,
+        "audit_log": audit,
+    }
+
+
 @admin_router.post("/test-webhook")
 async def admin_test_webhook(payload: dict, request: Request, _admin: dict = Depends(_require_admin)):
     """Admin-only: simulate a signed Cashfree webhook arrival against our own
@@ -134,18 +180,35 @@ async def admin_test_webhook(payload: dict, request: Request, _admin: dict = Dep
     if tamper == "currency":
         currency = "USD" if currency != "USD" else "INR"
 
-    body = _json.dumps({
-        "type": event_type,
-        "data": {
-            "order": {
-                "order_id": order_id,
-                "order_status": "PAID" if event_type == "PAYMENT_SUCCESS_WEBHOOK" else "FAILED",
-                "order_amount": amount,
-                "order_currency": currency,
-            },
-            "payment": {"payment_status": "SUCCESS" if event_type == "PAYMENT_SUCCESS_WEBHOOK" else "FAILED"}
+    body_dict: dict = {"type": event_type, "data": {}}
+    if "REFUND" in event_type:
+        body_dict["data"]["refund"] = {
+            "refund_id": payload.get("refund_id") or f"refund_test_{int(_time.time())}",
+            "order_id": order_id,
+            "refund_amount": float(payload.get("refund_amount") or amount),
+            "refund_currency": currency,
+            "refund_status": payload.get("refund_status") or "SUCCESS",
+            "refund_note": payload.get("refund_note") or "Admin test refund",
         }
-    }).encode()
+        body_dict["data"]["order"] = {"order_id": order_id}
+    elif "CHARGEBACK" in event_type or "DISPUTE" in event_type:
+        body_dict["data"]["order"] = {"order_id": order_id}
+        body_dict["data"]["dispute"] = {"reason": "Admin test chargeback"}
+    elif event_type == "UNKNOWN_FAKE_EVENT":
+        body_dict["data"]["order"] = {"order_id": order_id}
+    else:
+        body_dict["data"]["order"] = {
+            "order_id": order_id,
+            "order_status": "PAID" if event_type == "PAYMENT_SUCCESS_WEBHOOK" else ("FAILED" if event_type == "PAYMENT_FAILED_WEBHOOK" else "USER_DROPPED"),
+            "order_amount": amount,
+            "order_currency": currency,
+        }
+        body_dict["data"]["payment"] = {
+            "payment_status": "SUCCESS" if event_type == "PAYMENT_SUCCESS_WEBHOOK" else ("FAILED" if event_type == "PAYMENT_FAILED_WEBHOOK" else "USER_DROPPED"),
+            "payment_amount": amount,
+            "payment_currency": currency,
+        }
+    body = _json.dumps(body_dict).encode()
 
     secret = _os.environ.get("CASHFREE_SECRET_KEY", "").encode()
     if not secret:

@@ -25,25 +25,44 @@ const TAMPERS = [
   { value: "timestamp", label: "Stale timestamp (>5min) → expect 400 replay" },
 ];
 
+const EVENT_TYPES = [
+  { value: "PAYMENT_SUCCESS_WEBHOOK", label: "PAYMENT_SUCCESS" },
+  { value: "PAYMENT_FAILED_WEBHOOK", label: "PAYMENT_FAILED" },
+  { value: "PAYMENT_USER_DROPPED_WEBHOOK", label: "PAYMENT_USER_DROPPED" },
+  { value: "REFUND_STATUS_WEBHOOK", label: "REFUND (SUCCESS)" },
+  { value: "CHARGEBACK_WEBHOOK", label: "CHARGEBACK / DISPUTE" },
+  { value: "UNKNOWN_FAKE_EVENT", label: "Unknown event (logging only)" },
+];
+
 const RESULT_STYLE = {
   accepted: "border-emerald/40 bg-emerald-500/10 text-emerald-300",
+  failed: "border-rose/40 bg-rose-500/10 text-rose-300",
+  user_dropped: "border-amber/40 bg-amber-500/10 text-amber",
+  refunded: "border-violet/40 bg-violet-500/10 text-violet-soft",
+  partially_refunded: "border-violet/40 bg-violet-500/10 text-violet-soft",
+  refund_failed: "border-rose/40 bg-rose-500/10 text-rose-300",
   rejected_signature: "border-rose/40 bg-rose-500/10 text-rose-300",
   rejected_replay: "border-rose/40 bg-rose-500/10 text-rose-300",
   amount_mismatch: "border-rose/40 bg-rose-500/10 text-rose-300",
   currency_mismatch: "border-rose/40 bg-rose-500/10 text-rose-300",
   order_not_found: "border-amber/40 bg-amber-500/10 text-amber",
   duplicate_webhook_no_op: "border-amber/40 bg-amber-500/10 text-amber",
+  unknown_event: "border-amber/40 bg-amber-500/10 text-amber",
+  manual_review_required: "border-rose/40 bg-rose-500/10 text-rose-300",
 };
 
 export default function AdminWebhookLogs() {
   const { user, loading: authLoading } = useAuth();
   const [logs, setLogs] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [openAlertsCount, setOpenAlertsCount] = useState(0);
   const [orders, setOrders] = useState([]);
   const [resultFilter, setResultFilter] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState("");
   const [tamper, setTamper] = useState("");
+  const [eventType, setEventType] = useState("PAYMENT_SUCCESS_WEBHOOK");
   const [lastTest, setLastTest] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -54,13 +73,16 @@ export default function AdminWebhookLogs() {
       setLoading(true);
       try {
         const logsUrl = `/admin/billing/webhook-logs?limit=100${resultFilter ? `&result=${encodeURIComponent(resultFilter)}` : ""}`;
-        const [logsR, ordersR] = await Promise.all([
+        const [logsR, ordersR, alertsR] = await Promise.all([
           api.get(logsUrl),
           api.get("/admin/billing/payments?limit=20"),
+          api.get("/admin/billing/alerts?resolved=false&limit=20"),
         ]);
         if (cancelled) return;
         setLogs(logsR.data?.logs || []);
         setOrders(ordersR.data?.payments || []);
+        setAlerts(alertsR.data?.alerts || []);
+        setOpenAlertsCount(alertsR.data?.open_count || 0);
         if (!selectedOrder && (ordersR.data?.payments || []).length) {
           setSelectedOrder(ordersR.data.payments[0].order_id);
         }
@@ -88,7 +110,7 @@ export default function AdminWebhookLogs() {
     try {
       const { data } = await api.post("/admin/billing/test-webhook", {
         order_id: selectedOrder,
-        event_type: "PAYMENT_SUCCESS_WEBHOOK",
+        event_type: eventType,
         tamper: tamper || undefined,
       });
       setLastTest(data);
@@ -126,7 +148,7 @@ export default function AdminWebhookLogs() {
               <p className="text-xs text-muted mt-1">Fires a properly-signed (or intentionally tampered) payload against the live endpoint. Same code path as a real Cashfree arrival.</p>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
               <span className="text-[11px] font-mono uppercase tracking-widest text-muted">Order</span>
               <select
@@ -141,6 +163,17 @@ export default function AdminWebhookLogs() {
                     {o.order_id.slice(-20)} · {o.charge_currency || "INR"} {o.charge_amount || o.amount_inr} · {o.status} · {o.email}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-mono uppercase tracking-widest text-muted">Event type</span>
+              <select
+                className="brutal-input mt-1 w-full"
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value)}
+                data-testid="webhook-test-event-select"
+              >
+                {EVENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </label>
             <label className="block">
@@ -173,6 +206,48 @@ export default function AdminWebhookLogs() {
           )}
         </section>
 
+        <section className="space-y-3" data-testid="admin-alerts-section">
+          <div className="flex items-end justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="font-display text-lg font-bold">Open alerts <span className="text-amber">({openAlertsCount})</span></h2>
+              <p className="text-xs text-muted mt-1">Unresolved manual-review items raised by webhook handlers, refund logic, fraud signals.</p>
+            </div>
+          </div>
+          {alerts.length === 0 ? (
+            <div className="brutal-card p-4 text-xs text-muted" data-testid="admin-alerts-empty">No open alerts. Healthy.</div>
+          ) : (
+            <ul className="space-y-2" data-testid="admin-alerts-list">
+              {alerts.map((a) => (
+                <li key={a.alert_id} className="brutal-card p-3 border-rose/30 bg-rose-500/5" data-testid={`admin-alert-${a.alert_id}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap text-xs font-mono">
+                    <div className="flex items-center gap-2">
+                      <span className="uppercase tracking-widest text-rose-300">{a.kind}</span>
+                      <span className="opacity-60">sev {a.severity}</span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await api.post(`/admin/billing/alerts/${a.alert_id}/resolve`, { note: "Reviewed" });
+                          setRefreshKey((k) => k + 1);
+                          toast.success("Alert resolved.");
+                        } catch {
+                          toast.error("Could not resolve.");
+                        }
+                      }}
+                      className="btn-ghost text-[10px]"
+                      data-testid={`admin-alert-resolve-${a.alert_id}`}
+                    >
+                      Resolve
+                    </button>
+                  </div>
+                  <div className="text-sm mt-1">{a.summary}</div>
+                  {a.order_id && <div className="text-[11px] font-mono mt-1 opacity-70">order: {a.order_id}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         <section className="space-y-3" data-testid="webhook-logs-section">
           <div className="flex items-end justify-between gap-3 flex-wrap">
             <div>
@@ -188,11 +263,19 @@ export default function AdminWebhookLogs() {
               >
                 <option value="">All results</option>
                 <option value="accepted">Accepted</option>
+                <option value="failed">Failed</option>
+                <option value="user_dropped">User dropped</option>
+                <option value="refunded">Refunded</option>
+                <option value="partially_refunded">Partially refunded</option>
+                <option value="refund_failed">Refund failed</option>
+                <option value="manual_review_required">Manual review required</option>
                 <option value="rejected_signature">Rejected · signature</option>
                 <option value="rejected_replay">Rejected · replay</option>
                 <option value="amount_mismatch">Amount mismatch</option>
                 <option value="currency_mismatch">Currency mismatch</option>
                 <option value="order_not_found">Order not found</option>
+                <option value="duplicate_webhook_no_op">Duplicate (no-op)</option>
+                <option value="unknown_event">Unknown event</option>
               </select>
               <button onClick={() => setRefreshKey((k) => k + 1)} className="btn-ghost text-xs" data-testid="webhook-logs-refresh">Refresh</button>
             </div>
