@@ -1,8 +1,8 @@
 export default function ChatBubble({ sender, text, name, onShare, shareWorthy }) {
   const isClone = sender === "clone";
   return (
-    <div className={`flex ${isClone ? "justify-start" : "justify-end"} animate-fade-up group`} data-testid={`chat-bubble-${sender}`}>
-      <div className="flex flex-col gap-1 max-w-[88%]">
+    <div className={`flex ${isClone ? "justify-start" : "justify-end"} animate-fade-up group w-full`} data-testid={`chat-bubble-${sender}`}>
+      <div className={`flex flex-col gap-1 ${isClone ? "max-w-[88%] items-start" : "max-w-[80%] items-end"}`}>
         {name && (
           <span className={`text-[10px] font-display font-bold uppercase tracking-wider text-muted ${isClone ? "" : "text-right"}`}>
             {name}

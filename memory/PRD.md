@@ -22,6 +22,13 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Chat Bubble Mobile Wrap Fix — P0 Bug Fix)** — Production iPhone Safari.
+  - **Bug**: On mobile Safari, short messages like "Hello" were wrapping character-by-character vertically ("He / llo"). Root cause: `overflow-wrap: anywhere` + `word-break: break-word` in `index.css:74` lets Safari's flexbox shrink the bubble to *broken-content min-width* rather than *word min-width*. Reported by user with screenshot from `aiclonechats.com`.
+  - **Fix** (`/app/frontend/src/index.css`): Replaced `overflow-wrap: anywhere; word-break: break-word;` with `overflow-wrap: break-word; word-break: normal; white-space: pre-wrap; hyphens: none;`. `break-word` (unlike `anywhere`) only allows breaking when a word truly can't fit on its own line, and never affects min-content size.
+  - **Sizing**: Visitor bubble wrapper `max-w-[80%]`, clone wrapper `max-w-[88%]`, bubble itself `max-width: 100% / min-width: 2.5rem / width: fit-content / line-height: 1.45`. Tightened padding from `0.78rem 1.1rem` to `0.7rem 1rem` for visual consistency. ChatBubble.jsx column now uses `items-end` (visitor) / `items-start` (clone).
+  - **Verified**: Live preview — `Hi` bubble = 49×47.5px single line; long URL `https://www.example.com/very/long/path/here` wraps at slash boundaries (not per-char); long word `supercalifragilisticexpialidocious` stays on one line if it fits; no horizontal overflow (`scrollWidth === clientWidth`).
+  - **Note**: User reported this on the production environment (`aiclonechats.com`). Fix is applied to preview — user needs to redeploy to push to production.
+
 - **2026-05-11 (PublicClone Auth-Gate Removal — P0 Bug Fix)** — Public sharing restored.
   - **`PublicClone.jsx`**: Removed the page-level `useEffect` that auto-redirected unauthenticated visitors to `/login`. Logged-out users can now load `/<slug>` and see the clone header, marquee disclaimer, stats, and chat empty-state. Replaced the chat input form with a `[data-testid=signin-to-chat-cta]` card containing `Sign in →` and `Sign up` buttons when `!user`. The `send()` handler still defends with an explicit `!user` guard → toast + `navigate('/login?redirect=/<slug>')`. Authenticated users see the visitor-name form and chat form exactly as before. Backend chat endpoint behavior unchanged (auth + atomic credit deduction).
   - **`App.js`**: Added `/signup` route alias that mounts `<Register />` (the public CTA copy says "Sign up", which previously fell through to `/:slug` and rendered the 404 clone-not-found card).

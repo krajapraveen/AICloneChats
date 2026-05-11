@@ -71,7 +71,16 @@ h1, h2, h3, h4, h5, h6 {
 }
 /* Don't break short labels & nav links awkwardly */
 nav a, .tag, button { word-break: normal; overflow-wrap: normal; }
-.chat-bubble-visitor, .chat-bubble-clone { overflow-wrap: anywhere; word-break: break-word; }
+/* Chat bubbles: break long URLs/words ONLY when they cannot fit on their own line.
+   Using `overflow-wrap: break-word` (NOT `anywhere`) is critical — `anywhere`
+   makes the bubble shrink to min-content of *broken* characters in Safari flex
+   containers, causing short words like "Hello" to render vertically (He / llo). */
+.chat-bubble-visitor, .chat-bubble-clone {
+  overflow-wrap: break-word;
+  word-break: normal;
+  white-space: pre-wrap;
+  hyphens: none;
+}
 
 ::selection { background: #F59E0B; color: #070A12; }
 
@@ -269,9 +278,12 @@ nav a, .tag, button { word-break: normal; overflow-wrap: normal; }
   color: #F8FAFC;
   border: 1px solid rgba(124,58,237,.40);
   border-radius: 1.25rem 1.25rem .25rem 1.25rem;
-  padding: 0.78rem 1.1rem;
-  max-width: 78%;
+  padding: 0.7rem 1rem;
+  max-width: 100%;
+  min-width: 2.5rem;
+  width: fit-content;
   font-weight: 500;
+  line-height: 1.45;
   backdrop-filter: blur(6px);
   box-shadow: 0 6px 24px -8px rgba(124,58,237,.35);
 }
@@ -280,9 +292,12 @@ nav a, .tag, button { word-break: normal; overflow-wrap: normal; }
   color: #F8FAFC;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 1.25rem 1.25rem 1.25rem .25rem;
-  padding: 0.78rem 1.1rem;
-  max-width: 78%;
+  padding: 0.7rem 1rem;
+  max-width: 100%;
+  min-width: 2.5rem;
+  width: fit-content;
   font-weight: 500;
+  line-height: 1.45;
   backdrop-filter: blur(8px);
   box-shadow: 0 6px 24px -10px rgba(0,0,0,.5);
 }
