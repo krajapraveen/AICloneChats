@@ -56,16 +56,12 @@ PLANS = [
         "plan_id": "free",
         "name": "Free",
         "price_inr": 0,
-        "monthly_credits": 50,
-        "daily_credit_cap": 30,  # free users: max 30 deductions/day regardless of balance
-        "description": "50 credits on signup. Daily 30-credit cap. Basic chat surfaces.",
+        "monthly_credits": 0,  # No free credits. Email verification still required to use anything paid-for.
+        "daily_credit_cap": None,
+        "description": "Verify your email to start. Subscribe to use any chat surface.",
         "features": [
-            "AI Clone Chat",
-            "Mood-Based Chat",
-            "Smart Reply (limited)",
-            "Anonymous Reality",
-            "Translation Chat",
-            "Conversation Memory",
+            "Email verification",
+            "Subscribe to begin",
         ],
         "tier_rank": 0,
         "is_active": True,
@@ -76,12 +72,14 @@ PLANS = [
         "price_inr": 499,
         "monthly_credits": 500,
         "daily_credit_cap": None,
-        "description": "500 credits / month. Access to all basic AI chat categories.",
+        "description": "500 credits / month. AI Clone, Mood, Translation, basic Smart Reply, limited Memory.",
         "features": [
-            "Everything in Free",
             "500 credits / month",
-            "No daily caps",
-            "Smart Reply unlimited modes",
+            "AI Clone Chat",
+            "Mood-Based Chat",
+            "Translation Chat",
+            "Basic Smart Reply",
+            "Limited Conversation Memory",
         ],
         "tier_rank": 1,
         "is_active": True,
@@ -90,15 +88,18 @@ PLANS = [
         "plan_id": "pro",
         "name": "Pro Chat",
         "price_inr": 1499,
-        "monthly_credits": 2000,
+        "monthly_credits": 2500,
         "daily_credit_cap": None,
-        "description": "2,000 credits / month. Priority responses. All standard chats unlocked.",
+        "description": "2,500 credits / month. Full Smart Reply, Voice, Debates, Delayed Emotional, Anonymous.",
         "features": [
-            "Everything in Starter",
-            "2,000 credits / month",
+            "2,500 credits / month",
+            "Full Smart Reply",
+            "Voice → Message",
+            "AI Debate Rooms",
+            "Delayed-Delivery Emotional Chat",
+            "Expanded Conversation Memory",
+            "Anonymous Reality",
             "Priority response queue",
-            "Voice → Message (full access)",
-            "AI Debate Rooms (unlocked)",
         ],
         "tier_rank": 2,
         "is_active": True,
@@ -107,15 +108,19 @@ PLANS = [
         "plan_id": "premium",
         "name": "Premium Emotional Chat",
         "price_inr": 3999,
-        "monthly_credits": 7500,
+        "monthly_credits": 8000,
         "daily_credit_cap": None,
-        "description": "7,500 credits / month. Access to premium emotional & productivity surfaces.",
+        "description": "8,000 credits / month. Advanced emotional AI, long memory, premium voice, early-access features.",
         "features": [
-            "Everything in Pro",
-            "7,500 credits / month",
-            "Delayed Emotional Chat (full)",
-            "Conversation Memory extraction",
-            "Higher daily usage ceilings",
+            "8,000 credits / month",
+            "Advanced emotional AI",
+            "Long memory threads",
+            "Mood adaptation",
+            "Premium voice styles",
+            "Full Anonymous Reality",
+            "Advanced Delayed Emotional Chat",
+            "Early-access experimental features",
+            "Faster queue priority",
         ],
         "tier_rank": 3,
         "is_active": True,
@@ -126,13 +131,14 @@ PLANS = [
         "price_inr": 9999,
         "monthly_credits": 25000,
         "daily_credit_cap": None,
-        "description": "25,000 credits / month. Heaviest users. Video Avatar Chat unlocked.",
+        "description": "25,000 credits / month. Video Chat unlocked. Highest limits + premium rendering queue.",
         "features": [
-            "Everything in Premium",
             "25,000 credits / month",
-            "Video Avatar Chat (lipsync)",
+            "Video Chat access",
             "Highest concurrency",
-            "Priority support",
+            "Highest memory retention",
+            "Premium rendering queue",
+            "Future premium tools auto-unlocked",
         ],
         "tier_rank": 4,
         "is_active": True,
@@ -155,109 +161,40 @@ async def ensure_plans_seeded() -> None:
 
 
 # ----- Credit costs per surface -----
-# Locked: text=1, smart-reply=2, voice=3, video-avatar=5, translation=1, delayed-create=2
+# Locked per founder-directed pricing reset (2026-05-11):
+#   cheap/high-freq: 1 (clone, mood, translation)
+#   medium: 2-3 (smart_reply, debate, memory, voice)
+#   expensive: 3-4 (anonymous, delayed_create)
+#   highest: 5 (video_avatar) — dynamic 5-8 future
 CREDIT_COST = {
     "clone_chat": 1,
     "mood_chat": 1,
-    "anonymous_chat": 1,
     "translation_chat": 1,
-    "debate_chat": 1,
     "smart_reply": 2,
+    "debate_chat": 2,
+    "conversation_memory": 2,
     "voice_message": 3,
+    "anonymous_chat": 3,
+    "delayed_create": 4,
     "video_avatar": 5,
-    "delayed_create": 2,  # creation only — reveal is always free
-    "conversation_memory": 1,
 }
 
 
-# ----- Credit grant: 50 credits, once per user, only after email verification -----
+# ----- Credit grant: signup grants are DISABLED (founder directive 2026-05-11) -----
+# New users start at 0. They must subscribe to receive credits.
+# This function is kept callable for backward compatibility but now returns
+# {granted: false, reason: "signup_grants_disabled"} for every caller.
+SIGNUP_GRANTS_DISABLED = True
+
+
 async def grant_signup_credits_if_eligible(user_id: str, email: str, ip_address: Optional[str], device_id: Optional[str]) -> dict:
-    """Idempotent free-credit grant.
-
-    Eligibility:
-      - Caller MUST have already verified email (called by /verify-email/confirm on first success)
-      - No prior grant exists for this user_id (unique index)
-      - No prior grant for this normalized email (covers re-signup with same address)
-      - Fraud signal not in cooldown for this device or IP
-      - Admin email exempt — admins get nothing through this path; they have unlimited bypass
-
-    Returns: {granted: bool, reason: str, credits: int}
+    """Permanently disabled per founder directive 2026-05-11. New users start
+    at 0 credits and must subscribe. Admin is handled by the unlimited bypass.
     """
     email_norm = (email or "").lower().strip()
     if email_norm == ADMIN_UNLIMITED_EMAIL:
-        # Admin doesn't need free credits — unlimited via bypass
         return {"granted": False, "reason": "admin_unlimited", "credits": 0}
-
-    # Hard-block: existing grant on this email (covers same person re-registering)
-    existing_email_grant = await db.credit_grants.find_one({"email": email_norm}, {"_id": 0})
-    if existing_email_grant:
-        await _log_fraud_signal(user_id, email_norm, ip_address, device_id, "duplicate_email_grant_attempt", severity=2)
-        return {"granted": False, "reason": "email_already_granted", "credits": 0}
-
-    # Hard-block: existing grant on this user_id (idempotent retries)
-    existing_user_grant = await db.credit_grants.find_one({"user_id": user_id}, {"_id": 0})
-    if existing_user_grant:
-        return {"granted": False, "reason": "user_already_granted", "credits": 0}
-
-    # Heuristic: device fingerprint already used for a prior grant
-    if device_id:
-        device_prior = await db.credit_grants.find_one({"device_id": device_id}, {"_id": 0})
-        if device_prior:
-            await _log_fraud_signal(user_id, email_norm, ip_address, device_id, "duplicate_device_grant_attempt", severity=3)
-            return {"granted": False, "reason": "device_already_granted", "credits": 0}
-
-    # Heuristic: >5 signups from same IP in last 24h → suspicious
-    if ip_address:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        ip_count = await db.credit_grants.count_documents({"ip_address": ip_address, "created_at": {"$gte": since}})
-        if ip_count >= 5:
-            await _log_fraud_signal(user_id, email_norm, ip_address, device_id, "ip_signup_burst", severity=4)
-            return {"granted": False, "reason": "ip_burst_cooldown", "credits": 0}
-
-    # Cooldown check: this device or IP under active cooldown
-    if device_id or ip_address:
-        cooldown = await db.fraud_cooldowns.find_one({
-            "$or": [{"device_id": device_id}, {"ip_address": ip_address}],
-            "expires_at": {"$gt": now_iso()},
-        }, {"_id": 0})
-        if cooldown:
-            return {"granted": False, "reason": "fraud_cooldown_active", "credits": 0}
-
-    # All checks passed — issue the grant
-    free_credits = PLAN_INDEX["free"]["monthly_credits"]  # 50
-    grant_doc = {
-        "grant_id": uuid.uuid4().hex,
-        "user_id": user_id,
-        "email": email_norm,
-        "credits": free_credits,
-        "ip_address": ip_address,
-        "device_id": device_id,
-        "reason": "signup_email_verified",
-        "created_at": now_iso(),
-    }
-    try:
-        await db.credit_grants.insert_one(dict(grant_doc))
-    except Exception as e:
-        # Unique-index race — treat as already-granted
-        logger.warning("credit_grants insert race: %s", e)
-        return {"granted": False, "reason": "race_already_granted", "credits": 0}
-
-    # Apply credits to user
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {
-            "credits_balance": free_credits,
-            "credits_granted_at": now_iso(),
-            "plan_id": "free",
-            "plan_status": "active",
-            "plan_renewed_at": now_iso(),
-            "daily_credits_used": 0,
-            "daily_credits_reset_at": now_iso(),
-        }},
-    )
-
-    await _emit_credit_event(user_id, "grant", free_credits, 0, free_credits, surface="signup", request_id=grant_doc["grant_id"])
-    return {"granted": True, "reason": "ok", "credits": free_credits}
+    return {"granted": False, "reason": "signup_grants_disabled", "credits": 0}
 
 
 # ----- Deduction / refund -----
