@@ -206,12 +206,58 @@ export default function AdminLoginIntelligence() {
           </div>
         </div>
 
-        {/* Events table */}
-        <div className="glass-card overflow-hidden" data-testid="admin-events-table">
+        {/* Events list — mobile only (stacked cards) */}
+        <div className="md:hidden space-y-3" data-testid="admin-events-list-mobile">
+          {loading && (
+            <div className="glass-card p-6 text-center text-muted text-sm">Loading…</div>
+          )}
+          {!loading && events.length === 0 && (
+            <div className="glass-card p-6 text-center text-muted text-sm" data-testid="admin-events-empty-mobile">No events match your filters.</div>
+          )}
+          {!loading && events.map((e) => (
+            <div
+              key={e.event_id}
+              className="glass-card p-3 min-w-0 overflow-hidden"
+              data-testid={`admin-event-card-${e.event_id}`}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
+                <div className="font-mono text-[11px] text-muted whitespace-nowrap truncate min-w-0">{formatTime(e.created_at)}</div>
+                <span className={`tag ${EVENT_TONE[e.event_type] || ""} shrink-0`}>{EVENT_LABEL[e.event_type] || e.event_type}</span>
+              </div>
+              <div className="min-w-0">
+                <div
+                  className="text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap"
+                  title={e.email || ""}
+                  data-testid={`admin-event-card-email-${e.event_id}`}
+                >
+                  {e.email || "—"}
+                </div>
+                {e.name && (
+                  <div className="text-[11px] text-muted overflow-hidden text-ellipsis whitespace-nowrap" title={e.name}>
+                    {e.name}
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted min-w-0">
+                <span className="whitespace-nowrap">{METHOD_LABEL[e.login_method] || e.login_method}</span>
+                {e.ip_country && <span className="whitespace-nowrap">· {e.ip_country}</span>}
+                {e.device_type && <span className="whitespace-nowrap">· {DEVICE_ICON[e.device_type] || "·"} {e.device_type}</span>}
+              </div>
+              {e.failure_reason && (
+                <div className="mt-2 text-[11px] text-rose-soft break-words" data-testid={`admin-event-card-reason-${e.event_id}`}>
+                  {e.failure_reason}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Events table — desktop only */}
+        <div className="glass-card overflow-hidden hidden md:block" data-testid="admin-events-table">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-white/5">
-                <tr className="text-left text-xs font-mono uppercase tracking-widest text-muted">
+                <tr className="text-left text-xs font-mono uppercase tracking-widest text-muted whitespace-nowrap">
                   <th className="px-4 py-3">When</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Email</th>
@@ -238,15 +284,15 @@ export default function AdminLoginIntelligence() {
                     <td className="px-4 py-3">
                       <span className={`tag ${EVENT_TONE[e.event_type] || ""}`}>{EVENT_LABEL[e.event_type] || e.event_type}</span>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{e.email || "—"}</div>
-                      {e.name && <div className="text-xs text-muted">{e.name}</div>}
+                    <td className="px-4 py-3 max-w-[260px]">
+                      <div className="font-medium truncate" title={e.email || ""}>{e.email || "—"}</div>
+                      {e.name && <div className="text-xs text-muted truncate" title={e.name}>{e.name}</div>}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs hidden md:table-cell">{e.user_id || "—"}</td>
-                    <td className="px-4 py-3 text-xs">{METHOD_LABEL[e.login_method] || e.login_method}</td>
+                    <td className="px-4 py-3 text-xs whitespace-nowrap">{METHOD_LABEL[e.login_method] || e.login_method}</td>
                     <td className="px-4 py-3 hidden sm:table-cell">{e.ip_country || "—"}</td>
                     <td className="px-4 py-3 text-xs hidden lg:table-cell">{[e.ip_city, e.ip_region].filter(Boolean).join(", ") || "—"}</td>
-                    <td className="px-4 py-3 hidden md:table-cell">{DEVICE_ICON[e.device_type] || "·"} {e.device_type}</td>
+                    <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap">{DEVICE_ICON[e.device_type] || "·"} {e.device_type}</td>
                     <td className="px-4 py-3 hidden md:table-cell">{e.browser}</td>
                     <td className="px-4 py-3 hidden lg:table-cell">{e.os}</td>
                     <td className="px-4 py-3 text-xs text-rose-soft">{e.failure_reason || ""}</td>
