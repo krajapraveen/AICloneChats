@@ -109,6 +109,12 @@ const SECTIONS = [
         blurb: "Real-time log of every webhook arrival. Send signed (or tampered) test webhooks against the live endpoint.",
         testId: "admin-card-webhook-logs",
       },
+      {
+        to: "/admin/revenue",
+        name: "Revenue Mirror",
+        blurb: "Funnel · Revenue · Credit Economy · Emotional Gravity · Cohorts · Operational Health. Read-only. No interpretation.",
+        testId: "admin-card-revenue",
+      },
     ],
   },
 ];

@@ -77,6 +77,9 @@ app.include_router(email_verify.router)
 app.include_router(payments_cashfree.router)
 app.include_router(billing_api.public_router)
 app.include_router(billing_api.admin_router)
+import analytics_revenue  # noqa: E402
+app.include_router(analytics_revenue.router)
+app.include_router(analytics_revenue.public_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.

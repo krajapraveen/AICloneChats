@@ -1,0 +1,45 @@
+{
+  "summary": "Admin Revenue Mirror end-to-end testing. Backend 21/21 pytest pass (after fixing 1 real bug in cohorts CSV). Frontend /admin/revenue page loads as admin with all 6 sections (Funnel/Revenue/Credit/Gravity/Cohorts/Ops), header 'What the platform is doing', 6 step cards + 5 conversion pct cards + 3 topup cards in Funnel, CSV download triggered, window-selector refetch verified (30→90), non-admin shows 'Admin only' card. Paywall_events writing verified end-to-end (free user clone_chat → 402 → paywall_events doc inserted with code=subscription_required, surface=mood_chat). Funnel event ingestion verified (pricing_view accepted, evil_event rejected with 400).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/revenue/cohorts?format=csv", "issue": "Returned 500 because csv.DictWriter was initialized with only first row's keys, and later rows (by_plan section) contained a 'plan_id' field absent in fieldnames. FIXED by testing agent in analytics_revenue.py _csv_response — now computes union of keys and uses extrasaction='ignore'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/admin/revenue funnel section", "issues": ["Conversion pct 'pricing_view_to_first_paywall' displays 3400% from real DB state (1 pricing_view user, 34 paywall hits). Per spec this is intentional — no interpretation — but a reader may double-take. No fix recommended; spec says read-only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_revenue_mirror.py",
+    "/app/test_reports/pytest/revenue_mirror.xml"
+  ],
+  "action_items": [
+    "Review the cohorts CSV fix in analytics_revenue.py _csv_response (union of keys + extrasaction='ignore') — applied by testing agent, no functional change to JSON responses."
+  ],
+  "critical_code_review_comments": [
+    "analytics_revenue.py _csv_response originally assumed homogeneous row shapes (used list(rows[0].keys()) as fieldnames). When cohorts flat list mixes {metric,cohort_week,value} and {metric,plan_id,value} dicts, DictWriter throws on the heterogeneous row. Fix applied uses union-of-keys + extrasaction='ignore'.",
+    "analytics_revenue.py _require_admin correctly uses is_admin_unlimited_user OR role=='admin' — verified 403 for subscriber-tester across all 6 endpoints.",
+    "/api/funnel/event whitelists event_name to {'pricing_view'} only; any other name → 400. ✓ Verified.",
+    "credit_guard._log_paywall_event is fire-and-forget (swallows exceptions) so paywall enforcement is never blocked by instrumentation. ✓",
+    "Cohorts endpoint loops `await returned_on_day` per user × 3 day-marks — N+1 query pattern. Acceptable now (small user base) but will need a single aggregation pipeline once signups > ~10k.",
+    "AdminRevenue.jsx useEffect dependency array includes the entire `windows` object — every change triggers all 6 refetches (intentional but bandwidth-heavy). Could split into per-section effects, but matches spec: 'every window change is the user asking to recompute'.",
+    "downloadCsv uses fetch + blob.click() pattern — works but does not free the object URL. Minor memory hygiene.",
+    "Frontend window-select-* options for cohorts include [4,8,12,24,52] weeks correctly; default 12 verified.",
+    "page renders 'Admin only' card for unauthenticated visitor — verified."
+  ],
+  "updated_files": [
+    "/app/backend/analytics_revenue.py (_csv_response: union-of-keys fix)",
+    "/app/backend/tests/test_revenue_mirror.py (NEW — 21 tests across 5 classes)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% on the 6 P0 flows tested"},
+  "test_credentials": "admin: krajapraveen@gmail.com via Mongo session injection (token written to user_sessions with expires_at +7d); subscriber-tester@example.com / TestPass123! (Pro); sr-tester@example.com / TestPass123! (free, plan_status=pending_verification, 0 cr)",
+  "seed_data_creation": "Inserted multiple user_sessions docs for krajapraveen@gmail.com during testing. Inserted 1+ funnel_events docs (event_name=pricing_view) via the public endpoint. Inserted 1+ paywall_events docs (code=subscription_required, surface=mood_chat) via clone_chat→402 path.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 6 admin revenue endpoints + funnel ingest + paywall write are healthy. The single real bug (cohorts CSV 500) was patched in _csv_response. Frontend /admin/revenue tested with viewport 1920x1080. Note that /api/clones/companion/chat as free user returns 402 with surface=mood_chat (not clone_chat) because the companion route is wired to mood_chat surface. The funnel pct anomaly (3400%) is a real-data artifact of the dev DB; per spec, frontend MUST NOT smooth or annotate these numbers — leave as-is.",
+  "rca_of_the_issue": "Bug: GET /api/admin/revenue/cohorts?format=csv → 500. Cause: csv.DictWriter is initialized with fieldnames=list(rows[0].keys()); the cohorts flat-list contains heterogeneous dict shapes — rows derived from `cohort_rows` have keys {metric, cohort_week, value} while rows derived from `by_plan` have keys {metric, plan_id, value}. The first row in the list is a cohort_rows row, so 'plan_id' is missing from fieldnames and DictWriter raises ValueError. Repro: as admin, GET /api/admin/revenue/cohorts?weeks=12&format=csv. Fix: _csv_response now computes the union of all row keys and instantiates DictWriter with extrasaction='ignore' so future heterogeneous shapes also won't crash. All 6 CSV endpoints retested green."
+}

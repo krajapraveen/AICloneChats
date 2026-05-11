@@ -43,6 +43,8 @@ export default function Pricing() {
 
   useEffect(() => {
     let cancelled = false;
+    // One write per page visit — used by Admin → Revenue → Funnel.
+    api.post("/funnel/event", { event_name: "pricing_view", referrer: document.referrer || null }).catch(() => {});
     (async () => {
       try {
         const [{ data: plansData }, { data: cfg }, { data: cat }, { data: tu }] = await Promise.all([

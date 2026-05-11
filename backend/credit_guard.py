@@ -141,6 +141,7 @@ async def charge_credits_or_402(user: dict, *, surface: str, request_id: Optiona
     plan_active = plan_status == "active" and plan_id != "free"
 
     if not plan_active:
+        await _log_paywall_event(user, surface, "subscription_required")
         raise HTTPException(
             status_code=402,
             detail={
@@ -152,6 +153,7 @@ async def charge_credits_or_402(user: dict, *, surface: str, request_id: Optiona
         )
 
     if have_tier < needs_tier:
+        await _log_paywall_event(user, surface, "plan_upgrade_required")
         raise HTTPException(
             status_code=402,
             detail={
@@ -165,6 +167,7 @@ async def charge_credits_or_402(user: dict, *, surface: str, request_id: Optiona
 
     # Email verification gate — paid users still must verify their email
     if not user.get("email_verified"):
+        await _log_paywall_event(user, surface, "email_not_verified")
         raise HTTPException(
             status_code=402,
             detail={"code": "email_not_verified", "surface": surface, "message": "Verify your email to start using paid features."},
@@ -173,6 +176,7 @@ async def charge_credits_or_402(user: dict, *, surface: str, request_id: Optiona
     rid = request_id or f"{surface}_{uuid.uuid4().hex[:10]}"
     res = await deduct_credits(user, surface=surface, request_id=rid)
     if not res["ok"]:
+        await _log_paywall_event(user, surface, res["reason"])
         # Re-shape ledger refusal into a structured 402
         raise HTTPException(
             status_code=402,
@@ -188,6 +192,26 @@ async def charge_credits_or_402(user: dict, *, surface: str, request_id: Optiona
         )
 
     return CreditHandle(user=user, surface=surface, cost=cost, request_id=rid, admin=False)
+
+
+async def _log_paywall_event(user: dict, surface: str, code: str) -> None:
+    """One write per 402. Used to compute "first paid intent surface" and the
+    paywall→checkout funnel. Fire-and-forget; failures are swallowed so paywall
+    enforcement is never blocked by instrumentation.
+    """
+    try:
+        await db.paywall_events.insert_one({
+            "event_id": uuid.uuid4().hex,
+            "user_id": user.get("user_id"),
+            "email": user.get("email"),
+            "surface": surface,
+            "code": code,
+            "plan_id": user.get("plan_id"),
+            "plan_status": user.get("plan_status"),
+            "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
 
 
 def _plan_name_for_rank(rank: int) -> str:
