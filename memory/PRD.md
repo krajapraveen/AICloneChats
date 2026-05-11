@@ -22,6 +22,14 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Admin Revenue Mirror — read-only instrumentation)** — Six-section observation surface at `/admin/revenue` to make platform state legible in 30 seconds. No interpretation, no recommendations, no automated interventions. Per founder spec: instrumentation only.
+  - **New backend module:** `/app/backend/analytics_revenue.py` — 6 admin-only endpoints (funnel, revenue, credit-economy, emotional-gravity, cohorts, operational-health). Every endpoint supports `?format=csv` for export.
+  - **Minimal new writes:** `paywall_events` collection (one write per 402 from `credit_guard.py`) + `POST /api/funnel/event` for `pricing_view` (one write per pricing page visit). No other instrumentation overhead.
+  - **Emotional Gravity tracks:** first paid intent surface · first successful payment surface · repeat-return surface · longest-session surface (p90 messages per thread) · top-up correlation surface (most-used surface in 14d before topup).
+  - **Cohorts:** D1/D7/D30 return by acquisition-week (ISO year-week), by plan tier, by first paywall surface.
+  - **Operational Health:** payment_failure_pct, webhook_rejection_pct, refund/chargeback %, AI-failure refund rate by surface. Response-latency intentionally surfaced as null until request-layer instrumentation lands.
+  - **New frontend page:** `/app/frontend/src/pages/AdminRevenue.jsx` — six brutal-card sections, per-section window selector, per-section CSV export. Mobile-readable. Admin-only.
+  - **Tested:** 21/21 backend tests pass (iteration_15), 100% frontend P0 pass. Testing agent fixed one CSV heterogeneous-row bug.
 - **2026-05-11 (Credit Economics Hard Reset + Top-Up Packs + Full Paywall Enforcement)** — Free tier abolished. All non-admin users wiped to 0 credits via `/app/backend/migrations/reset_credits_2026_05_11.py`. Signup grants permanently disabled (`SIGNUP_GRANTS_DISABLED=True` in `credits.py`). Admin `krajapraveen@gmail.com` retains server-side unlimited bypass via `is_admin_unlimited_user`.
   - **Plans (locked):** Starter ₹499 / 500 cr · Pro ₹1,499 / 2,500 cr · Premium ₹3,999 / 8,000 cr · Ultimate ₹9,999 / 25,000 cr.
   - **Top-Up Packs (subscribers-only):** ₹299→300 / ₹999→1,200 / ₹2,999→4,000 / ₹7,999→12,000. Local currency pricing via `FIXED_PRICES` extended into `pricing.py`.
