@@ -1,0 +1,210 @@
+/**
+ * Pricing page — five plans, server-authored Cashfree checkout.
+ *
+ * Frontend NEVER passes amount, plan price, or credit count to the backend.
+ * It passes plan_id only. Backend reads PLANS server-side.
+ *
+ * Cashfree integration uses the official JS SDK in dropIn mode; after
+ * checkout completes (success or cancel) the user lands on /pay/return
+ * which polls /api/payments/order/:id for the AUTHORITATIVE status.
+ * URL-based "success" flags are ignored.
+ */
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import api from "../lib/api";
+import Navbar from "../components/Navbar";
+import { useAuth } from "../contexts/AuthContext";
+import { useCredits } from "../hooks/useCredits";
+import { load as loadCashfree } from "@cashfreepayments/cashfree-js";
+
+function planTone(tier) {
+  return [
+    { border: "border-white/10", accent: "text-muted", label: "FREE" },
+    { border: "border-amber/30", accent: "text-amber", label: "STARTER" },
+    { border: "border-violet/40", accent: "text-violet-soft", label: "PRO" },
+    { border: "border-emerald/40", accent: "text-emerald-300", label: "PREMIUM" },
+    { border: "border-rose/40", accent: "text-rose-300", label: "ULTIMATE" },
+  ][tier] || { border: "border-white/10", accent: "text-muted", label: "" };
+}
+
+export default function Pricing() {
+  const { user } = useAuth();
+  const credits = useCredits();
+  const navigate = useNavigate();
+
+  const [plans, setPlans] = useState([]);
+  const [costs, setCosts] = useState({});
+  const [busyPlan, setBusyPlan] = useState(null);
+  const [cashfreeMode, setCashfreeMode] = useState("test");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [{ data: plansData }, { data: cfg }] = await Promise.all([
+          api.get("/plans"),
+          api.get("/payments/config"),
+        ]);
+        if (cancelled) return;
+        setPlans(plansData.plans || []);
+        setCosts(plansData.credit_costs || {});
+        setCashfreeMode(cfg?.mode || "test");
+      } catch (e) {
+        toast.error("Could not load plans. Try refresh.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const checkout = async (planId) => {
+    if (!user) {
+      navigate("/login?redirect=/pricing");
+      return;
+    }
+    if (!credits.email_verified) {
+      toast.error("Verify your email first. We sent you a 6-digit code.");
+      navigate("/verify-email?redirect=/pricing");
+      return;
+    }
+    setBusyPlan(planId);
+    try {
+      // 1) Ask backend to author the order. Backend sets amount from PLAN_INDEX.
+      const { data: order } = await api.post("/payments/create-order", { plan_id: planId });
+      // 2) Hand the session_id to Cashfree Drop-In. SDK opens hosted checkout.
+      const cashfree = await loadCashfree({ mode: cashfreeMode });
+      await cashfree.checkout({
+        paymentSessionId: order.payment_session_id,
+        returnUrl: `${window.location.origin}/pay/return?order_id=${order.order_id}`,
+        redirectTarget: "_self",
+      });
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      if (typeof detail === "object" && detail?.code === "email_not_verified") {
+        toast.error("Please verify your email first.");
+        navigate("/verify-email?redirect=/pricing");
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Could not start checkout.");
+      }
+    } finally {
+      setBusyPlan(null);
+    }
+  };
+
+  return (
+    <div className="min-h-screen page-bg" data-testid="pricing-page">
+      <Navbar />
+      <div className="max-w-6xl mx-auto px-4 sm:px-8 py-10 space-y-10">
+        <header className="space-y-3 max-w-3xl">
+          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-amber">PRICING</div>
+          <h1 className="heading-display text-3xl sm:text-4xl">Pay for what you use. Nothing else.</h1>
+          <p className="text-sm text-muted">
+            Every chat costs credits. Costs are public, server-enforced, and never charged twice.
+            Free users get 50 credits after verifying their email. Refunds happen automatically when the AI fails.
+          </p>
+          {credits.email_verified && credits.admin_unlimited && (
+            <div className="brutal-card p-3 inline-flex items-center gap-2 bg-violet-500/10 border-violet/30" data-testid="pricing-admin-banner">
+              <span className="text-xs font-mono uppercase tracking-widest text-violet-soft">Admin · unlimited credits</span>
+            </div>
+          )}
+          {user && !credits.email_verified && !credits.admin_unlimited && (
+            <div className="brutal-card p-4 border-amber/40 bg-amber-500/10 flex items-center justify-between gap-3" data-testid="pricing-verify-banner">
+              <div>
+                <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Verify your email first</div>
+                <div className="text-sm">We'll send a 6-digit code to your inbox. Once verified, your 50 free credits drop in.</div>
+              </div>
+              <button onClick={() => navigate("/verify-email")} className="btn-brutal text-xs" data-testid="pricing-verify-cta">Verify email</button>
+            </div>
+          )}
+          {user && credits.email_verified && !credits.admin_unlimited && (
+            <div className="brutal-card p-4 flex items-center justify-between gap-3" data-testid="pricing-balance">
+              <div>
+                <div className="text-[11px] font-mono uppercase tracking-widest text-muted mb-1">Your balance</div>
+                <div className="text-2xl font-display font-bold text-ink">{credits.credits_balance} credits</div>
+                <div className="text-xs text-muted mt-1">Plan: {credits.plan_name}{credits.daily_cap ? ` · Daily cap ${credits.daily_used}/${credits.daily_cap}` : ""}</div>
+              </div>
+            </div>
+          )}
+        </header>
+
+        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="pricing-plans-grid">
+          {plans.map((p) => {
+            const tone = planTone(p.tier_rank);
+            const isCurrent = credits.plan_id === p.plan_id && credits.email_verified;
+            return (
+              <article key={p.plan_id} className={`brutal-card p-5 flex flex-col gap-3 ${tone.border}`} data-testid={`pricing-card-${p.plan_id}`}>
+                <div>
+                  <div className={`text-[10px] font-mono uppercase tracking-[0.18em] ${tone.accent}`}>{tone.label}</div>
+                  <h3 className="font-display text-xl font-bold mt-1">{p.name}</h3>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="font-display text-3xl font-bold">
+                    {p.price_inr === 0 ? "Free" : `₹${p.price_inr.toLocaleString("en-IN")}`}
+                  </span>
+                  {p.price_inr > 0 && <span className="text-xs text-muted">/ month</span>}
+                </div>
+                <div className="text-sm font-display font-bold text-ink">
+                  {p.monthly_credits.toLocaleString("en-IN")} credits{p.price_inr > 0 ? " / month" : ""}
+                </div>
+                <ul className="text-xs text-muted space-y-1.5 flex-1">
+                  {(p.features || []).map((f, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <span className="text-emerald-300 text-[10px] mt-0.5">●</span>
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+                {p.daily_credit_cap && (
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
+                    Daily cap: {p.daily_credit_cap}
+                  </div>
+                )}
+                {p.plan_id === "free" ? (
+                  isCurrent ? (
+                    <div className="btn-ghost text-xs text-center cursor-default" data-testid={`pricing-cta-${p.plan_id}`}>Your current plan</div>
+                  ) : (
+                    <button
+                      onClick={() => user ? navigate("/verify-email") : navigate("/register")}
+                      className="btn-brutal text-xs"
+                      data-testid={`pricing-cta-${p.plan_id}`}
+                    >
+                      {user ? "Verify email · Free 50 credits" : "Get started · Free"}
+                    </button>
+                  )
+                ) : isCurrent ? (
+                  <div className="btn-ghost text-xs text-center cursor-default" data-testid={`pricing-cta-${p.plan_id}`}>Your current plan</div>
+                ) : (
+                  <button
+                    onClick={() => checkout(p.plan_id)}
+                    disabled={busyPlan === p.plan_id}
+                    className="btn-brutal text-xs"
+                    data-testid={`pricing-cta-${p.plan_id}`}
+                  >
+                    {busyPlan === p.plan_id ? "Opening checkout…" : `Subscribe · ₹${p.price_inr.toLocaleString("en-IN")}`}
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </section>
+
+        <section className="space-y-3" data-testid="pricing-cost-table">
+          <h2 className="heading-display text-xl">Credit cost per AI message</h2>
+          <p className="text-sm text-muted max-w-2xl">Costs are server-enforced. Tampering the request body does nothing — the backend reads the cost from a code table.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+            {Object.entries(costs).map(([surface, cost]) => (
+              <div key={surface} className="glass-card p-3" data-testid={`pricing-cost-${surface}`}>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">{surface.replace(/_/g, " ")}</div>
+                <div className="text-base font-display font-bold mt-0.5">{cost} cr</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <footer className="pt-6 border-t border-white/5 text-[11px] font-mono uppercase tracking-widest text-muted" data-testid="pricing-footer">
+          Payments by Cashfree · Secure server-side webhook verification · No card data touches our servers
+        </footer>
+      </div>
+    </div>
+  );
+}

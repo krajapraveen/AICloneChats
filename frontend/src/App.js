@@ -45,6 +45,9 @@ import AdminDelayedMessages from "./pages/AdminDelayedMessages";
 import DelayedMessageReveal from "./pages/DelayedMessageReveal";
 import ConversationMemory from "./pages/ConversationMemory";
 import AdminIndex from "./pages/AdminIndex";
+import Pricing from "./pages/Pricing";
+import VerifyEmail from "./pages/VerifyEmail";
+import PaymentReturn from "./pages/PaymentReturn";
 import BackButton from "./components/BackButton";
 
 function LegacyAuthRedirect() {
@@ -91,6 +94,9 @@ function AppRouter() {
       <Route path="/admin/delayed-messages" element={<AdminDelayedMessages />} />
       <Route path="/conversation-memory" element={<ConversationMemory />} />
       <Route path="/open/:token" element={<DelayedMessageReveal />} />
+      <Route path="/pricing" element={<Pricing />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/pay/return" element={<PaymentReturn />} />
       <Route path="/auth/callback" element={<LegacyAuthRedirect />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/clones/new" element={<CloneEditor />} />

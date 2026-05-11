@@ -28,6 +28,10 @@ import translation_chat  # noqa: E402
 import avatar_chat  # noqa: E402
 import delayed_messages  # noqa: E402
 import clone_artifacts  # noqa: E402
+import email_verify  # noqa: E402
+import payments_cashfree  # noqa: E402
+import billing_api  # noqa: E402
+from credits import ensure_plans_seeded  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -69,6 +73,10 @@ app.include_router(delayed_messages.router)
 app.include_router(delayed_messages.admin_router)
 app.include_router(clone_artifacts.router)
 app.include_router(clone_artifacts.admin_router)
+app.include_router(email_verify.router)
+app.include_router(payments_cashfree.router)
+app.include_router(billing_api.public_router)
+app.include_router(billing_api.admin_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -174,6 +182,29 @@ async def on_startup():
     await _db.clone_artifact_tasks.create_index([("conversation_id", 1), ("created_at", -1)])
     await _db.clone_artifact_events.create_index([("created_at", -1)])
     await _db.clone_artifact_events.create_index([("event_name", 1), ("created_at", -1)])
+    # Billing / payments / credits indexes
+    await _db.subscription_plans.create_index("plan_id", unique=True)
+    await _db.credit_grants.create_index("grant_id", unique=True)
+    await _db.credit_grants.create_index("user_id", unique=True)
+    await _db.credit_grants.create_index("email", unique=True)
+    await _db.credit_grants.create_index("device_id", sparse=True)
+    await _db.credit_grants.create_index([("ip_address", 1), ("created_at", -1)])
+    await _db.credit_events.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.credit_events.create_index([("created_at", -1)])
+    await _db.fraud_signals.create_index([("created_at", -1)])
+    await _db.fraud_signals.create_index([("device_id", 1), ("created_at", -1)])
+    await _db.fraud_signals.create_index([("ip_address", 1), ("created_at", -1)])
+    await _db.fraud_cooldowns.create_index("expires_at")
+    await _db.fraud_cooldowns.create_index("device_id", sparse=True)
+    await _db.fraud_cooldowns.create_index("ip_address", sparse=True)
+    await _db.payment_orders.create_index("order_id", unique=True)
+    await _db.payment_orders.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.payment_orders.create_index([("status", 1), ("created_at", -1)])
+    await _db.webhook_logs.create_index([("received_at", -1)])
+    await _db.webhook_logs.create_index([("order_id", 1), ("received_at", -1)])
+    await _db.payment_audit_log.create_index([("created_at", -1)])
+    await _db.email_otp_codes.create_index([("user_id", 1), ("created_at", -1)])
+    await _db.email_otp_codes.create_index("expires_at")
     # Start delayed-delivery scheduler in the background
     try:
         import asyncio as _asyncio
@@ -186,6 +217,11 @@ async def on_startup():
         await seed_admins_from_env()
     except Exception as e:
         logger.warning("seed_admins_from_env failed: %s", e)
+    # Seed billing plans on every boot — plans are code, not user data
+    try:
+        await ensure_plans_seeded()
+    except Exception as e:
+        logger.warning("ensure_plans_seeded failed: %s", e)
     logger.info("Startup complete: indexes ensured")
 
     # Seed system Companion clone for /mood-chat

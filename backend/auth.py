@@ -132,6 +132,10 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
         "password_hash": hash_password(payload.password),
         "auth_provider": "email",
         "role": "user",
+        "email_verified": False,
+        "credits_balance": 0,
+        "plan_id": "free",
+        "plan_status": "pending_verification",
         "created_at": now_iso(),
     }
     await db.users.insert_one(dict(user_doc))

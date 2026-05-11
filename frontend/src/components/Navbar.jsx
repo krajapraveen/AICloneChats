@@ -1,6 +1,7 @@
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { useCredits } from "../hooks/useCredits";
 
 /**
  * Public navbar — five anchors, no operator/admin tooling leak.
@@ -13,6 +14,7 @@ import { useAuth } from "../contexts/AuthContext";
  */
 export default function Navbar() {
   const { user, logout } = useAuth();
+  const credits = useCredits();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -79,6 +81,15 @@ export default function Navbar() {
           {user?.role === "admin" && (
             <NavLink to="/admin" className={({ isActive }) => `${baseLink} ${isActive ? adminActive : adminInactive}`} data-testid="nav-admin">Admin</NavLink>
           )}
+          {user && !credits.loading && (
+            credits.admin_unlimited ? (
+              <Link to="/pricing" className="rounded-full border border-violet/40 bg-violet-500/10 px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-violet-soft" data-testid="nav-credits-pill">∞ admin</Link>
+            ) : (
+              <Link to="/pricing" className="rounded-full border border-white/10 bg-bg/50 px-3 py-1 text-[11px] font-mono text-ink/85 hover:border-white/25 transition" data-testid="nav-credits-pill">
+                <span className="text-amber">{credits.credits_balance ?? 0}</span> cr
+              </Link>
+            )
+          )}
           {user ? (
             <div className="flex items-center gap-3">
               <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[160px]" data-testid="nav-user-email">
@@ -134,6 +145,7 @@ export default function Navbar() {
             {user && (
               <NavLink to="/dashboard" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-dashboard">Dashboard</NavLink>
             )}
+            <NavLink to="/pricing" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-pricing">Pricing</NavLink>
             {user?.role === "admin" && (
               <NavLink to="/admin" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-violet" : "text-violet-soft"}`} data-testid="nav-mobile-admin">Admin</NavLink>
             )}

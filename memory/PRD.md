@@ -22,6 +22,46 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-02-13 (Cashfree billing + credit ledger + email-OTP gate — Phase 1)** — Monetization foundation, all security tests passing, real LLM-backed credit deduction proven E2E.
+  - **Backend modules** (all new):
+    - `credits.py`: `PLANS` (5 tiers), `CREDIT_COST` matrix, atomic `deduct_credits` with `find_one_and_update` balance guard, `refund_credits` on LLM failure, `credit_payment` for paid orders, `is_admin_unlimited_user` (env-driven), `grant_signup_credits_if_eligible` with device/IP/email dedup, fraud-signal logging + cumulative scoring + 12h cooldown action.
+    - `email_verify.py`: `/api/auth/verify-email/send` and `/confirm`. 6-digit OTP, hashed at rest, 10-min TTL, 5/day cap, 60s resend cooldown, Resend integration.
+    - `payments_cashfree.py`: `/api/payments/create-order` (server-authored — amount NEVER from body), `/api/payments/order/{id}` (re-fetches Cashfree on read), `/api/payments/webhook/cashfree` (HMAC-SHA256 signature verification, 5-min replay window, amount-tamper detection, idempotent via `credited_at` guard).
+    - `billing_api.py`: `/api/plans`, `/api/me/credits`, admin endpoints under `/api/admin/billing/*` (overview, users, payments, credit-events, webhook-logs, fraud-signals, credit-adjust).
+  - **Auth changes** (`auth.py`): new users registered with `email_verified=False`, `credits_balance=0`, `plan_status=pending_verification`. Free credits ONLY granted after OTP confirm.
+  - **Smart Reply** (`smart_reply.py`): wired with `deduct_credits` BEFORE LLM call, `refund_credits` on LLM/parse failure. Admin path is a no-op. 402 returned with `{code, credits_balance, cost, daily_cap, daily_used}` for the frontend to show out-of-credits UX.
+  - **DB indexes** (`server.py`): unique on `credit_grants.user_id` + `credit_grants.email`, indexes on `credit_events`, `fraud_signals`, `fraud_cooldowns`, `payment_orders.order_id` unique, `webhook_logs`, `email_otp_codes`. Plans seeded on boot.
+  - **Frontend** (new):
+    - `pages/Pricing.jsx`: 5 plan cards, server-authored Cashfree checkout via `@cashfreepayments/cashfree-js` SDK. Email-verification gate before checkout. Cost table publicly visible. Current plan highlighted. Admin sees `∞ admin` banner.
+    - `pages/VerifyEmail.jsx`: OTP entry, send/resend, auto-grants 50 credits on success.
+    - `pages/PaymentReturn.jsx`: `/pay/return?order_id=...` — polls `GET /api/payments/order/{id}` every 2s up to 30s. Ignores URL "success" params (never trusts frontend).
+    - `hooks/useCredits.js`: reusable balance hook.
+    - `components/Navbar.jsx`: added credit pill (`∞ admin` or `{n} cr`) + `Pricing` link in mobile drawer.
+  - **Routes added**: `/pricing`, `/verify-email`, `/pay/return`.
+  - **Tests**: 15 new in `test_billing_cashfree.py` covering plan listing, zero-balance enforcement, admin unlimited, email-verification gate on checkout, missing/wrong/correct webhook signature, replay protection, idempotency via signed webhook, amount-tamper rejection, admin-route guards, negative-balance refusal. 61/61 backend tests pass overall (no regressions).
+  - **E2E verified via real Cashfree sandbox**:
+    - Signed webhook → balance `0 → 500`, plan `free → starter` ✓
+    - Duplicate webhook → balance stays `500` (idempotent) ✓
+    - Tampered amount on signed webhook → `400 Amount mismatch` + fraud signal ✓
+    - Real Smart Reply call (live OpenAI) → balance `50 → 48` (cost=2) ✓
+    - Admin user Smart Reply call → balance stays `None` (unlimited) ✓
+  - **Production env block** to apply via Emergent deploy panel for `https://aiclonechats.com` (rotate keys first):
+    ```
+    CASHFREE_APP_ID=<your production App ID>
+    CASHFREE_SECRET_KEY=<your production Secret Key>
+    CASHFREE_MODE=PROD
+    CASHFREE_API_VERSION=2023-08-01
+    ADMIN_UNLIMITED_EMAIL=krajapraveen@gmail.com
+    ```
+    Webhook URL to register in Cashfree dashboard: `https://aiclonechats.com/api/payments/webhook/cashfree`
+  - **Phase 2 backlog** (NOT shipped this session):
+    - Wire credit deduction into remaining 8 chat surfaces (clone, mood, anonymous, voice, debates, translation, video-avatar, conversation memory, delayed_create).
+    - Cashfree native **subscription** (recurring auto-debit via Cashfree Subscriptions API + RBI 24h pre-debit notification scheduler).
+    - Top-up credit packs (₹299/999/2999) — separate one-time orders that ADD to balance without changing plan.
+    - "Out of credits" UX states + paywall modals on each chat surface.
+    - Subscription expiry / cancellation state machine.
+
+
 - **2026-02-12 (P1: production env wired + real Resend E2E verified)** — **Email channel proven live end-to-end. Public flag flipped on in preview. Production deploy block prepared.**
   - **Preview env updated** (`backend/.env`):
     - `RESEND_API_KEY=<redacted — rotate before reuse>`

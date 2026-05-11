@@ -21,6 +21,7 @@ from db import db
 from auth import get_current_user
 from models import now_iso
 from safety_filter import SAFETY_CLAUSE, moderate_user_input, log_moderation_event, safe_chat_response_fallback
+from credits import deduct_credits, refund_credits
 
 router = APIRouter(prefix="/api/smart-reply", tags=["smart-reply"])
 logger = logging.getLogger(__name__)
@@ -263,7 +264,21 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
     today = user["_today"]
     prev_count = user["_current_count"]
 
+    # Credit deduction — happens AFTER safety pre-flight, BEFORE LLM call.
+    # On LLM failure we refund. Admin path is a no-op (admin_unlimited).
+    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    deduction = await deduct_credits(user_doc or user, surface="smart_reply", request_id=f"sr_pre_{uuid.uuid4().hex[:10]}")
+    if not deduction["ok"]:
+        raise HTTPException(status_code=402, detail={
+            "code": deduction["reason"],
+            "credits_balance": deduction.get("balance"),
+            "cost": deduction.get("cost"),
+            "daily_cap": deduction.get("daily_cap"),
+            "daily_used": deduction.get("daily_used"),
+        })
+
     if not EMERGENT_LLM_KEY:
+        await refund_credits(user_doc or user, surface="smart_reply", request_id="sr_refund_no_llm")
         raise HTTPException(status_code=500, detail="LLM not configured")
 
     system_prompt = _build_system_prompt(payload.mode, payload.desired_tone)
@@ -278,6 +293,7 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
         ).with_model(SMART_REPLY_MODEL[0], SMART_REPLY_MODEL[1])
         raw = await chat.send_message(UserMessage(text=user_msg_text))
     except Exception as e:
+        await refund_credits(user_doc or user, surface="smart_reply", request_id=f"sr_refund_llm_fail")
         logger.exception("Smart Reply LLM failed")
         raise HTTPException(status_code=502, detail=f"Generation failed: {type(e).__name__}")
 
@@ -285,6 +301,7 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
         parsed = _parse_llm_json(raw)
         norm = _normalize_payload(parsed)
     except Exception as e:
+        await refund_credits(user_doc or user, surface="smart_reply", request_id=f"sr_refund_parse_fail")
         logger.error("Smart Reply parse failed: %s | raw=%s", e, (raw or "")[:500])
         raise HTTPException(status_code=502, detail="Could not parse model output")
 
