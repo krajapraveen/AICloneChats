@@ -75,6 +75,7 @@ export default function Navbar() {
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-4 lg:gap-5 flex-shrink-0" data-testid="nav-desktop" aria-label="Primary">
           <NavLink to="/explore" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-explore">Explore</NavLink>
+          <NavLink to="/pricing" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-pricing">Pricing</NavLink>
           {user && (
             <NavLink to="/dashboard" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-dashboard">Dashboard</NavLink>
           )}
