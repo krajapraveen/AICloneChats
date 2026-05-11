@@ -115,6 +115,12 @@ const SECTIONS = [
         blurb: "Funnel · Revenue · Credit Economy · Emotional Gravity · Cohorts · Operational Health. Read-only. No interpretation.",
         testId: "admin-card-revenue",
       },
+      {
+        to: "/admin/email-health",
+        name: "Email Health",
+        blurb: "Provider chain status, 24h send success rate, per-provider latency, failover events. Resend → SMTP fallback.",
+        testId: "admin-card-email-health",
+      },
     ],
   },
 ];

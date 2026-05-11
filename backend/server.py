@@ -29,6 +29,7 @@ import avatar_chat  # noqa: E402
 import delayed_messages  # noqa: E402
 import clone_artifacts  # noqa: E402
 import email_verify  # noqa: E402
+import admin_email_health  # noqa: E402
 import payments_cashfree  # noqa: E402
 import billing_api  # noqa: E402
 from credits import ensure_plans_seeded  # noqa: E402
@@ -74,6 +75,7 @@ app.include_router(delayed_messages.admin_router)
 app.include_router(clone_artifacts.router)
 app.include_router(clone_artifacts.admin_router)
 app.include_router(email_verify.router)
+app.include_router(admin_email_health.router)
 import password_reset  # noqa: E402
 app.include_router(password_reset.router)
 app.include_router(payments_cashfree.router)

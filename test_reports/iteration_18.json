@@ -1,0 +1,44 @@
+{
+  "summary": "End-to-end verification of the multi-provider email reliability layer (email_sender.py + admin_email_health.py + email_verify.py + password_reset.py + AdminEmailHealth.jsx). Wrote /app/backend/tests/test_email_pipeline.py (9 tests, all PASS after data cleanup), plus a Playwright smoke run against /admin/email-health for anon / non-admin / admin paths. Verified live: (a) public probe shape contract & leak-safety, (b) admin gating 401/403/200, (c) OTP send writes email_send_events row with correct purpose, domain (NOT full email), latency, provider, (d) failover invariant — forced bad Resend key + missing SMTP yields exactly two attempts under one event_group (also observable in admin UI group=10058386fef5), (e) /api/auth/forgot-password still neutral-200, (f) AdminEmailHealth UI renders Configuration / 24h Totals / Per-provider / Recent attempts and contains no 'mock mode' / 'check backend logs' phrasing, (g) [data-testid=email-health-forbidden] shows for non-admin, (h) VerifyEmail toasts contain only safe copy. No secret values from RESEND_API_KEY / SMTP_PASSWORD leak in any HTTP body or page text.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "ensure_admin_role() in /app/backend/admin.py:90-96", "issue": "Pre-existing data pollution discovered while testing: sr-tester@example.com had role='admin' persisted in DB from a prior test run even though the email is NOT in ADMIN_EMAILS env or admin_users allowlist. `ensure_admin_role` only PROMOTES (`'admin' if email in admins else user.get('role','user')`) and never DEMOTES, so stale admin roles survive forever. Fixed in DB during this run (sr-tester role reset to 'user'). Recommend tightening: `desired = 'admin' if email in admins else 'user'` so role always reflects the current allowlist. Not in scope of this email-pipeline review but flagged because it initially masked the 403 gate test."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_email_pipeline.py",
+    "/app/test_reports/pytest/email_pipeline.xml"
+  ],
+  "action_items": [
+    "Optional hardening: change ensure_admin_role to actively demote users whose email is no longer in the allowlist (line 96, /app/backend/admin.py). Stale admin role bug is independent of the email pipeline.",
+    "Consider seeding sr-tester@example.com with role='user' explicitly in /app/memory/test_credentials.md setup script so test data pollution can't recur."
+  ],
+  "critical_code_review_comments": [
+    "email_sender.py:156 — chain falls back to `['resend']` if EMAIL_PROVIDER_ORDER is empty/unknown; good defensive default. SMTP path correctly returns SendResult('not_configured') when keys are blank rather than raising, so the failover loop continues. Event logging is wrapped in try/except so a Mongo blip can't break the send. Latency captured even on failure. Provider list is normalized lower-case. No raw error_code is returned to callers — only `(ok, used_provider_name)` tuple. Solid module.",
+    "admin_email_health.py:92 — public probe uses `bool(recent_ok) or total == 0` so zero-traffic intervals don't show as unhealthy; sensible. Shape is locked to {healthy, last_24h_attempts} — verified no leak. Admin endpoint correctly excludes _id via projection.",
+    "email_verify.py:130 — `email_send_configured` flag is returned as a boolean derived from RESEND_API_KEY presence; this is the only place a Resend-specific signal surfaces to the authenticated user but it's a boolean, not a name, so acceptable.",
+    "password_reset.py:139-146 — multi_send_email is awaited and the response shape (ok, provider) is correctly translated to (ok, 'all_providers_failed') without leaking provider name to callers; audit log captures sent/send_error metadata server-side only.",
+    "AdminEmailHealth.jsx — uses `useAuth().user.role === 'admin'` for client-side render gate AND server still enforces via get_admin_user dependency. Defense-in-depth correct. data-testid coverage is comprehensive (admin-email-health-page, email-cfg-resend/smtp, email-totals-*, email-per-provider-*, email-recent-*, email-health-forbidden, email-health-refresh).",
+    "Recipient domains shown in the Recent table (e.g., 'example.com', 'example.invalid') — never full addresses. recipient_domain field is computed in email_sender.py:171 as `to_email.split('@',1)[1]` and stored alone. Verified in DB rows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_email_pipeline.py (new)",
+    "DB cleanup: db.users (sr-tester@example.com role: admin → user); db.user_sessions (5 stale sessions removed for that user)"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 pytest tests after stale-role DB cleanup)",
+    "frontend": "100% (anon redirect, non-admin 403 card, admin full dashboard, no leak phrases, no full emails in table)"
+  },
+  "test_credentials": "admin: krajapraveen@gmail.com / TestPass123!; non-admin: sr-tester@example.com / TestPass123! (role reset to 'user' during this run)",
+  "seed_data_creation": "Wrote ~5 db.email_send_events rows under purpose='failover_test' (event_groups 10058386fef5, 568222294607, 595a39b58674) plus 1 'password_reset' and 1 'email_otp' (existing flows). All rows carry only recipient_domain; no full emails persisted.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The email reliability layer is production-quality. The shared regression suite is /app/backend/tests/test_email_pipeline.py — keep it green. Important data-hygiene note: if sr-tester@example.com ever gets role='admin' in db.users again (any test that promotes for paywall checks), the TestAdminEmailHealth::test_non_admin_forbidden_403 case will fail with a 200 leak. The fixture does not auto-clean role. The forced-failover test temporarily mutates os.environ['RESEND_API_KEY']/'EMAIL_PROVIDER_ORDER' and reloads email_sender; this is reverted in the finally block, but if pytest is killed mid-run the env in that python process state is harmless (next supervisor restart reloads .env).",
+  "rca_of_the_issue": "Only one issue surfaced during testing — a non-admin 200 leak on /api/admin/email/health. RCA: sr-tester@example.com had role='admin' stored in db.users from a previous unrelated test that promoted them. ensure_admin_role() reads the user's stored role as the fallback when the email is NOT in the allowlist, so once promoted, the role is sticky forever. Reproduction: insert {role:'admin'} into db.users for any email, hit any /api/admin/* endpoint with that user's bearer token, observe 200. Mitigation applied: reset sr-tester role to 'user' in DB and deleted their stale sessions. Permanent fix (out of scope here): change admin.py:96 from `desired = 'admin' if email in admins else user.get('role','user')` to `desired = 'admin' if email in admins else 'user'` so role mirrors the current allowlist on every check."
+}

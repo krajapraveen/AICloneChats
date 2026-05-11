@@ -52,6 +52,7 @@ import ConversationMemory from "./pages/ConversationMemory";
 import AdminIndex from "./pages/AdminIndex";
 import AdminWebhookLogs from "./pages/AdminWebhookLogs";
 import AdminRevenue from "./pages/AdminRevenue";
+import AdminEmailHealth from "./pages/AdminEmailHealth";
 import Pricing from "./pages/Pricing";
 import VerifyEmail from "./pages/VerifyEmail";
 import PaymentReturn from "./pages/PaymentReturn";
@@ -89,6 +90,7 @@ function AppRouter() {
       <Route path="/admin" element={<AdminIndex />} />
       <Route path="/admin/webhook-logs" element={<AdminWebhookLogs />} />
       <Route path="/admin/revenue" element={<AdminRevenue />} />
+      <Route path="/admin/email-health" element={<AdminEmailHealth />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
       <Route path="/admin/anonymous-metrics" element={<AdminAnonymousMetrics />} />

@@ -33,6 +33,7 @@ from db import db
 from auth import get_current_user
 from models import now_iso
 from credits import grant_signup_credits_if_eligible
+from email_sender import send_email as multi_send_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth-email-verify"])
 logger = logging.getLogger(__name__)
@@ -65,28 +66,21 @@ def _client_ip(request: Request) -> Optional[str]:
 
 
 async def _send_otp_email(to_email: str, code: str) -> bool:
-    if not RESEND_API_KEY:
-        logger.info("verify-email OTP send no-op (RESEND_API_KEY missing) email=%s code=%s", to_email, code)
-        return False
-    try:
-        import requests
-        html = f"""<div style="font-family:system-ui;max-width:480px;margin:0 auto;padding:24px;color:#111">
+    html = f"""<div style="font-family:system-ui;max-width:480px;margin:0 auto;padding:24px;color:#111">
 <h2 style="margin:0 0 8px">Confirm your email</h2>
 <p style="color:#555;font-size:14px;margin:0 0 18px">Enter this code on aiclonechats.com to verify your account and unlock subscriptions.</p>
 <div style="font-size:28px;font-weight:700;letter-spacing:0.18em;font-family:ui-monospace,monospace;padding:14px 18px;background:#f4f4f5;border-radius:10px;text-align:center">{code}</div>
 <p style="color:#888;font-size:12px;margin:18px 0 0">Code expires in 10 minutes. If you didn't request this, ignore the email.</p>
 </div>"""
-        text = f"Your aiclonechats.com verification code is {code}. It expires in 10 minutes."
-        r = requests.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": RESEND_FROM, "to": [to_email], "subject": "Your verification code", "text": text, "html": html},
-            timeout=20,
-        )
-        return r.status_code in (200, 201, 202)
-    except Exception as e:
-        logger.warning("verify-email send failed: %s", e)
-        return False
+    text = f"Your aiclonechats.com verification code is {code}. It expires in 10 minutes."
+    ok, _provider = await multi_send_email(
+        to_email=to_email,
+        subject="Your verification code",
+        html=html,
+        text=text,
+        purpose="email_otp",
+    )
+    return ok
 
 
 @router.post("/verify-email/send")

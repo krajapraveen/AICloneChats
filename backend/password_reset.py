@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from db import db
 from models import now_iso
 from auth import hash_password, verify_password
+from email_sender import send_email as multi_send_email
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +117,6 @@ async def _audit(event_type: str, *, request_id: str, user_id: Optional[str] = N
 
 # ---------- Resend email send ----------
 async def _send_reset_email(to_email: str, reset_link: str) -> Tuple[bool, Optional[str]]:
-    if not RESEND_API_KEY:
-        logger.info("password reset email NO-OP (RESEND_API_KEY missing) to=%s", to_email)
-        return False, "resend_not_configured"
     subject = "Reset your aiclonechats.com password"
     text = (
         "We received a request to reset your aiclonechats.com password.\n\n"
@@ -138,18 +136,14 @@ async def _send_reset_email(to_email: str, reset_link: str) -> Tuple[bool, Optio
       <p style="font-size: 12px; color: #64748b; line-height: 1.5;">This link expires in {RESET_TOKEN_TTL_MIN} minutes. If you didn't request this, you can safely ignore this email — your password won't change.</p>
     </div>
     """
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                json={"from": RESEND_FROM, "to": [to_email], "subject": subject, "text": text, "html": html},
-            )
-            if 200 <= r.status_code < 300:
-                return True, None
-            return False, f"resend_{r.status_code}"
-    except Exception as e:
-        return False, f"resend_exception_{type(e).__name__}"
+    ok, provider = await multi_send_email(
+        to_email=to_email,
+        subject=subject,
+        html=html,
+        text=text,
+        purpose="password_reset",
+    )
+    return ok, None if ok else "all_providers_failed"
 
 
 # ---------- Request models ----------
