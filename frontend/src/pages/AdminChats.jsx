@@ -219,6 +219,11 @@ export default function AdminChats() {
   );
 
   const rows = data?.chats || [];
+  const fallbackRows = data?.fallback_rows || [];
+  const diagnostic = data?.diagnostic;
+  const dbTotal = diagnostic ? Object.values(diagnostic.db_counts || {}).reduce((a, b) => a + b, 0) : null;
+  const usingFallback = rows.length === 0 && fallbackRows.length > 0;
+  const displayRows = usingFallback ? fallbackRows : rows;
 
   return (
     <div className="page-bg min-h-screen min-h-[100dvh]" data-testid="admin-chats-page">
@@ -262,9 +267,68 @@ export default function AdminChats() {
 
         {loading && !data && <div className="text-muted font-mono text-sm">loading…</div>}
 
-        <div className="brutal-card overflow-x-auto" data-testid="admin-chats-table">
+        {/* Diagnostic — surfaces real DB state regardless of filter result */}
+        {diagnostic && (
+          <div className="brutal-card p-3 mb-3 text-[11px] font-mono" data-testid="admin-chats-diagnostic">
+            <div className="text-amber uppercase tracking-widest text-[10px] mb-1">Diagnostic</div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted">
+              <span>db_total: <span className="text-ink/85">{dbTotal}</span></span>
+              <span>returned: <span className="text-ink/85">{rows.length}</span></span>
+              <span>window: <span className="text-ink/85">{diagnostic.window_days}d</span></span>
+              <span className="break-all">cutoff: <span className="text-ink/85">{diagnostic.cutoff_iso}</span></span>
+              {diagnostic.db_counts && Object.entries(diagnostic.db_counts).map(([k, v]) => (
+                <span key={k}>{k}: <span className="text-ink/85">{v}</span></span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Safe fallback notice */}
+        {usingFallback && (
+          <div className="brutal-card p-3 mb-3 border-amber/40 bg-amber-500/10 text-[11px] font-mono" data-testid="admin-chats-fallback-notice">
+            <strong className="uppercase tracking-widest text-amber mr-2">Fallback view</strong>
+            <span className="text-muted">No chats matched filters in this window. Showing latest 50 unfiltered rows so the panel never looks dead.</span>
+          </div>
+        )}
+
+        {/* Mobile cards (<md) */}
+        <div className="md:hidden space-y-3 mb-6" data-testid="admin-chats-cards-mobile">
+          {!loading && displayRows.length === 0 && (
+            <div className="brutal-card p-6 text-center text-xs text-muted" data-testid="admin-chats-empty-mobile">
+              {dbTotal === 0 ? "Database has no chats yet." : "No chats in this window."}
+            </div>
+          )}
+          {displayRows.map((row) => {
+            const email = row.user?.email || row.user?.name || "(anonymous)";
+            const tone = row.is_hidden ? "border-rose-400/40 bg-rose-500/5" : row.is_flagged ? "border-amber-400/40 bg-amber-500/5" : "";
+            return (
+              <button
+                key={`${row.chat_type}-${row.conversation_id}`}
+                onClick={() => setDrawer(row)}
+                className={`brutal-card p-3 w-full text-left min-w-0 overflow-hidden ${tone}`}
+                data-testid={`admin-chat-card-${row.conversation_id}`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
+                  <span className="text-[11px] font-mono text-muted whitespace-nowrap truncate min-w-0">{fmt(row.last_message_at)}</span>
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-ink/80 shrink-0">{row.chat_type}</span>
+                </div>
+                <div className="text-xs text-ink overflow-hidden text-ellipsis whitespace-nowrap" title={email}>{email}</div>
+                <div className="text-[11px] text-ink/75 mt-1 line-clamp-2 break-words">{row.last_message_preview || "—"}</div>
+                <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px] font-mono">
+                  {row.is_hidden && <span className="text-rose-300">HIDDEN</span>}
+                  {row.is_flagged && <span className="text-amber-soft">FLAGGED</span>}
+                  {row.moderation_status && <span className="text-muted">{row.moderation_status}</span>}
+                  <span className="text-muted ml-auto">{row.message_count} msgs</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Desktop table (md+) */}
+        <div className="brutal-card overflow-x-auto hidden md:block" data-testid="admin-chats-table">
           <table className="w-full text-sm">
-            <thead className="text-[11px] font-mono uppercase tracking-widest text-muted">
+            <thead className="text-[11px] font-mono uppercase tracking-widest text-muted whitespace-nowrap">
               <tr className="border-b border-ink/10">
                 <th className="text-left p-3">When</th>
                 <th className="text-left p-3">Type</th>
@@ -275,14 +339,14 @@ export default function AdminChats() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && !loading && <tr><td colSpan="6" className="p-6 text-center text-xs text-muted">No chats in this window.</td></tr>}
-              {rows.map((row) => <ChatRow key={`${row.chat_type}-${row.conversation_id}`} row={row} onOpen={setDrawer} />)}
+              {displayRows.length === 0 && !loading && <tr><td colSpan="6" className="p-6 text-center text-xs text-muted" data-testid="admin-chats-empty">{dbTotal === 0 ? "Database has no chats yet." : "No chats in this window."}</td></tr>}
+              {displayRows.map((row) => <ChatRow key={`${row.chat_type}-${row.conversation_id}`} row={row} onOpen={setDrawer} />)}
             </tbody>
           </table>
         </div>
 
         <div className="text-[10px] font-mono text-muted mt-6">
-          {rows.length} of recent · window {days}d ·{" "}
+          {displayRows.length} {usingFallback ? "fallback rows" : "of recent"} · window {days}d ·{" "}
           <Link className="hover:text-ink underline" to="/admin/safety">Safety filter</Link>
           {" · "}
           <Link className="hover:text-ink underline" to="/admin/debates/retention">Debates retention</Link>

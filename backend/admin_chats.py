@@ -32,12 +32,17 @@ from pydantic import BaseModel
 
 from db import db
 from auth import get_current_user
+from credits import is_admin_unlimited_user
 from models import now_iso
 
 admin_router = APIRouter(prefix="/api/admin/chats", tags=["chats-admin"])
 
 
 async def _require_admin(user: dict = Depends(get_current_user)) -> dict:
+    # Founder email always has admin access regardless of DB role flag.
+    # Defensive against a production role-sync mismatch.
+    if is_admin_unlimited_user(user):
+        return user
     if user.get("role") != "admin":
         raise HTTPException(403, "Admin access required")
     return user
@@ -53,30 +58,36 @@ _RE_ADDRESS_NUM = re.compile(r"\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\s+
 
 
 def redact(text: Optional[str]) -> tuple[str, list[str]]:
-    """Return (redacted_text, list_of_categories_redacted). Never log raw value."""
+    """Return (redacted_text, list_of_categories_redacted). Never log raw value.
+    Fail-safe: any regex/encoding exception returns a clearly-marked stub so
+    callers never silently drop rows.
+    """
     if not text:
         return ("", [])
-    flags: list[str] = []
-    out = text
-    if _RE_KEY.search(out):
-        flags.append("api_key")
-        out = _RE_KEY.sub("[redacted:key]", out)
-    if _RE_CC.search(out):
-        flags.append("credit_card")
-        out = _RE_CC.sub("[redacted:cc]", out)
-    if _RE_PASSWORD_PHRASE.search(out):
-        flags.append("password")
-        out = _RE_PASSWORD_PHRASE.sub("[redacted:password]", out)
-    if _RE_EMAIL.search(out):
-        flags.append("email")
-        out = _RE_EMAIL.sub("[redacted:email]", out)
-    if _RE_PHONE.search(out):
-        flags.append("phone")
-        out = _RE_PHONE.sub("[redacted:phone]", out)
-    if _RE_ADDRESS_NUM.search(out):
-        flags.append("address")
-        out = _RE_ADDRESS_NUM.sub("[redacted:address]", out)
-    return (out, flags)
+    try:
+        flags: list[str] = []
+        out = text
+        if _RE_KEY.search(out):
+            flags.append("api_key")
+            out = _RE_KEY.sub("[redacted:key]", out)
+        if _RE_CC.search(out):
+            flags.append("credit_card")
+            out = _RE_CC.sub("[redacted:cc]", out)
+        if _RE_PASSWORD_PHRASE.search(out):
+            flags.append("password")
+            out = _RE_PASSWORD_PHRASE.sub("[redacted:password]", out)
+        if _RE_EMAIL.search(out):
+            flags.append("email")
+            out = _RE_EMAIL.sub("[redacted:email]", out)
+        if _RE_PHONE.search(out):
+            flags.append("phone")
+            out = _RE_PHONE.sub("[redacted:phone]", out)
+        if _RE_ADDRESS_NUM.search(out):
+            flags.append("address")
+            out = _RE_ADDRESS_NUM.sub("[redacted:address]", out)
+        return (out, flags)
+    except Exception:
+        return ("[REDACTION_ERROR]", ["redaction_error"])
 
 
 # ---- Action models --------------------------------------------------------
@@ -257,7 +268,85 @@ async def list_chats(
         rows = [r for r in rows if r.get("is_hidden")]
     elif safety == "blocked":
         rows = [r for r in rows if r.get("moderation_status") in ("blocked", "hidden", "flagged")]
-    return {"window_days": days, "count": len(rows[:limit]), "chats": rows[:limit]}
+
+    # Diagnostic — surfaces actual DB state so admins know whether an empty
+    # result is "no data" or "filters too narrow." NEVER strip these fields.
+    diagnostic = {
+        "window_days": days,
+        "cutoff_iso": since,
+        "filters": {"chat_type": chat_type, "search": search, "user_id": user_id, "safety": safety, "limit": limit},
+        "db_counts": {
+            "clone_conversations": await db.clone_conversations.count_documents({}),
+            "clone_messages": await db.clone_messages.count_documents({}),
+            "anonymous_messages": await db.anonymous_messages.count_documents({}),
+            "debate_arguments": await db.debate_arguments.count_documents({}),
+            "smart_reply_sessions": await db.smart_reply_sessions.count_documents({}),
+        },
+        "returned_count": len(rows[:limit]),
+    }
+
+    # Safe fallback — if filters produce 0 rows but the DB has *any* chats,
+    # also return the most-recent 50 unfiltered rows so an admin panel never
+    # looks dead when data exists. Frontend opts in via `fallback_rows`.
+    fallback_rows: list[dict] = []
+    if len(rows) == 0 and sum(diagnostic["db_counts"].values()) > 0:
+        # "0" sorts lower than any ISO timestamp, so `{"$gte": "0"}` matches all.
+        earliest = "0"
+        try:
+            for t in ["clone", "anonymous", "debate", "smart_reply"]:
+                hidden = await _hidden_set_for(t)
+                if t == "clone":
+                    fallback_rows += await _list_clone_chats_unfiltered(50, hidden)
+                elif t == "anonymous":
+                    fallback_rows += await _list_anonymous(earliest, 50, None, None, hidden)
+                elif t == "debate":
+                    fallback_rows += await _list_debate(earliest, 50, None, None, hidden)
+                elif t == "smart_reply":
+                    fallback_rows += await _list_smart_reply(earliest, 50, None, None, hidden)
+            fallback_rows.sort(key=lambda r: r.get("last_message_at") or "", reverse=True)
+            fallback_rows = fallback_rows[:50]
+        except Exception as e:
+            fallback_rows = [{"fallback_error": str(e)[:200]}]
+
+    return {
+        "window_days": days,
+        "count": len(rows[:limit]),
+        "chats": rows[:limit],
+        "diagnostic": diagnostic,
+        "fallback_rows": fallback_rows,
+    }
+
+
+async def _list_clone_chats_unfiltered(limit: int, hidden_set: set) -> list[dict]:
+    """Latest clone conversations regardless of date window — used by the safe
+    fallback path only."""
+    convs = await db.clone_conversations.find({}, {"_id": 0}).sort("updated_at", -1).limit(limit).to_list(limit)
+    rows: list[dict] = []
+    for c in convs:
+        clone = await db.clones.find_one({"clone_id": c.get("clone_id")}, {"_id": 0, "user_id": 1, "display_name": 1, "slug": 1})
+        owner_user = await _user_view((clone or {}).get("user_id")) if clone else {}
+        last = await db.clone_messages.find_one({"conversation_id": c["conversation_id"]}, {"_id": 0}, sort=[("created_at", -1)])
+        msg_count = await db.clone_messages.count_documents({"conversation_id": c["conversation_id"]})
+        last_text = (last or {}).get("text", "")
+        last_redacted = _redact_dict(last_text)
+        rows.append({
+            "chat_type": "clone",
+            "conversation_id": c["conversation_id"],
+            "user": owner_user,
+            "visitor_id": c.get("visitor_id"),
+            "channel": c.get("channel"),
+            "clone_id": c.get("clone_id"),
+            "clone_name": (clone or {}).get("display_name"),
+            "clone_slug": (clone or {}).get("slug"),
+            "message_count": msg_count,
+            "last_message_at": c.get("updated_at") or c.get("created_at"),
+            "last_message_preview": (last_redacted["text"] or "")[:160],
+            "last_message_redactions": last_redacted["redacted"],
+            "is_hidden": c["conversation_id"] in hidden_set,
+            "is_flagged": (c.get("admin_flagged") is True),
+            "_via_fallback": True,
+        })
+    return rows
 
 
 @admin_router.get("/{conversation_id}")
