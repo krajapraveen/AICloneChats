@@ -1,17 +1,62 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 
+/**
+ * Public navbar — five anchors, no operator/admin tooling leak.
+ *
+ * - Active route indicator via NavLink (renders `aria-current="page"`).
+ * - Mobile drawer: ESC closes, click-outside closes, first item auto-focused
+ *   on open for keyboard users, body scroll-locked while open.
+ * - All operator/observability surfaces live exclusively under /admin index
+ *   when role === "admin".
+ */
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const drawerRef = useRef(null);
+  const firstDrawerLinkRef = useRef(null);
 
-  // Public navigation — five anchors, no operator tooling. The previous
-  // navbar had become an internal-tools dashboard; the admin/observability
-  // surfaces now live exclusively under /admin and are reachable only via
-  // the Admin index when role === "admin".
-  const navLinkClass = "font-display font-bold text-sm text-ink/80 hover:text-ink transition";
+  // Close drawer on route change (mobile users tapping a link).
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  // ESC closes drawer, click-outside closes drawer, scroll-lock while open.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    const onPointer = (e) => {
+      if (drawerRef.current && !drawerRef.current.contains(e.target)) {
+        setMobileOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // Focus first drawer link for keyboard users.
+    requestAnimationFrame(() => {
+      firstDrawerLinkRef.current?.focus();
+    });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [mobileOpen]);
+
+  const baseLink = "font-display font-bold text-sm transition";
+  const inactive = "text-ink/80 hover:text-ink";
+  const active = "text-ink";
+  const adminInactive = "text-violet-soft hover:text-violet";
+  const adminActive = "text-violet";
 
   return (
     <header className="border-b border-white/5 bg-bg/60 sticky top-0 z-40 backdrop-blur-xl safe-pt" data-testid="navbar">
@@ -26,16 +71,14 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-4 lg:gap-5 flex-shrink-0" data-testid="nav-desktop">
-          <Link to="/explore" className={navLinkClass} data-testid="nav-explore">Explore</Link>
-          <Link to="/debates" className={navLinkClass} data-testid="nav-debates">Debates</Link>
+        <nav className="hidden md:flex items-center gap-4 lg:gap-5 flex-shrink-0" data-testid="nav-desktop" aria-label="Primary">
+          <NavLink to="/explore" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-explore">Explore</NavLink>
+          <NavLink to="/debates" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-debates">Debates</NavLink>
           {user && (
-            <Link to="/dashboard" className={navLinkClass} data-testid="nav-dashboard">Dashboard</Link>
+            <NavLink to="/dashboard" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-dashboard">Dashboard</NavLink>
           )}
           {user?.role === "admin" && (
-            <Link to="/admin" className="font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin">
-              Admin
-            </Link>
+            <NavLink to="/admin" className={({ isActive }) => `${baseLink} ${isActive ? adminActive : adminInactive}`} data-testid="nav-admin">Admin</NavLink>
           )}
           {user ? (
             <div className="flex items-center gap-3">
@@ -62,7 +105,9 @@ export default function Navbar() {
         <button
           className="md:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg border border-white/10 text-ink/80 hover:text-ink hover:border-white/25 transition"
           onClick={() => setMobileOpen((v) => !v)}
-          aria-label="Toggle navigation"
+          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-nav-drawer"
           data-testid="nav-mobile-toggle"
         >
           <span className="block w-4 leading-none text-base">{mobileOpen ? "✕" : "☰"}</span>
@@ -71,15 +116,28 @@ export default function Navbar() {
 
       {/* Mobile drawer */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-white/5 bg-bg/95 backdrop-blur-xl" data-testid="nav-mobile-drawer">
+        <div
+          id="mobile-nav-drawer"
+          ref={drawerRef}
+          className="md:hidden border-t border-white/5 bg-bg/95 backdrop-blur-xl"
+          data-testid="nav-mobile-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Site navigation"
+        >
           <div className="max-w-6xl mx-auto px-4 sm:px-5 py-3 flex flex-col gap-1">
-            <Link to="/explore" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-ink/85" data-testid="nav-mobile-explore">Explore</Link>
-            <Link to="/debates" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-ink/85" data-testid="nav-mobile-debates">Debates</Link>
+            <NavLink
+              ref={firstDrawerLinkRef}
+              to="/explore"
+              className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`}
+              data-testid="nav-mobile-explore"
+            >Explore</NavLink>
+            <NavLink to="/debates" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-debates">Debates</NavLink>
             {user && (
-              <Link to="/dashboard" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-ink/85" data-testid="nav-mobile-dashboard">Dashboard</Link>
+              <NavLink to="/dashboard" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-dashboard">Dashboard</NavLink>
             )}
             {user?.role === "admin" && (
-              <Link to="/admin" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-violet-soft" data-testid="nav-mobile-admin">Admin</Link>
+              <NavLink to="/admin" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-violet" : "text-violet-soft"}`} data-testid="nav-mobile-admin">Admin</NavLink>
             )}
             <div className="border-t border-white/5 mt-2 pt-2 flex items-center gap-2">
               {user ? (
@@ -95,8 +153,8 @@ export default function Navbar() {
                 </>
               ) : (
                 <>
-                  <Link to="/login" onClick={() => setMobileOpen(false)} className="btn-ghost text-xs flex-1 text-center" data-testid="nav-mobile-login">Log in</Link>
-                  <Link to="/register" onClick={() => setMobileOpen(false)} className="btn-brutal text-xs flex-1 text-center" data-testid="nav-mobile-signup">Get started</Link>
+                  <Link to="/login" className="btn-ghost text-xs flex-1 text-center" data-testid="nav-mobile-login">Log in</Link>
+                  <Link to="/register" className="btn-brutal text-xs flex-1 text-center" data-testid="nav-mobile-signup">Get started</Link>
                 </>
               )}
             </div>

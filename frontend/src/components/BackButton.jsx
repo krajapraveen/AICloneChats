@@ -55,8 +55,11 @@ export default function BackButton() {
 
   return (
     <div
-      className="fixed left-3 sm:left-5 md:left-8 z-30 pointer-events-none"
-      style={{ top: "calc(64px + env(safe-area-inset-top, 0px) + 8px)" }}
+      className="fixed z-30 pointer-events-none"
+      style={{
+        top: "calc(64px + env(safe-area-inset-top, 0px) + 8px)",
+        left: "calc(env(safe-area-inset-left, 0px) + 12px)",
+      }}
       data-testid="back-button-wrapper"
     >
       <button
