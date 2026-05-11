@@ -44,6 +44,8 @@ import DelayedChat from "./pages/DelayedChat";
 import AdminDelayedMessages from "./pages/AdminDelayedMessages";
 import DelayedMessageReveal from "./pages/DelayedMessageReveal";
 import ConversationMemory from "./pages/ConversationMemory";
+import AdminIndex from "./pages/AdminIndex";
+import BackButton from "./components/BackButton";
 
 function LegacyAuthRedirect() {
   // /auth/callback was the Emergent OAuth landing route. Custom Google flow no longer needs it.
@@ -67,6 +69,7 @@ function AppRouter() {
       <Route path="/anonymous-reality" element={<AnonymousReality />} />
       <Route path="/anonymous-reality/:slug" element={<AnonymousRoom />} />
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
+      <Route path="/admin" element={<AdminIndex />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
       <Route path="/admin/anonymous-metrics" element={<AdminAnonymousMetrics />} />
@@ -108,6 +111,7 @@ function ConfiguredApp() {
   const inner = (
     <BrowserRouter>
       <AuthProvider>
+        <BackButton />
         <AppRouter />
         <Toaster position="top-center" richColors closeButton />
       </AuthProvider>

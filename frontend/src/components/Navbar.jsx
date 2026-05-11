@@ -1,9 +1,17 @@
 import { Link, useNavigate } from "react-router-dom";
+import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Public navigation — five anchors, no operator tooling. The previous
+  // navbar had become an internal-tools dashboard; the admin/observability
+  // surfaces now live exclusively under /admin and are reachable only via
+  // the Admin index when role === "admin".
+  const navLinkClass = "font-display font-bold text-sm text-ink/80 hover:text-ink transition";
 
   return (
     <header className="border-b border-white/5 bg-bg/60 sticky top-0 z-40 backdrop-blur-xl safe-pt" data-testid="navbar">
@@ -17,82 +25,84 @@ export default function Navbar() {
           </span>
         </Link>
 
-        <nav className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-          <Link to="/explore" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-amber-soft transition" data-testid="nav-explore">
-            Explore
-          </Link>
-          <Link to="/smart-reply" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-emerald-soft transition" data-testid="nav-smart-reply">
-            Smart Reply
-          </Link>
-          <Link to="/voice" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-emerald-soft transition" data-testid="nav-voice">
-            Voice
-          </Link>
-          <Link to="/anonymous-reality" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-rose-300 transition" data-testid="nav-anonymous">
-            Anonymous
-          </Link>
-          <Link to="/debates" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-sky-300 transition" data-testid="nav-debates">
-            Debates
-          </Link>
-          <Link to="/translation-chat" className="hidden md:inline-block font-display font-bold text-sm text-ink/80 hover:text-amber transition" data-testid="nav-translation">
-            Translate
-          </Link>
+        {/* Desktop nav */}
+        <nav className="hidden md:flex items-center gap-4 lg:gap-5 flex-shrink-0" data-testid="nav-desktop">
+          <Link to="/explore" className={navLinkClass} data-testid="nav-explore">Explore</Link>
+          <Link to="/debates" className={navLinkClass} data-testid="nav-debates">Debates</Link>
+          {user && (
+            <Link to="/dashboard" className={navLinkClass} data-testid="nav-dashboard">Dashboard</Link>
+          )}
+          {user?.role === "admin" && (
+            <Link to="/admin" className="font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin">
+              Admin
+            </Link>
+          )}
           {user ? (
-            <>
-              <Link to="/dashboard" className="hidden sm:inline-block font-display font-bold text-sm text-ink/80 hover:text-ink transition" data-testid="nav-dashboard">
-                Dashboard
-              </Link>
-              {user.role === "admin" && (
-                <>
-                  <Link to="/admin/login-intelligence" className="hidden md:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin">
-                    Admin
-                  </Link>
-                  <Link to="/admin/voice-metrics" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-voice-metrics">
-                    Voice Metrics
-                  </Link>
-                  <Link to="/admin/anonymous-reality" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-anonymous">
-                    Anon Mod
-                  </Link>
-                  <Link to="/admin/anonymous-metrics" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-anonymous-metrics">
-                    Anon Metrics
-                  </Link>
-                  <Link to="/admin/debates" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-debates">
-                    Debates Mod
-                  </Link>
-                  <Link to="/admin/debates/retention" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-debates-retention">
-                    Debates Retention
-                  </Link>
-                  <Link to="/admin/safety" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-safety">
-                    Safety
-                  </Link>
-                  <Link to="/admin/chats" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-chats">
-                    Chats
-                  </Link>
-                  <Link to="/delayed-chat" className="hidden lg:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-delayed-chat">
-                    Delayed
-                  </Link>
-                  <Link to="/admin/delayed-messages" className="hidden xl:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-delayed">
-                    Delayed Mod
-                  </Link>
-                  <Link to="/admin/avatar-chat" className="hidden xl:inline-block font-display font-bold text-sm text-violet-soft hover:text-violet transition" data-testid="nav-admin-avatar-chat">
-                    Avatar Mod
-                  </Link>
-                </>
-              )}
-              <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[180px]" data-testid="nav-user-email">
+            <div className="flex items-center gap-3">
+              <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[160px]" data-testid="nav-user-email">
                 {user.email}
               </span>
-              <button onClick={async () => { await logout(); navigate("/"); }} className="btn-ghost text-xs sm:text-sm" data-testid="nav-logout">
+              <button
+                onClick={async () => { await logout(); navigate("/"); }}
+                className="btn-ghost text-xs sm:text-sm"
+                data-testid="nav-logout"
+              >
                 Log out
               </button>
-            </>
+            </div>
           ) : (
-            <>
+            <div className="flex items-center gap-2">
               <Link to="/login" className="btn-ghost text-xs sm:text-sm" data-testid="nav-login">Log in</Link>
               <Link to="/register" className="btn-brutal text-xs sm:text-sm" data-testid="nav-signup">Get started</Link>
-            </>
+            </div>
           )}
         </nav>
+
+        {/* Mobile hamburger */}
+        <button
+          className="md:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg border border-white/10 text-ink/80 hover:text-ink hover:border-white/25 transition"
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label="Toggle navigation"
+          data-testid="nav-mobile-toggle"
+        >
+          <span className="block w-4 leading-none text-base">{mobileOpen ? "✕" : "☰"}</span>
+        </button>
       </div>
+
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="md:hidden border-t border-white/5 bg-bg/95 backdrop-blur-xl" data-testid="nav-mobile-drawer">
+          <div className="max-w-6xl mx-auto px-4 sm:px-5 py-3 flex flex-col gap-1">
+            <Link to="/explore" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-ink/85" data-testid="nav-mobile-explore">Explore</Link>
+            <Link to="/debates" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-ink/85" data-testid="nav-mobile-debates">Debates</Link>
+            {user && (
+              <Link to="/dashboard" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-ink/85" data-testid="nav-mobile-dashboard">Dashboard</Link>
+            )}
+            {user?.role === "admin" && (
+              <Link to="/admin" onClick={() => setMobileOpen(false)} className="py-2 text-sm font-display font-bold text-violet-soft" data-testid="nav-mobile-admin">Admin</Link>
+            )}
+            <div className="border-t border-white/5 mt-2 pt-2 flex items-center gap-2">
+              {user ? (
+                <>
+                  <span className="text-[11px] font-mono text-muted truncate flex-1">{user.email}</span>
+                  <button
+                    onClick={async () => { setMobileOpen(false); await logout(); navigate("/"); }}
+                    className="btn-ghost text-xs"
+                    data-testid="nav-mobile-logout"
+                  >
+                    Log out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link to="/login" onClick={() => setMobileOpen(false)} className="btn-ghost text-xs flex-1 text-center" data-testid="nav-mobile-login">Log in</Link>
+                  <Link to="/register" onClick={() => setMobileOpen(false)} className="btn-brutal text-xs flex-1 text-center" data-testid="nav-mobile-signup">Get started</Link>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }
