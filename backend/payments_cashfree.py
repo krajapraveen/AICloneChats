@@ -82,16 +82,34 @@ def _is_configured() -> bool:
     return bool(CASHFREE_APP_ID and CASHFREE_SECRET_KEY)
 
 
+def _sdk_mode() -> str:
+    """Translate backend env mode (TEST/PROD/LIVE/SANDBOX/PRODUCTION, any case)
+    to the strict literal the Cashfree JS SDK requires: 'sandbox' or 'production'.
+
+    The SDK's load() silently no-ops on unknown modes — Subscribe buttons appear
+    inert on mobile Safari. This normalizer prevents that production bug.
+    """
+    raw = (CASHFREE_MODE or "").strip().lower()
+    if raw in ("prod", "production", "live"):
+        return "production"
+    # Default to sandbox for anything else (test, sandbox, empty, garbage)
+    return "sandbox"
+
+
 class CreateOrderRequest(BaseModel):
     plan_id: str = Field(min_length=1, max_length=40)
 
 
 @router.get("/config")
 async def payments_config():
-    """Public — surfaces whether payments are configured + the JS SDK mode."""
+    """Public — surfaces whether payments are configured + the JS SDK mode.
+
+    `mode` is ALWAYS one of the literals the Cashfree SDK accepts: 'sandbox'
+    or 'production'. Never expose raw env strings.
+    """
     return {
         "configured": _is_configured(),
-        "mode": CASHFREE_MODE.lower(),
+        "mode": _sdk_mode(),
         "api_version": CASHFREE_API_VERSION,
     }
 
@@ -207,7 +225,7 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
         "requires_currency_disclosure": price["requires_currency_disclosure"],
         "country_code": country_code,
         "plan_id": plan["plan_id"],
-        "mode": CASHFREE_MODE.lower(),
+        "mode": _sdk_mode(),
     }
 
 
@@ -330,7 +348,7 @@ async def create_topup_order(payload: CreateTopupOrderRequest, request: Request,
         "country_code": country_code,
         "pack_id": pack["pack_id"],
         "credits": pack["credits"],
-        "mode": CASHFREE_MODE.lower(),
+        "mode": _sdk_mode(),
         "kind": "topup",
     }
 

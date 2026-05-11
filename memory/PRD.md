@@ -22,6 +22,26 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Cashfree Subscribe Silent No-Op — P0 Revenue Unblock)** — Production checkout was inert.
+  - **Bug**: Subscribe / top-up buttons clicked silently. No toast, no loading state, no navigation. Reported on production `aiclonechats.com` (iPhone Safari).
+  - **Root cause**: Backend was returning `"mode": CASHFREE_MODE.lower()` from `/api/payments/config` AND from `/api/payments/create-order` / `/api/payments/create-topup-order`. With `CASHFREE_MODE=TEST` in env, the response carried `"mode": "test"`. The Cashfree JS SDK's `load({mode})` **only accepts the literals `"sandbox"` or `"production"`** — any other value silently no-ops with no console error and no thrown exception, leaving Subscribe buttons inert on mobile Safari.
+  - **Fix (backend)** — `payments_cashfree.py`:
+    - New `_sdk_mode()` helper translates any env value to the strict SDK literal: `prod|production|live → "production"`, everything else (including empty/garbage) → `"sandbox"` (safe default).
+    - All three response sites (config endpoint, create-order, create-topup-order) now use `_sdk_mode()` instead of raw `CASHFREE_MODE.lower()`. Verified: `grep '"mode":' payments_cashfree.py` returns only `_sdk_mode()` calls.
+  - **Fix (frontend)** — `Pricing.jsx`:
+    - Default state `cashfreeMode` changed from `"test"` to `"sandbox"`.
+    - `useEffect` coerces backend response defensively: `m === "production" ? "production" : "sandbox"`.
+    - Extracted `launchCashfree(paymentSessionId, orderId)` helper used by BOTH plan and top-up flows. Throws **user-facing errors** instead of silent no-ops for: invalid mode, missing `payment_session_id`, `loadCashfree()` rejection, missing `cashfree.checkout` function. Every `catch` block now produces a visible toast.
+  - **Regression test**: `/app/backend/tests/test_cashfree_mode_normalization.py` — 15 parametrized cases lock the contract that `/api/payments/config.mode` is **always** a Cashfree SDK literal regardless of `CASHFREE_MODE` env value (TEST/PROD/LIVE/SANDBOX/PRODUCTION/empty/garbage/whitespace). Plus an inspection guard ensuring `payments_config()` never calls `.lower()` on raw env.
+  - **Updated**: `tests/test_billing_cashfree.py::test_cashfree_create_order_default_no_email_gate` — replaces the old `requires_email_verified` test (verify gate disabled in prior task). Now asserts the order response carries `mode in ("sandbox", "production")`.
+  - **Live verified (preview, mobile width 390px, fresh unverified user)**:
+    - `/api/payments/config` → `{"mode": "sandbox"}` (was `"test"`)
+    - Click Subscribe · ₹499 → **Cashfree sandbox checkout page opens** with UPI/Card/NetBanking/Wallets/Paylater options + ₹499 amount displayed + "Secured by Cashfree Payments" footer.
+    - Network: `sdk.cashfree.com/js/v3/cashfree.js`, `ping_atom.html?context=sandbox`, `sandbox.cashfree.com/pg/view/sessions/checkout` — all 200.
+  - **All tests green**: 50/50 across `test_billing_cashfree.py` + `test_cashfree_mode_normalization.py` + `test_email_pipeline.py`.
+  - **Webhook idempotency** (preserved, not modified): `credit_payment()` in `credits.py` checks `credited_at` on the order doc before applying credits — duplicate webhooks no-op safely. HMAC signature verification + 5-min replay window still enforced.
+  - **Note**: Production fix requires redeploy. Verify in production with `CASHFREE_MODE=PROD` env var; the normalizer will produce `"production"`.
+
 - **2026-05-11 (Multi-Provider Email Reliability Layer — Infra)** — Production onboarding/payment flow now survives Resend outages.
   - **Architecture**:
     - New module `/app/backend/email_sender.py` with provider abstraction (`SendResult` dataclass, `PROVIDERS` registry, `send_email()` chain walker). Per-attempt timeouts (Resend 20s, SMTP 15s). Every attempt persisted to `db.email_send_events` with `{event_id, event_group, timestamp, provider, purpose, recipient_domain (no full email), ok, error_code, latency_ms}`. Same `event_group` across all attempts of one logical send for failover tracing.

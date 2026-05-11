@@ -121,15 +121,23 @@ def test_smart_reply_blocks_when_zero_credits(user_headers):
         assert detail.get("code") in ("insufficient_balance", "daily_cap_reached", "fraud_cooldown")
 
 
-# ---- Cashfree order creation: server-authored, requires email_verified ----
-def test_cashfree_create_order_requires_email_verified(user_headers):
+# ---- Cashfree order creation: 2026-05-11 verify-gate disabled, mode locked to SDK literal ----
+def test_cashfree_create_order_default_no_email_gate(user_headers):
+    """With REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT=false (production default),
+    unverified users can create orders. The response's `mode` must always be
+    a Cashfree SDK literal ('sandbox' | 'production') — never raw env strings
+    like 'test' that silently break the JS SDK.
+    """
     with httpx.Client(timeout=15) as c:
         r = c.post(f"{API}/payments/create-order", headers={"Authorization": user_headers["Authorization"]}, json={"plan_id": "starter"})
-        # Unverified user must get 403
-        assert r.status_code == 403, r.text
+        assert r.status_code == 200, r.text
         body = r.json()
-        detail = body.get("detail") or {}
-        assert "email_not_verified" in (str(detail) + str(body))
+        assert body.get("order_id", "").startswith("order_")
+        assert body.get("payment_session_id")
+        # CRITICAL: mode must be a Cashfree JS SDK literal
+        assert body["mode"] in ("sandbox", "production"), (
+            f"mode={body.get('mode')!r} would silently no-op the Cashfree JS SDK"
+        )
 
 
 # ---- Order amount cannot be tampered: body doesn't accept amount field ----

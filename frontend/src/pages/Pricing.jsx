@@ -39,7 +39,7 @@ export default function Pricing() {
   const [topups, setTopups] = useState({ packs: [], country_code: "", is_active_subscriber: false });
   const [busyPlan, setBusyPlan] = useState(null);
   const [busyTopup, setBusyTopup] = useState(null);
-  const [cashfreeMode, setCashfreeMode] = useState("test");
+  const [cashfreeMode, setCashfreeMode] = useState("sandbox");
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +56,9 @@ export default function Pricing() {
         if (cancelled) return;
         setPlans(plansData.plans || []);
         setCosts(plansData.credit_costs || {});
-        setCashfreeMode(cfg?.mode || "test");
+        // Backend now normalizes mode to 'sandbox' | 'production'. Guard anyway.
+        const m = (cfg?.mode || "").toLowerCase();
+        setCashfreeMode(m === "production" ? "production" : "sandbox");
         setCatalog(cat || null);
         setTopups(tu || { packs: [], is_active_subscriber: false });
       } catch (e) {
@@ -66,6 +68,38 @@ export default function Pricing() {
     return () => { cancelled = true; };
   }, []);
 
+  // Single source of truth for the Cashfree SDK launch. Returns nothing.
+  // On any failure (SDK load / invalid mode / checkout call), a user-facing
+  // toast is shown; nothing is silently swallowed.
+  const launchCashfree = async (paymentSessionId, orderId) => {
+    if (cashfreeMode !== "sandbox" && cashfreeMode !== "production") {
+      // Defensive: backend should always return one of these. If somehow not,
+      // surface a real error instead of letting the SDK silently no-op.
+      // eslint-disable-next-line no-console
+      console.error("Invalid Cashfree mode:", cashfreeMode);
+      throw new Error("Payment gateway is misconfigured. Please contact support.");
+    }
+    if (!paymentSessionId) {
+      throw new Error("Payment session could not be created. Please try again.");
+    }
+    let cashfree;
+    try {
+      cashfree = await loadCashfree({ mode: cashfreeMode });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("loadCashfree failed:", err);
+      throw new Error("Payment gateway didn't load. Please refresh and retry.");
+    }
+    if (!cashfree || typeof cashfree.checkout !== "function") {
+      throw new Error("Payment gateway didn't load. Please refresh and retry.");
+    }
+    await cashfree.checkout({
+      paymentSessionId,
+      returnUrl: `${window.location.origin}/pay/return?order_id=${orderId}`,
+      redirectTarget: "_self",
+    });
+  };
+
   const checkout = async (planId) => {
     if (!user) {
       navigate("/login?redirect=/pricing");
@@ -73,19 +107,13 @@ export default function Pricing() {
     }
     setBusyPlan(planId);
     try {
-      // 1) Ask backend to author the order. Backend sets amount from PLAN_INDEX.
       const { data: order } = await api.post("/payments/create-order", { plan_id: planId });
-      // 2) Hand the session_id to Cashfree Drop-In. SDK opens hosted checkout.
-      const cashfree = await loadCashfree({ mode: cashfreeMode });
-      await cashfree.checkout({
-        paymentSessionId: order.payment_session_id,
-        returnUrl: `${window.location.origin}/pay/return?order_id=${order.order_id}`,
-        redirectTarget: "_self",
-      });
+      await launchCashfree(order?.payment_session_id, order?.order_id);
     } catch (e) {
       const detail = e?.response?.data?.detail;
-      const msg = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
-      toast.error(typeof msg === "string" ? msg : "Could not start checkout.");
+      const apiMsg = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
+      const msg = (typeof apiMsg === "string" && apiMsg) || e?.message || "Could not start checkout.";
+      toast.error(msg);
     } finally {
       setBusyPlan(null);
     }
@@ -103,16 +131,12 @@ export default function Pricing() {
     setBusyTopup(packId);
     try {
       const { data: order } = await api.post("/payments/create-topup-order", { pack_id: packId });
-      const cashfree = await loadCashfree({ mode: cashfreeMode });
-      await cashfree.checkout({
-        paymentSessionId: order.payment_session_id,
-        returnUrl: `${window.location.origin}/pay/return?order_id=${order.order_id}`,
-        redirectTarget: "_self",
-      });
+      await launchCashfree(order?.payment_session_id, order?.order_id);
     } catch (e) {
       const detail = e?.response?.data?.detail;
-      const msg = typeof detail === "object" ? detail?.message : detail;
-      toast.error(msg || "Could not start top-up checkout.");
+      const apiMsg = typeof detail === "object" ? detail?.message : detail;
+      const msg = (typeof apiMsg === "string" && apiMsg) || e?.message || "Could not start top-up checkout.";
+      toast.error(msg);
     } finally {
       setBusyTopup(null);
     }
