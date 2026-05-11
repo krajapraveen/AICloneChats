@@ -42,12 +42,6 @@ export default function PublicClone() {
   const { moodUI, theme: moodTheme, updateMoodUI } = useMoodTheme();
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate(`/login?redirect=/c/${slug}`);
-    }
-  }, [authLoading, user, navigate, slug]);
-
-  useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get(`/clones/by-slug/${slug}`);
@@ -65,6 +59,11 @@ export default function PublicClone() {
 
   const send = async (e) => {
     e?.preventDefault?.();
+    if (!user) {
+      toast.error("Sign in to chat with this clone.");
+      navigate(`/login?redirect=/${slug}`);
+      return;
+    }
     const text = input.trim();
     if (!text || !clone || sending) return;
     setInput("");
@@ -220,7 +219,30 @@ export default function PublicClone() {
             )}
           </div>
 
-          {showNamePrompt ? (
+          {!user && !authLoading ? (
+            <div className="border-t border-white/10 p-5 chat-form-sticky bg-amber/5 flex flex-col sm:flex-row items-center gap-3 sm:gap-4" data-testid="signin-to-chat-cta">
+              <div className="flex-1 text-center sm:text-left">
+                <p className="font-display text-base text-ink leading-snug">Sign in to chat with {clone.display_name}.</p>
+                <p className="text-xs text-muted font-medium mt-0.5">Free to create an account · chats use credits</p>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <button
+                  onClick={() => navigate(`/login?redirect=/${slug}`)}
+                  className="btn-brutal"
+                  data-testid="signin-to-chat-btn"
+                >
+                  Sign in →
+                </button>
+                <button
+                  onClick={() => navigate(`/signup?redirect=/${slug}`)}
+                  className="btn-ghost text-sm"
+                  data-testid="signup-to-chat-btn"
+                >
+                  Sign up
+                </button>
+              </div>
+            </div>
+          ) : showNamePrompt ? (
             <form onSubmit={submitName} className="border-t border-white/10 p-4 chat-form-sticky flex flex-col sm:flex-row gap-2 bg-amber/5" data-testid="visitor-name-form">
               <input className="input-brutal flex-1 min-w-0" required maxLength={40} value={visitorName} onChange={(e) => setVisitorName(e.target.value)} placeholder="What should they call you? (e.g. Sam)" data-testid="visitor-name-input" />
               <button type="submit" className="btn-brutal flex-shrink-0" data-testid="visitor-name-submit">Start chatting →</button>

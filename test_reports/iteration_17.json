@@ -1,0 +1,54 @@
+{
+  "summary": "Frontend regression of PublicClone.jsx auth-gate removal. Logged-out users CAN view /maya-demo (header, marquee, stats, 'Sign in to chat' CTA) without redirect. 404 slug case works. Authenticated subscriber successfully sent a message and received a clone reply from /api/clones/{slug}/chat. Free user (0 credits) does NOT blank the page — global paywall modal intercepts the 402 and an error bubble '(Hmm, I couldn\\'t reply…)' is shown; no React object-render crash, no [object Object]. HOWEVER two real integration bugs found in the redirect handoff: (1) /signup route does not exist in App.js — the CTA's 'Sign up' button lands on the public clone 404 page; (2) Login.jsx reads searchParams.get('next') but PublicClone sends ?redirect=/<slug>, so after login the user is sent to /dashboard instead of back to the clone page.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "App.js Routes (signup alias missing)",
+        "issue": "PublicClone.jsx (line 237) navigates to `/signup?redirect=/${slug}` when the user clicks [data-testid=signup-to-chat-btn]. /signup is NOT a registered route — App.js only registers /register (line 71). The unknown path falls through to the `/:slug` catch-all, which calls GET /api/clones/by-slug/signup → 404 → the [data-testid=clone-not-found] card renders. Result: clicking 'Sign up' from a public clone page shows '404 — no clone here' instead of the registration form.",
+        "selector": "[data-testid=signup-to-chat-btn]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Login.jsx redirect param mismatch",
+        "issue": "PublicClone.jsx (lines 64 & 230) builds `/login?redirect=/${slug}`. Login.jsx (line 25) reads `searchParams.get('next') || '/dashboard'`. The query keys do not match, so after a successful login from the public-clone CTA the user is sent to /dashboard, not back to /<slug>. This breaks user requirement (5) 'After logging in (...) redirected back to /<slug>'. Same issue would apply to the Register page if /signup existed.",
+        "selector": "[data-testid=signin-to-chat-btn]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Logged-out CTA → Sign in → return to clone",
+        "issue": "End-to-end loop broken because Login reads `next` while PublicClone writes `redirect`. Manual repro: visit /maya-demo logged out → click 'Sign in →' → URL becomes /login?redirect=/maya-demo → log in with subscriber-tester@example.com → lands on /dashboard. Expected: lands on /maya-demo.",
+        "affected_selectors": ["[data-testid=signin-to-chat-btn]"]
+      },
+      {
+        "flow": "Logged-out CTA → Sign up",
+        "issue": "Clicking 'Sign up' shows 404 clone-not-found. /signup route is not registered.",
+        "affected_selectors": ["[data-testid=signup-to-chat-btn]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "P0 fix A: Add a /signup route alias in /app/frontend/src/App.js → `<Route path=\"/signup\" element={<Register />} />` (next to line 71). OR change PublicClone.jsx line 237 to `navigate(`/register?redirect=/${slug}`)`. Recommend the route alias since the public-facing CTA copy says 'Sign up' which is the user-friendly term.",
+    "P0 fix B: Reconcile the redirect query key. Recommended: update /app/frontend/src/pages/Login.jsx line 25 to `const next = searchParams.get('redirect') || searchParams.get('next') || '/dashboard';` AND do the same change in Register.jsx so both pages honor the param coming from PublicClone. (Alternatively, change PublicClone.jsx lines 64 and 230/237 from `redirect=` to `next=` — slightly less invasive but less semantic.)",
+    "P2 (cosmetic): The marquee disclaimer is rendered for logged-out visitors too — confirm this is intentional (it is per spec). No change needed."
+  ],
+  "critical_code_review_comments": [
+    "PublicClone.jsx send() handler correctly defends against !user (lines 62-66): toasts a string and navigates to /login. Cannot crash because the guard fires BEFORE the API call.",
+    "PublicClone.jsx error coercion (lines 88-94) safely handles string detail, structured {code,message,request_id} detail, axios Network Error, and unknown shape — verified live: 402 paywall did NOT crash the page (global paywall modal handled it instead and the local catch block still rendered the '(Hmm, I couldn\\'t reply…)' bubble cleanly).",
+    "The page does NOT re-use the shared formatApiError() helper from /app/frontend/src/lib/apiErrors.js — instead it inlines its own coercion. Functionally equivalent today but a maintenance risk: if the backend error shape changes, two places must be updated. Recommend swapping the inline block (lines 88-94) for `toast.error(formatApiError(err, \"Couldn\\'t send\"))` for consistency with the rest of the app.",
+    "Auth-gate removal at the page level is clean — `if (!user) redirect` useEffect is gone, only the send() handler + the conditional render of [data-testid=signin-to-chat-cta] guard authenticated actions. Matches the spec.",
+    "Stats and clone fetches do not require auth on the backend (verified: 200 OK for /api/clones/by-slug/maya-demo and /api/analytics/stats/maya-demo when logged out)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not in scope)", "frontend": "82% (18/22 assertions across two playwright runs — failures are all downstream of the two redirect bugs above)"},
+  "test_credentials": "subscriber-tester@example.com / TestPass123! (Pro, 2498 credits — chat send verified working); sr-tester@example.com / TestPass123! (free, 0 credits — paywall path verified)",
+  "seed_data_creation": "None. Sent 1 chat message as subscriber-tester (debit 2 credits) and triggered 1 paywall event for sr-tester (no credit change since 402 blocks pre-debit).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PublicClone.jsx itself is healthy. The two failures are in App.js routing (missing /signup alias) and Login.jsx/Register.jsx (reads `next`, not `redirect`). After main agent fixes both, retest only the round-trip: (a) /maya-demo logged out → click 'Sign up' → /register or /signup page loads; (b) /maya-demo logged out → click 'Sign in' → log in → lands back on /maya-demo with chat-form visible. Authenticated chat send (subscriber) and 0-credit paywall (sr-tester) are already verified end-to-end this iteration.",
+  "rca_of_the_issue": "Two integration regressions introduced by the auth-gate removal patch. (1) PublicClone.jsx line 237 hard-codes the path '/signup' but App.js (lines 69-176) registers '/register' — no alias exists. React Router falls through to the dynamic '/:slug' route, which then calls GET /api/clones/by-slug/signup → 404 → renders [data-testid=clone-not-found]. Repro: open /maya-demo in incognito → click [data-testid=signup-to-chat-btn] → see '404 — no clone here'. (2) PublicClone.jsx lines 64 and 230 use the URL query key `redirect` but Login.jsx line 25 reads `next`. Mismatch means the post-login navigate(next, {replace:true}) defaults to '/dashboard' for every public-clone visitor who logs in. Repro: open /maya-demo logged out → click [data-testid=signin-to-chat-btn] → URL = /login?redirect=/maya-demo → enter creds → lands on /dashboard (verified twice with subscriber-tester and sr-tester). Mitigation: dual-read in Login/Register: `searchParams.get('redirect') || searchParams.get('next') || '/dashboard'`, and add `<Route path='/signup' element={<Register />} />`. Both are 1-line fixes."
+}
