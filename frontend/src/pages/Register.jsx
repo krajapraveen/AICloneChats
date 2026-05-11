@@ -22,6 +22,7 @@ export default function Register() {
       navigate("/dashboard");
     } catch (err) {
       let detail = err?.response?.data?.detail;
+      if (detail && typeof detail === "object" && !Array.isArray(detail)) detail = detail.message || detail.code;
       if (Array.isArray(detail)) detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
       if (!detail) {
         if (err?.message === "Network Error") detail = "Network error — please check your connection and try again.";

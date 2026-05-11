@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import logging
 import bcrypt
@@ -20,6 +21,55 @@ SESSION_TTL_DAYS = 7
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+# Brute-force lockout config
+LOGIN_LOCKOUT_MAX_FAILS = 5
+LOGIN_LOCKOUT_WINDOW_SEC = 900  # 15 minutes
+
+
+def _new_request_id() -> str:
+    return "req_" + uuid.uuid4().hex[:16]
+
+
+def _client_ip(request: Request) -> str:
+    return (
+        request.headers.get("cf-connecting-ip")
+        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+
+
+def _auth_err(code: str, message: str, request_id: str, status: int = 400) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message, "request_id": request_id})
+
+
+async def _login_rate_limit_or_raise(request: Request, email: str, request_id: str) -> None:
+    """Brute-force lockout: count recent failed attempts by IP+email bucket."""
+    try:
+        from admin import _extract_client_ip, _hash_ip  # reuse hashing for parity with log writes
+        ip = _extract_client_ip(request)
+        ip_hash = _hash_ip(ip)
+        since = (datetime.now(timezone.utc) - timedelta(seconds=LOGIN_LOCKOUT_WINDOW_SEC)).isoformat()
+        fails = await db.login_events.count_documents({
+            "event_type": "login_failed",
+            "ip_address_hash": ip_hash,
+            "email": (email or "").lower(),
+            "created_at": {"$gte": since},
+        })
+        if fails >= LOGIN_LOCKOUT_MAX_FAILS:
+            raise _auth_err(
+                "rate_limited",
+                "Too many failed attempts. Try again in 15 minutes.",
+                request_id,
+                status=429,
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Rate-limit store failing should NEVER block real users
+        return
 
 
 # ----- helpers -----
@@ -112,22 +162,31 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
     # Lazy import to avoid circular: admin imports get_current_user from this module
     from admin import record_login_event, ensure_admin_role
 
-    existing = await db.users.find_one({"email": payload.email.lower()}, {"_id": 0})
+    request_id = _new_request_id()
+    response.headers["X-Request-Id"] = request_id
+
+    email = (payload.email or "").strip().lower()
+    if not EMAIL_RE.match(email):
+        raise _auth_err("invalid_email", "Please enter a valid email address.", request_id, status=400)
+    if not payload.password or len(payload.password) < 6:
+        raise _auth_err("weak_password", "Password must be at least 6 characters.", request_id, status=400)
+
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         await record_login_event(
             request,
             event_type="login_failed",
             login_method="email_password",
-            email=payload.email,
+            email=email,
             failure_reason="email_already_registered",
         )
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise _auth_err("email_already_registered", "An account with this email already exists.", request_id, status=400)
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     user_doc = {
         "user_id": user_id,
-        "email": payload.email.lower(),
-        "name": payload.name or payload.email.split("@")[0],
+        "email": email,
+        "name": payload.name or email.split("@")[0],
         "picture": "",
         "password_hash": hash_password(payload.password),
         "auth_provider": "email",
@@ -153,6 +212,7 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
     return {
         "user": user_view,
         "session_token": token,
+        "request_id": request_id,
     }
 
 
@@ -160,26 +220,49 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
 async def login(payload: LoginRequest, request: Request, response: Response):
     from admin import record_login_event, ensure_admin_role
 
-    user = await db.users.find_one({"email": payload.email.lower()}, {"_id": 0})
+    request_id = _new_request_id()
+    response.headers["X-Request-Id"] = request_id
+
+    email = (payload.email or "").strip().lower()
+    if not EMAIL_RE.match(email):
+        raise _auth_err("invalid_email", "Please enter a valid email address.", request_id, status=400)
+    if not payload.password:
+        raise _auth_err("missing_password", "Password is required.", request_id, status=400)
+
+    # Brute-force lockout BEFORE doing any DB work — also denies enumeration via timing
+    await _login_rate_limit_or_raise(request, email, request_id)
+
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    invalid_msg = "Email or password is incorrect."
     if not user or not user.get("password_hash"):
         await record_login_event(
             request,
             event_type="login_failed",
             login_method="email_password",
-            email=payload.email,
+            email=email,
             failure_reason="invalid_credentials",
         )
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise _auth_err("invalid_credentials", invalid_msg, request_id, status=401)
+    if user.get("is_suspended") or user.get("is_deactivated"):
+        await record_login_event(
+            request,
+            event_type="login_failed",
+            login_method="email_password",
+            email=email,
+            user={"user_id": user["user_id"], "email": user["email"], "name": user.get("name")},
+            failure_reason="account_suspended",
+        )
+        raise _auth_err("account_suspended", "This account has been suspended. Contact support.", request_id, status=403)
     if not verify_password(payload.password, user["password_hash"]):
         await record_login_event(
             request,
             event_type="login_failed",
             login_method="email_password",
-            email=payload.email,
+            email=email,
             user={"user_id": user["user_id"], "email": user["email"], "name": user.get("name")},
             failure_reason="invalid_password",
         )
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise _auth_err("invalid_credentials", invalid_msg, request_id, status=401)
 
     token = await create_session(user["user_id"], source="email")
     set_session_cookie(response, token)
@@ -194,6 +277,7 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     return {
         "user": user_view,
         "session_token": token,
+        "request_id": request_id,
     }
 
 

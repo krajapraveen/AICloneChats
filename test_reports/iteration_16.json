@@ -1,0 +1,51 @@
+{
+  "summary": "Visibility + auth hardening end-to-end test. Backend: 21/22 pytest pass (1 real bug found in login invalid-email shape). Frontend: All 4 P0 flows verified — Login forgot link, Forgot/Reset pages, Dashboard plans + top-ups (subscriber + non-subscriber CTAs), mobile responsiveness at 390px. Email-enumeration neutrality confirmed (login unknown vs wrong-password return identical 401 invalid_credentials; forgot-password returns identical neutral 200 shape for known/unknown emails). Audit logs verified for login_failed, password_reset_requested (event_id present), password_reset_completed (sessions_invalidated metadata). DB security: password_reset_tokens stores only sha256 token_hash (64 hex), no raw token; consumed flag flips after reset; user_sessions cleared (delete_many) on successful reset.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/auth/login (and /api/auth/register)",
+        "issue": "Spec requires invalid email format to return 400 with structured detail={code:'invalid_email', message, request_id}. ACTUAL: returns 422 with FastAPI default validation array shape because models.LoginRequest.email and RegisterRequest.email are typed as Pydantic EmailStr — validation runs BEFORE the handler so the manual EMAIL_RE check in auth.py never executes for malformed emails. Fix: change models.py to `email: str = Field(min_length=3, max_length=320)` for both LoginRequest and RegisterRequest so the handler's EMAIL_RE branch fires and returns the structured 400.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/dashboard top-up cards", "issues": ["Spec mentioned 'Mega Top-Up' (topup_mega ₹7,999 → 12,000 credits); actual label is 'CREATOR TOP-UP'. Pricing & credit values match exactly — naming cosmetic only."]},
+      {"screen": "/dashboard plans section", "issues": ["Individual plan cards do not expose [data-testid^='plan-card-'] selectors; only the section-level [data-testid='dashboard-plans-section'] is testable. All 4 cards (Starter/Pro/Premium/Ultimate) are rendered with correct ₹ prices and 'CURRENT' badge on subscriber's active plan. Consider adding per-card test ids for finer-grained automation."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_hardening.py",
+    "/app/test_reports/pytest/auth_hardening.xml"
+  ],
+  "action_items": [
+    "P1: Change models.LoginRequest.email and RegisterRequest.email from EmailStr to str (with Field validation) so the structured invalid_email 400 shape (with code+message+request_id) is returned instead of FastAPI's default 422 array. Validation already exists in auth.py via EMAIL_RE — currently unreachable for these two endpoints.",
+    "P3 (cosmetic): Rename 'CREATOR TOP-UP' card to 'Mega Top-Up' for spec parity, or update the spec.",
+    "P3 (testability): Add data-testid='plan-card-{plan_id}' to each PlansShowcase plan card for finer Playwright targeting."
+  ],
+  "critical_code_review_comments": [
+    "auth.py:_login_rate_limit_or_raise correctly uses ip_address_hash (from admin._hash_ip) for the brute-force counter; the compound index added in server.py supports this query. Verified 429 fires on 6th attempt within 15-min window.",
+    "password_reset.py uses hashlib.sha256(raw).hexdigest() for token_hash — verified DB only stores 64-char hex; raw token never persisted. Single-use enforced via atomic update_one({consumed:False},{consumed:True}) with modified_count race-loss check — clean implementation.",
+    "Forgot-password rate-limit is best-effort: rate_limit_store exceptions are swallowed (except HTTPException). Good — never locks out real users due to storage outage. ✓",
+    "Forgot-password endpoint always issues a DB write (audit) and (when user exists) executes the Resend send-attempt — timing-equalization mostly relies on Resend latency. The unknown-email branch skips the token mint + email send entirely; in production this is a potential 30-100ms timing oracle. Mitigation: optionally fake the send latency on the unknown branch via asyncio.sleep equal to the median resend RTT. NOT a blocker — measured delta in our 5-trial loop fell within network jitter (<100ms).",
+    "auth.py:logout correctly deletes session by token AND clears the cookie. ✓",
+    "password_reset.py:reset-password performs verify_password(new_pw, old_hash) before consuming — returns same_password 400 if user picks the existing password. Good UX, but means a slow timing channel could (in theory) reveal whether the current password was guessed; impact minimal because bcrypt is constant-time enough and rate-limited.",
+    "models.RegisterRequest.email and LoginRequest.email use EmailStr → bypasses the spec's structured 400 invalid_email shape. SEE action_items P1.",
+    "PlansShowcase renders prices directly from /api/pricing/catalog (currency.symbol from backend) — no JS price math. ✓ verified ₹499 / ₹1,499 / ₹3,999 / ₹9,999 match backend.",
+    "Top-up CTA for non-subscriber correctly renders 'Subscribers only' text + 'Subscribe to unlock top-ups' header — verified on /dashboard for sr-tester@example.com. Server-side 403 for POST /api/payments/create-topup-order was previously verified in iter 15 (per spec note)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_hardening.py (NEW — 22 tests across 5 classes)"
+  ],
+  "success_rate": {"backend": "95.5% (21/22, 1 failure is a real product bug)", "frontend": "100% (12/12 P0 assertions)"},
+  "test_credentials": "subscriber-tester@example.com / TestPass123! (Pro, restored), sr-tester@example.com / TestPass123! (free, password restored after test reset)",
+  "seed_data_creation": "Inserted ~6 docs into db.password_reset_tokens during test (3 valid, 1 expired, 1 frontend-flow, 1 restore). Inserted 1 transient suspended-* user (cleaned up). Inserted ~12 auth_rate_limits docs (cleaned up). Restored sr-tester's password back to TestPass123! at end.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The ONLY real bug is the EmailStr issue in models.py preventing structured 400 invalid_email for login/register. Everything else (forgot, reset, validate, rate-limit, lockout, audit logs, sessions invalidation, dashboard plans + top-ups, mobile responsive) is healthy. To rerun: pytest backend/tests/test_auth_hardening.py -v. Note that test_invalid_email_format will keep failing until models.py is patched. After fix, also add a Register equivalent test — same root cause. Cleanup auth_rate_limits collection between full-suite runs (login bruteforce test is sticky).",
+  "rca_of_the_issue": "Bug: POST /api/auth/login with email='bad' returns HTTP 422 (FastAPI's default RequestValidationError shape — array of {type,loc,msg}) instead of HTTP 400 with detail={code:'invalid_email', message, request_id}. Cause: models.LoginRequest.email is annotated as Pydantic EmailStr. FastAPI runs body validation BEFORE invoking the endpoint, so any input failing EmailStr's regex short-circuits with FastAPI's generic validation error. The custom EMAIL_RE guard in auth.py:login (lines 226-228) is unreachable for that input. The 'unknown_email' enumeration-neutrality property is NOT affected (both unknown and wrong-password return identical 401 invalid_credentials — verified). Repro: curl -X POST $URL/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"bad\",\"password\":\"x\"}' → 422. Fix: edit /app/backend/models.py — replace `email: EmailStr` with `email: str = Field(min_length=3, max_length=320)` on BOTH LoginRequest and RegisterRequest, so the request body is accepted and the handler's EMAIL_RE branch returns the structured 400. Forgot-password is unaffected because ForgotPasswordRequest.email is already `str` in password_reset.py."
+}

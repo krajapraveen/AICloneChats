@@ -74,6 +74,8 @@ app.include_router(delayed_messages.admin_router)
 app.include_router(clone_artifacts.router)
 app.include_router(clone_artifacts.admin_router)
 app.include_router(email_verify.router)
+import password_reset  # noqa: E402
+app.include_router(password_reset.router)
 app.include_router(payments_cashfree.router)
 app.include_router(billing_api.public_router)
 app.include_router(billing_api.admin_router)
@@ -129,6 +131,16 @@ async def on_startup():
     await _db.login_events.create_index([("event_type", 1), ("created_at", -1)])
     await _db.login_events.create_index([("user_id", 1), ("created_at", -1)])
     await _db.login_events.create_index([("email", 1), ("created_at", -1)])
+    await _db.login_events.create_index([("ip_address_hash", 1), ("email", 1), ("event_type", 1), ("created_at", -1)])
+    # Password reset
+    await _db.password_reset_tokens.create_index("token_hash", unique=True)
+    await _db.password_reset_tokens.create_index([("user_id", 1), ("created_at", -1)])
+    # TTL on expires_at — Mongo will need a Date type for actual TTL; the string
+    # field is kept for read-side validation and a manual sweep is acceptable.
+    await _db.password_reset_tokens.create_index([("expires_at", 1)])
+    # Auth rate limit buckets
+    await _db.auth_rate_limits.create_index([("key", 1), ("created_at", -1)])
+    await _db.auth_rate_limits.create_index([("created_at", 1)])
     await _db.admin_users.create_index("email", unique=True)
     # Voice messaging
     await _db.voice_sessions.create_index("session_id", unique=True)

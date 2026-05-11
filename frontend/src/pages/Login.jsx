@@ -22,14 +22,22 @@ export default function Login() {
       await login(email, password);
       navigate("/dashboard");
     } catch (err) {
-      let detail = err?.response?.data?.detail;
-      if (Array.isArray(detail)) detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
-      if (!detail) {
-        if (err?.message === "Network Error") detail = "Network error — please check your connection.";
-        else if (err?.response?.status) detail = `Login failed (HTTP ${err.response.status})`;
-        else detail = "Login failed";
+      const detail = err?.response?.data?.detail;
+      let msg;
+      if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+        msg = detail.message || detail.code || "Login failed";
+      } else if (Array.isArray(detail)) {
+        msg = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+      } else if (typeof detail === "string") {
+        msg = detail;
+      } else if (err?.message === "Network Error") {
+        msg = "Network error — please check your connection.";
+      } else if (err?.response?.status) {
+        msg = `Login failed (HTTP ${err.response.status})`;
+      } else {
+        msg = "Login failed";
       }
-      setError(detail);
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -59,7 +67,12 @@ export default function Login() {
               <input className="input-brutal" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="login-email-input" />
             </div>
             <div>
-              <label className="label-brutal block mb-1.5">Password</label>
+              <div className="flex items-baseline justify-between mb-1.5">
+                <label className="label-brutal">Password</label>
+                <Link to="/forgot-password" className="text-[11px] font-mono uppercase tracking-widest text-amber hover:text-amber-soft underline underline-offset-2" data-testid="login-forgot-link">
+                  Forgot password?
+                </Link>
+              </div>
               <input className="input-brutal" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" data-testid="login-password-input" />
             </div>
             {(error || oauthError) && (

@@ -5,6 +5,8 @@ import api from "../lib/api";
 import { formatCount } from "../lib/format";
 import { useAuth } from "../contexts/AuthContext";
 import Navbar from "../components/Navbar";
+import PlansShowcase from "../components/PlansShowcase";
+import { useCredits } from "../hooks/useCredits";
 
 function StatTile({ label, value, tone, testId }) {
   return (
@@ -67,6 +69,7 @@ function ComingSoonCard({ tone, kicker, title, body, icon, testId, onInterest, a
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
+  const credits = useCredits();
   const navigate = useNavigate();
   const [clones, setClones] = useState([]);
   const [stats, setStats] = useState({}); // clone_id -> stats
@@ -141,6 +144,9 @@ export default function Dashboard() {
       <div className="orb orb-violet w-[380px] h-[380px] top-72 -left-32 opacity-20 animate-orb" style={{ animationDelay: "2s" }} aria-hidden />
 
       <div className="max-w-6xl mx-auto px-4 sm:px-5 md:px-8 py-6 sm:py-10 relative" data-testid="dashboard-page">
+        {/* PLANS — top-of-dashboard pricing visibility */}
+        <PlansShowcase user={user} credits={credits} />
+
         {/* HERO */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-10" data-testid="dashboard-hero">
           <div className="lg:col-span-7 glass-card p-6 sm:p-8 flex flex-col justify-between relative overflow-hidden">
