@@ -158,8 +158,8 @@ export default function SmartReplyStudio() {
 
   const handleUpgrade = () => {
     track("smart_reply_upgrade_clicked", { source: "usage_limit_modal" });
-    toast.info("Pro launch coming soon — you're on the early list.");
     setPaywallOpen(false);
+    navigate("/pricing?source=smart_reply&intent=upgrade");
   };
 
   const remainingPill = () => {

@@ -621,7 +621,7 @@ export default function VoiceMessaging() {
       <UsageLimitModal
         open={paywall}
         onClose={() => setPaywall(false)}
-        onUpgradeClick={() => { toast.info("Pro launch coming soon — you're on the early list."); setPaywall(false); }}
+        onUpgradeClick={() => { setPaywall(false); navigate("/pricing?source=voice_messaging&intent=upgrade"); }}
         daily_limit={20}
       />
       <VoiceShareConfirm

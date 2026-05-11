@@ -22,6 +22,12 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Smart Reply & Voice Messaging Paywall CTA Loop — P0 Bug Fix)** — Conversion-blocking bug.
+  - **Bug**: Smart Reply daily-limit modal "Upgrade to Pro" button showed `toast.info("Pro launch coming soon — you're on the early list.")` and closed the modal, leaving the user on the same page. Same dead-end existed in Voice Messaging. Reported by user with screenshot from `aiclonechats.com`.
+  - **Fix**: `SmartReplyStudio.jsx::handleUpgrade` now `navigate("/pricing?source=smart_reply&intent=upgrade")`. `VoiceMessaging.jsx` `onUpgradeClick` now `navigate("/pricing?source=voice_messaging&intent=upgrade")`. Both close the modal first. The dead "Pro launch coming soon" copy is removed everywhere (grep'd `/app/frontend/src` — no other occurrences).
+  - **Verified**: Live preview — logged in as `sr-tester@example.com`, generated a reply → daily-limit modal opened → clicked Upgrade → landed on `/pricing?source=smart_reply&intent=upgrade` with full pricing tiers + subscriber top-up section rendering correctly.
+  - **Note**: Reported on production (`aiclonechats.com`); fix in preview — redeploy required.
+
 - **2026-05-11 (Chat Bubble Mobile Wrap Fix — P0 Bug Fix)** — Production iPhone Safari.
   - **Bug**: On mobile Safari, short messages like "Hello" were wrapping character-by-character vertically ("He / llo"). Root cause: `overflow-wrap: anywhere` + `word-break: break-word` in `index.css:74` lets Safari's flexbox shrink the bubble to *broken-content min-width* rather than *word min-width*. Reported by user with screenshot from `aiclonechats.com`.
   - **Fix** (`/app/frontend/src/index.css`): Replaced `overflow-wrap: anywhere; word-break: break-word;` with `overflow-wrap: break-word; word-break: normal; white-space: pre-wrap; hyphens: none;`. `break-word` (unlike `anywhere`) only allows breaking when a word truly can't fit on its own line, and never affects min-content size.
