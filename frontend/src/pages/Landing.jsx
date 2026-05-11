@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
+import ContactBar from "../components/ContactBar";
 import ChatTypeCards from "../components/ChatTypeCards";
 import FounderAboutSection from "../components/FounderAboutSection";
 
@@ -14,6 +15,7 @@ export default function Landing() {
   return (
     <div className="page-bg">
       <Navbar />
+      <ContactBar />
 
       {/* Decorative orbs */}
       <div className="orb orb-amber w-[420px] h-[420px] -top-20 -right-20 animate-orb" aria-hidden />
@@ -169,10 +171,35 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer className="border-t border-white/5 py-8" data-testid="footer">
-        <div className="max-w-6xl mx-auto px-5 md:px-8 flex items-center justify-between text-xs font-mono uppercase tracking-widest text-muted">
-          <span>© aiclonechats.com</span>
-          <span>Built with feelings · Not a real person</span>
+      <footer className="border-t border-white/5 py-10" data-testid="footer">
+        <div className="max-w-6xl mx-auto px-5 md:px-8 space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">aiclonechats.com</div>
+              <p className="text-sm text-ink/75 leading-relaxed max-w-sm">
+                Build original AI personas. The system remembers — it does not chase. Not affiliated with any celebrity, brand, or franchise.
+              </p>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">Legal</div>
+              <ul className="space-y-1.5 text-sm">
+                <li><Link to="/terms" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-terms">Terms of Service</Link></li>
+                <li><Link to="/privacy" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-privacy">Privacy Policy</Link></li>
+                <li><Link to="/acceptable-use" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-acceptable-use">Acceptable Use</Link></li>
+              </ul>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">Contact</div>
+              <ul className="space-y-1.5 text-sm font-mono">
+                <li><a href="mailto:admin@aiclonechats.com" className="text-amber hover:text-amber-soft break-all" data-testid="footer-admin-mail">admin@aiclonechats.com</a></li>
+                <li><a href="mailto:krajapraveen@aiclonechats.com" className="text-amber hover:text-amber-soft break-all" data-testid="footer-founder-mail">krajapraveen@aiclonechats.com</a></li>
+              </ul>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs font-mono uppercase tracking-widest text-muted border-t border-white/5 pt-5">
+            <span>© {new Date().getFullYear()} aiclonechats.com</span>
+            <span>Original personas only · Built with feelings · Not a real person</span>
+          </div>
         </div>
       </footer>
     </div>

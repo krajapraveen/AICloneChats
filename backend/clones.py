@@ -1,4 +1,6 @@
+import re
 import uuid
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 
@@ -8,8 +10,51 @@ from models import CloneCreate, CloneUpdate, Clone, now_iso, PERSONALITY_DEFAULT
 from safety_filter import moderate_user_input, log_moderation_event, safe_chat_response_fallback
 
 router = APIRouter(prefix="/api/clones", tags=["clones"])
+logger = logging.getLogger(__name__)
 
 RESERVED_SLUGS = {"api", "admin", "auth", "login", "register", "dashboard", "settings", "new", "create"}
+
+# High-risk IP / impersonation terms. Used in addition to the LLM moderation
+# pass to catch obvious brand/franchise/celebrity references on public-facing
+# fields (name, slug, display_name) where a single word can carry trademark
+# weight. Surface-level — the LLM safety filter handles deeper context.
+_IP_BLOCKLIST_TERMS = [
+    # Studios / franchises
+    "disney", "pixar", "marvel", "dc comics", "warnerbros", "netflix", "hbo",
+    "paramount", "lucasfilm", "starwars", "harrypotter", "potter", "pokemon",
+    "nintendo", "playstation", "xbox",
+    # Big tech / product brands that get impersonated
+    "openai", "chatgpt", "anthropic", "claude bot", "googlebot", "gemini ai",
+    "whatsapp", "instagram", "facebook bot", "tiktok bot", "twitter bot",
+    "spotify bot", "youtube bot",
+    # Pirated/illegal cue words
+    "pirated", "piracy", "cracked software", "license bypass",
+]
+_IP_BLOCKLIST_RE = re.compile(
+    r"\b(" + "|".join(re.escape(t) for t in _IP_BLOCKLIST_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _check_ip_blocklist(text: str) -> Optional[str]:
+    if not text:
+        return None
+    m = _IP_BLOCKLIST_RE.search(text)
+    return m.group(1).lower() if m else None
+
+
+async def _audit_ip_block(user_id: str, route: str, field: str, matched_term: str, value: str) -> None:
+    try:
+        await db.ip_safety_blocks.insert_one({
+            "user_id": user_id,
+            "route": route,
+            "field": field,
+            "matched_term": matched_term,
+            "value_preview": (value or "")[:120],
+            "created_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning("ip_safety_block audit failed: %s", e)
 
 
 def _check_clone_text_safety(user_id: str, route: str, fields: dict) -> Optional[dict]:
@@ -44,6 +89,21 @@ async def create_clone(payload: CloneCreate, user: dict = Depends(get_current_us
     count = await db.clones.count_documents({"user_id": user["user_id"]})
     if count >= 5:
         raise HTTPException(status_code=400, detail="Clone limit reached")
+
+    # IP / brand / franchise blocklist on identity fields (name + slug)
+    for fname, fval in (("display_name", payload.display_name), ("slug", slug), ("bio", payload.bio)):
+        term = _check_ip_blocklist(str(fval or ""))
+        if term:
+            await _audit_ip_block(user["user_id"], "clone_create", fname, term, str(fval or ""))
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "ip_blocked_term",
+                    "field": fname,
+                    "matched_term": term,
+                    "message": "This name or description references a brand, franchise, or trademark we can't host. Use an original persona.",
+                },
+            )
 
     # Safety: block unsafe bios / catchphrases / topics / display name
     blocked = _check_clone_text_safety(user["user_id"], "clone_create", {

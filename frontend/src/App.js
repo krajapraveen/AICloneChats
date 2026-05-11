@@ -11,6 +11,9 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import Terms from "./pages/Terms";
+import Privacy from "./pages/Privacy";
+import AcceptableUse from "./pages/AcceptableUse";
 import Dashboard from "./pages/Dashboard";
 import CloneEditor from "./pages/CloneEditor";
 import MemoryManager from "./pages/MemoryManager";
@@ -68,6 +71,9 @@ function AppRouter() {
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/acceptable-use" element={<AcceptableUse />} />
       <Route path="/explore" element={<Explore />} />
       <Route path="/mood-chat" element={<MoodChat />} />
       <Route path="/smart-reply" element={<SmartReplyStudio />} />
