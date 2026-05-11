@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useGoogleAuthConfig } from "../contexts/GoogleAuthConfigContext";
 import Navbar from "../components/Navbar";
@@ -14,6 +14,7 @@ export default function Register() {
   const { register } = useAuth();
   const { configured: googleConfigured } = useGoogleAuthConfig();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -21,7 +22,8 @@ export default function Register() {
     setLoading(true);
     try {
       await register(email, password, name);
-      navigate("/dashboard");
+      const next = searchParams.get("next") || "/dashboard";
+      navigate(next, { replace: true });
     } catch (err) {
       let detail = err?.response?.data?.detail;
       if (detail && typeof detail === "object" && !Array.isArray(detail)) detail = detail.message || detail.code;

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { formatCount, MOOD_META } from "../lib/format";
 import Navbar from "../components/Navbar";
+import { useAuth } from "../contexts/AuthContext";
 
 const CATEGORIES = [
   { id: "trending", label: "Most Shared", emoji: "🔥" },
@@ -59,9 +60,17 @@ function CloneTile({ c }) {
 }
 
 export default function Explore() {
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [category, setCategory] = useState("trending");
   const [clones, setClones] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const goBuildClone = () => {
+    if (authLoading) return;
+    if (user) navigate("/clones/new");
+    else navigate("/login?next=/clones/new");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +139,7 @@ export default function Explore() {
             <div className="text-4xl mb-3">🌱</div>
             <h3 className="heading-display text-2xl mb-2">Nothing here yet.</h3>
             <p className="text-muted font-medium mb-5">Be the first {active.label.toLowerCase()} clone — your share counter starts at 0 too.</p>
-            <Link to="/register" className="btn-brutal" data-testid="explore-create-cta">Build a clone →</Link>
+            <button onClick={goBuildClone} disabled={authLoading} className="btn-brutal disabled:opacity-60" data-testid="explore-create-cta">{authLoading ? "Checking…" : "Build a clone →"}</button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="explore-grid">
@@ -143,7 +152,9 @@ export default function Explore() {
             <h3 className="heading-display text-xl md:text-2xl mb-1">Want to be on this page?</h3>
             <p className="text-sm text-muted font-medium">Make your clone, share the link, climb the list.</p>
           </div>
-          <Link to="/register" className="btn-brutal flex-shrink-0">Build your clone →</Link>
+          <button onClick={goBuildClone} disabled={authLoading} className="btn-brutal flex-shrink-0 disabled:opacity-60" data-testid="explore-build-clone-btn">
+            {authLoading ? "Checking…" : "Build your clone →"}
+          </button>
         </div>
       </div>
     </div>

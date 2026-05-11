@@ -29,7 +29,10 @@ function ActiveGoogleButton({ label, testId, onSuccess }) {
         const redirect_uri = window.location.origin;
         const user = await loginWithGoogle(resp.code, redirect_uri);
         if (onSuccess) onSuccess(user);
-        else navigate("/dashboard", { replace: true });
+        else {
+          const next = new URLSearchParams(window.location.search).get("next") || "/dashboard";
+          navigate(next, { replace: true });
+        }
       } catch (err) {
         const status = err?.response?.status;
         const rawDetail = err?.response?.data?.detail;
