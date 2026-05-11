@@ -159,12 +159,12 @@ export default function Pricing() {
             </div>
           )}
           {user && !credits.email_verified && !credits.admin_unlimited && (
-            <div className="brutal-card p-4 border-amber/40 bg-amber-500/10 flex items-center justify-between gap-3" data-testid="pricing-verify-banner">
-              <div>
+            <div className="brutal-card p-4 border-amber/40 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="pricing-verify-banner">
+              <div className="min-w-0">
                 <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Verify your email first</div>
-                <div className="text-sm">We'll send a 6-digit code to your inbox. Required before subscribing.</div>
+                <div className="text-sm">We'll send a 6-digit code to <span className="font-mono text-ink break-all">{user.email}</span>. Required before subscribing.</div>
               </div>
-              <button onClick={() => navigate("/verify-email")} className="btn-brutal text-xs" data-testid="pricing-verify-cta">Verify email</button>
+              <button onClick={() => navigate("/verify-email?redirect=/pricing")} className="btn-brutal text-xs flex-shrink-0 self-start sm:self-auto" data-testid="pricing-verify-cta">Verify email</button>
             </div>
           )}
           {user && credits.email_verified && !credits.admin_unlimited && (
@@ -234,7 +234,7 @@ export default function Pricing() {
                     <div className="btn-ghost text-xs text-center cursor-default opacity-60" data-testid={`pricing-cta-${p.plan_id}`}>Free tier · no chats</div>
                   ) : (
                     <button
-                      onClick={() => user ? navigate("/verify-email") : navigate("/register")}
+                      onClick={() => user ? navigate("/verify-email?redirect=/pricing") : navigate("/register?redirect=/pricing")}
                       className="btn-ghost text-xs"
                       data-testid={`pricing-cta-${p.plan_id}`}
                     >

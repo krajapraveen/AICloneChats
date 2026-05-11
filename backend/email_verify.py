@@ -72,7 +72,7 @@ async def _send_otp_email(to_email: str, code: str) -> bool:
         import requests
         html = f"""<div style="font-family:system-ui;max-width:480px;margin:0 auto;padding:24px;color:#111">
 <h2 style="margin:0 0 8px">Confirm your email</h2>
-<p style="color:#555;font-size:14px;margin:0 0 18px">Enter this code on aiclonechats.com to activate your 50 free credits.</p>
+<p style="color:#555;font-size:14px;margin:0 0 18px">Enter this code on aiclonechats.com to verify your account and unlock subscriptions.</p>
 <div style="font-size:28px;font-weight:700;letter-spacing:0.18em;font-family:ui-monospace,monospace;padding:14px 18px;background:#f4f4f5;border-radius:10px;text-align:center">{code}</div>
 <p style="color:#888;font-size:12px;margin:18px 0 0">Code expires in 10 minutes. If you didn't request this, ignore the email.</p>
 </div>"""

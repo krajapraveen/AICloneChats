@@ -22,6 +22,20 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Email Verification Round-Trip — P0 Bug Fix)** — Conversion-blocking flow restored.
+  - **Bugs (all confirmed in preview repro):**
+    1. `Pricing.jsx` "Verify email" CTAs (lines 167, 237) called `navigate("/verify-email")` with NO `?redirect=/pricing` param → after a successful verify, user landed on `/dashboard` instead of returning to Pricing, breaking the subscribe-after-verify flow.
+    2. `VerifyEmail.jsx` advertised "Confirm & claim 50 credits" and "Your 50 free credits land the moment you confirm" — but the 0-credit policy makes `grant_signup_credits_if_eligible` return `{granted: False, reason: "signup_grants_disabled"}`, so users got a misleading "Verified. (signup grants disabled — no free credits granted)" toast.
+    3. `VerifyEmail.jsx` auth guard (`if (!user) navigate("/login")`) ran BEFORE `AuthContext.loading` finished hydrating, redirecting authenticated users to `/login` when they hit `/verify-email` cold (e.g., via direct link or page refresh). Same root-cause pattern as the earlier PublicClone auth-gate.
+    4. Verify-banner on Pricing did not show *which* email was being verified, so users couldn't tell what address would receive the code.
+    5. OTP email body promised "activate your 50 free credits" — also stale.
+  - **Fix:**
+    - `Pricing.jsx` — both Verify CTAs now use `/verify-email?redirect=/pricing`; the free-plan "Create account" CTA also carries `?redirect=/pricing`. Banner now reads "We'll send a 6-digit code to <user.email>" and stacks vertically on mobile.
+    - `VerifyEmail.jsx` — added `authLoading` guard (skip redirect during AuthContext hydration); button label changed to **"Confirm email"**; copy simplified ("We need to confirm you control <email>. Enter the 6-digit code we sent you."); success toast unified to "Email verified."; preserves `redirect` param when bouncing logged-out users to `/login`.
+    - `email_verify.py` (backend) — OTP email HTML body no longer mentions "50 free credits"; replaced with "verify your account and unlock subscriptions."
+  - **Verified live (preview):** Fresh register → `/pricing` shows email-aware verify banner → click Verify → lands on `/verify-email?redirect=/pricing` → send OTP → enter code → confirm → returns to `/pricing` with pathname check (not query). Banner disappears, balance card "0 credits · Plan: Free" appears, all 4 paid tiers become Subscribe-able. No re-login required. Auth-loading guard verified by direct cold-loading `/verify-email?redirect=/pricing` while logged in (previously bounced to /login).
+  - **Note**: Reported on production (`aiclonechats.com`). Fix in **preview** — redeploy required.
+
 - **2026-05-11 (Smart Reply & Voice Messaging Paywall CTA Loop — P0 Bug Fix)** — Conversion-blocking bug.
   - **Bug**: Smart Reply daily-limit modal "Upgrade to Pro" button showed `toast.info("Pro launch coming soon — you're on the early list.")` and closed the modal, leaving the user on the same page. Same dead-end existed in Voice Messaging. Reported by user with screenshot from `aiclonechats.com`.
   - **Fix**: `SmartReplyStudio.jsx::handleUpgrade` now `navigate("/pricing?source=smart_reply&intent=upgrade")`. `VoiceMessaging.jsx` `onUpgradeClick` now `navigate("/pricing?source=voice_messaging&intent=upgrade")`. Both close the modal first. The dead "Pro launch coming soon" copy is removed everywhere (grep'd `/app/frontend/src` — no other occurrences).

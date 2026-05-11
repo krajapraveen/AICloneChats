@@ -28,7 +28,7 @@ function getOrMakeDeviceId() {
 }
 
 export default function VerifyEmail() {
-  const { user, refreshUser } = useAuth();
+  const { user, loading: authLoading, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const redirect = params.get("redirect") || "/dashboard";
@@ -41,14 +41,15 @@ export default function VerifyEmail() {
   const sendInFlight = useRef(false);
 
   useEffect(() => {
+    if (authLoading) return; // wait for AuthContext to hydrate before deciding
     if (!user) {
-      navigate("/login?redirect=/verify-email");
+      navigate(`/login?redirect=/verify-email${redirect && redirect !== "/dashboard" ? `?redirect=${encodeURIComponent(redirect)}` : ""}`);
       return;
     }
     if (user.email_verified) {
       navigate(redirect, { replace: true });
     }
-  }, [user, navigate, redirect]);
+  }, [authLoading, user, navigate, redirect]);
 
   const sendCode = async () => {
     if (sendInFlight.current) return;
@@ -81,13 +82,7 @@ export default function VerifyEmail() {
       const device_id = getOrMakeDeviceId();
       const { data } = await api.post("/auth/verify-email/confirm", { code, device_id });
       if (data?.verified || data?.already_verified) {
-        if (data.granted) {
-          toast.success(`Verified. ${data.credits} free credits added.`);
-        } else if (data.reason && data.reason !== "ok") {
-          toast.info(`Verified. (${data.reason.replace(/_/g, " ")} — no free credits granted)`);
-        } else {
-          toast.success("Email verified.");
-        }
+        toast.success("Email verified.");
         await refreshUser?.();
         navigate(redirect, { replace: true });
       }
@@ -106,8 +101,7 @@ export default function VerifyEmail() {
           <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-amber">VERIFY EMAIL</div>
           <h1 className="heading-display text-3xl">One last step.</h1>
           <p className="text-sm text-muted">
-            We need to confirm you control <span className="text-ink font-mono">{user?.email}</span>. Enter the 6-digit code we sent you.
-            Your 50 free credits land the moment you confirm.
+            We need to confirm you control <span className="text-ink font-mono break-all">{user?.email}</span>. Enter the 6-digit code we sent you.
           </p>
         </header>
 
@@ -134,7 +128,7 @@ export default function VerifyEmail() {
                 />
               </label>
               <button onClick={confirm} disabled={confirming || code.length !== 6} className="btn-brutal w-full text-sm" data-testid="verify-confirm">
-                {confirming ? "Verifying…" : "Confirm & claim 50 credits"}
+                {confirming ? "Verifying…" : "Confirm email"}
               </button>
               <button onClick={sendCode} disabled={sending} className="btn-ghost w-full text-xs" data-testid="verify-resend">
                 {sending ? "Sending…" : "Resend code"}
