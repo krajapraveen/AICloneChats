@@ -22,6 +22,27 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Email Verification Gate Disabled — P0 Production Unblock)** — Revenue path must not depend on broken email infrastructure.
+  - **Bug**: Production showed "Email sending is not configured in this environment" + "Check the backend logs for the OTP" in the verify-email page. Reason likely: `RESEND_API_KEY` missing in prod env OR `aiclonechats.com` sender domain not verified at Resend. Users couldn't get past the verify gate → couldn't subscribe → revenue path dead.
+  - **Decision**: Per founder directive — harden frontend AND remove the gate (Option A + B). Re-enable verification only after Resend domain verification.
+  - **Backend**:
+    - Added `REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT` env var (default `false`).
+    - `payments_cashfree.py` create-order + create-topup-order: email_verified check now gated by the flag (lines 105-107, 246-247).
+    - `credit_guard.py::charge_credits_or_402`: email_verified gate also flag-gated (so subscribers post-payment can use paid surfaces immediately).
+    - `credits.py` PLAN_INDEX["free"]: removed "Email verification" feature line and "Verify your email to start" description.
+    - Backend restarted to pick up env var.
+  - **Frontend**:
+    - `Pricing.jsx`: removed `pricing-verify-banner` div + verify CTA on Free card + `if (!credits.email_verified)` guard in `checkout()`. `isCurrent` no longer requires email_verified. Admin banner condition simplified.
+    - `VerifyEmail.jsx`: removed `emailConfigured` state, removed `verify-mock-banner` div, replaced all error toasts with safe copy ("We've sent a verification code to your email." / "Couldn't send the code. Please try again." / "Invalid or expired code. Please try again.").
+  - **Verified live (preview, mobile-spec)**:
+    - Fresh unverified user → /pricing → NO verify banner, all 4 paid tiers `Subscribe · ₹...` clickable.
+    - Click Subscribe → `/api/payments/create-order` returns **200** (was 403 `email_not_verified` before).
+    - Smart Reply paywall now codes `INSUFFICIENT BALANCE` (not `email_not_verified`).
+    - Direct `/verify-email` visit: toast says "We've sent a verification code to your email." regardless of Resend state.
+    - Body-text scrub: zero occurrences of "mock mode" / "check backend logs" / "not configured" / "email_send_configured" on pricing or verify-email pages.
+  - **To re-enable later**: set `REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT=true` in production env + restart backend. Frontend already shows the verify-email path correctly when backend returns the 403.
+  - **Note**: Reported on production. Fix in **preview** — redeploy required.
+
 - **2026-05-11 (Email Verification Round-Trip — P0 Bug Fix)** — Conversion-blocking flow restored.
   - **Bugs (all confirmed in preview repro):**
     1. `Pricing.jsx` "Verify email" CTAs (lines 167, 237) called `navigate("/verify-email")` with NO `?redirect=/pricing` param → after a successful verify, user landed on `/dashboard` instead of returning to Pricing, breaking the subscribe-after-verify flow.

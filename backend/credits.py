@@ -56,11 +56,11 @@ PLANS = [
         "plan_id": "free",
         "name": "Free",
         "price_inr": 0,
-        "monthly_credits": 0,  # No free credits. Email verification still required to use anything paid-for.
+        "monthly_credits": 0,  # No free credits. Subscribe to use any paid surface.
         "daily_credit_cap": None,
-        "description": "Verify your email to start. Subscribe to use any chat surface.",
+        "description": "Subscribe to use any chat surface.",
         "features": [
-            "Email verification",
+            "Account & profile",
             "Subscribe to begin",
         ],
         "tier_rank": 0,

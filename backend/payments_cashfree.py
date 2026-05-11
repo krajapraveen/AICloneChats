@@ -61,6 +61,13 @@ CF_BASE = "https://sandbox.cashfree.com/pg" if CASHFREE_MODE == "TEST" else "htt
 
 WEBHOOK_REPLAY_WINDOW_SEC = 300  # 5 minutes
 
+# Production unblock 2026-05-11: email-verification-before-checkout gate is
+# toggleable via env. Default OFF until Resend domain is verified in prod.
+# When False, logged-in users can subscribe / top-up without verifying email.
+REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT = os.environ.get(
+    "REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT", "false"
+).lower() in ("1", "true", "yes")
+
 
 def _cf_headers() -> dict:
     return {
@@ -102,7 +109,7 @@ async def create_order(payload: CreateOrderRequest, request: Request, user: dict
     if not plan or not plan.get("is_active") or plan["plan_id"] == "free":
         raise HTTPException(400, "Invalid plan")
 
-    if not user.get("email_verified"):
+    if REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT and not user.get("email_verified"):
         raise HTTPException(403, {"code": "email_not_verified", "message": "Verify your email before purchasing."})
 
     # ---- Resolve country & price (server is the single source of truth) ----
@@ -236,7 +243,7 @@ async def create_topup_order(payload: CreateTopupOrderRequest, request: Request,
             },
         )
 
-    if not (fresh or user).get("email_verified"):
+    if REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT and not (fresh or user).get("email_verified"):
         raise HTTPException(403, {"code": "email_not_verified", "message": "Verify your email before purchasing."})
 
     country_code, country_source = detect_country_from_request(request, fresh or user)

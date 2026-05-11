@@ -37,7 +37,6 @@ export default function VerifyEmail() {
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [sentOnce, setSentOnce] = useState(false);
-  const [emailConfigured, setEmailConfigured] = useState(true);
   const sendInFlight = useRef(false);
 
   useEffect(() => {
@@ -56,16 +55,11 @@ export default function VerifyEmail() {
     sendInFlight.current = true;
     setSending(true);
     try {
-      const { data } = await api.post("/auth/verify-email/send");
+      await api.post("/auth/verify-email/send");
       setSentOnce(true);
-      setEmailConfigured(Boolean(data?.email_send_configured));
-      if (data?.sent) {
-        toast.success("Code sent. Check your inbox.");
-      } else {
-        toast.warning("Email sending is not configured in this environment. Check the backend logs for the code.");
-      }
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not send code.");
+      toast.success("We've sent a verification code to your email.");
+    } catch {
+      toast.error("Couldn't send the code. Please try again.");
     } finally {
       sendInFlight.current = false;
       setSending(false);
@@ -86,8 +80,8 @@ export default function VerifyEmail() {
         await refreshUser?.();
         navigate(redirect, { replace: true });
       }
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Invalid or expired code.");
+    } catch {
+      toast.error("Invalid or expired code. Please try again.");
     } finally {
       setConfirming(false);
     }
@@ -134,11 +128,6 @@ export default function VerifyEmail() {
                 {sending ? "Sending…" : "Resend code"}
               </button>
             </>
-          )}
-          {!emailConfigured && sentOnce && (
-            <div className="text-[11px] font-mono uppercase tracking-widest text-amber/80" data-testid="verify-mock-banner">
-              Email send is in mock mode (no Resend key). Check backend logs for the OTP.
-            </div>
           )}
         </div>
 

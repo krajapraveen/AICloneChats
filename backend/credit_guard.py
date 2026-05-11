@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+import os
 from fastapi import HTTPException
 
 from credits import (
@@ -38,6 +39,12 @@ from credits import (
 from db import db
 
 logger = logging.getLogger(__name__)
+
+# Production unblock 2026-05-11: keep email verification togglable. When the
+# Resend domain is verified in production, flip this env var back to true.
+REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT = os.environ.get(
+    "REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT", "false"
+).lower() in ("1", "true", "yes")
 
 
 # Surfaces that REQUIRE an active paid subscription (no pay-per-use on the
@@ -165,8 +172,8 @@ async def charge_credits_or_402(user: dict, *, surface: str, request_id: Optiona
             },
         )
 
-    # Email verification gate — paid users still must verify their email
-    if not user.get("email_verified"):
+    # Email verification gate — toggleable via REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT
+    if REQUIRE_EMAIL_VERIFICATION_FOR_CHECKOUT and not user.get("email_verified"):
         await _log_paywall_event(user, surface, "email_not_verified")
         raise HTTPException(
             status_code=402,

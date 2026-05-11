@@ -71,11 +71,6 @@ export default function Pricing() {
       navigate("/login?redirect=/pricing");
       return;
     }
-    if (!credits.email_verified) {
-      toast.error("Verify your email first. We sent you a 6-digit code.");
-      navigate("/verify-email?redirect=/pricing");
-      return;
-    }
     setBusyPlan(planId);
     try {
       // 1) Ask backend to author the order. Backend sets amount from PLAN_INDEX.
@@ -89,12 +84,8 @@ export default function Pricing() {
       });
     } catch (e) {
       const detail = e?.response?.data?.detail;
-      if (typeof detail === "object" && detail?.code === "email_not_verified") {
-        toast.error("Please verify your email first.");
-        navigate("/verify-email?redirect=/pricing");
-      } else {
-        toast.error(typeof detail === "string" ? detail : "Could not start checkout.");
-      }
+      const msg = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
+      toast.error(typeof msg === "string" ? msg : "Could not start checkout.");
     } finally {
       setBusyPlan(null);
     }
@@ -153,21 +144,12 @@ export default function Pricing() {
               <span className="opacity-80">Prices shown in your local currency based on your detected country.</span>
             </div>
           )}
-          {credits.email_verified && credits.admin_unlimited && (
+          {credits.admin_unlimited && (
             <div className="brutal-card p-3 inline-flex items-center gap-2 bg-violet-500/10 border-violet/30" data-testid="pricing-admin-banner">
               <span className="text-xs font-mono uppercase tracking-widest text-violet-soft">Admin · unlimited credits</span>
             </div>
           )}
-          {user && !credits.email_verified && !credits.admin_unlimited && (
-            <div className="brutal-card p-4 border-amber/40 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="pricing-verify-banner">
-              <div className="min-w-0">
-                <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Verify your email first</div>
-                <div className="text-sm">We'll send a 6-digit code to <span className="font-mono text-ink break-all">{user.email}</span>. Required before subscribing.</div>
-              </div>
-              <button onClick={() => navigate("/verify-email?redirect=/pricing")} className="btn-brutal text-xs flex-shrink-0 self-start sm:self-auto" data-testid="pricing-verify-cta">Verify email</button>
-            </div>
-          )}
-          {user && credits.email_verified && !credits.admin_unlimited && (
+          {user && !credits.admin_unlimited && (
             <div className="brutal-card p-4 flex items-center justify-between gap-3" data-testid="pricing-balance">
               <div>
                 <div className="text-[11px] font-mono uppercase tracking-widest text-muted mb-1">Your balance</div>
@@ -181,7 +163,7 @@ export default function Pricing() {
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="pricing-plans-grid">
           {plans.map((p) => {
             const tone = planTone(p.tier_rank);
-            const isCurrent = credits.plan_id === p.plan_id && credits.email_verified;
+            const isCurrent = credits.plan_id === p.plan_id;
             const localPrice = catalog?.prices?.[p.plan_id];
             // Free plan never has a localized record — show "Free"
             const displayLabel = p.plan_id === "free"
@@ -230,15 +212,15 @@ export default function Pricing() {
                 {p.plan_id === "free" ? (
                   isCurrent ? (
                     <div className="btn-ghost text-xs text-center cursor-default" data-testid={`pricing-cta-${p.plan_id}`}>Your current plan</div>
-                  ) : credits.email_verified || credits.admin_unlimited ? (
+                  ) : user ? (
                     <div className="btn-ghost text-xs text-center cursor-default opacity-60" data-testid={`pricing-cta-${p.plan_id}`}>Free tier · no chats</div>
                   ) : (
                     <button
-                      onClick={() => user ? navigate("/verify-email?redirect=/pricing") : navigate("/register?redirect=/pricing")}
+                      onClick={() => navigate("/register?redirect=/pricing")}
                       className="btn-ghost text-xs"
                       data-testid={`pricing-cta-${p.plan_id}`}
                     >
-                      {user ? "Verify email" : "Create account"}
+                      Create account
                     </button>
                   )
                 ) : isCurrent ? (
