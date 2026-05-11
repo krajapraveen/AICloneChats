@@ -103,6 +103,12 @@ const SECTIONS = [
         blurb: "Unified read across clone / anonymous / debate / smart-reply. Redaction at read time. Flag / hide actions.",
         testId: "admin-card-chats",
       },
+      {
+        to: "/admin/webhook-logs",
+        name: "Cashfree Webhooks",
+        blurb: "Real-time log of every webhook arrival. Send signed (or tampered) test webhooks against the live endpoint.",
+        testId: "admin-card-webhook-logs",
+      },
     ],
   },
 ];

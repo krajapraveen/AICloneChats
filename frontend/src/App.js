@@ -45,6 +45,7 @@ import AdminDelayedMessages from "./pages/AdminDelayedMessages";
 import DelayedMessageReveal from "./pages/DelayedMessageReveal";
 import ConversationMemory from "./pages/ConversationMemory";
 import AdminIndex from "./pages/AdminIndex";
+import AdminWebhookLogs from "./pages/AdminWebhookLogs";
 import Pricing from "./pages/Pricing";
 import VerifyEmail from "./pages/VerifyEmail";
 import PaymentReturn from "./pages/PaymentReturn";
@@ -73,6 +74,7 @@ function AppRouter() {
       <Route path="/anonymous-reality/:slug" element={<AnonymousRoom />} />
       <Route path="/admin/login-intelligence" element={<AdminLoginIntelligence />} />
       <Route path="/admin" element={<AdminIndex />} />
+      <Route path="/admin/webhook-logs" element={<AdminWebhookLogs />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
       <Route path="/admin/anonymous-metrics" element={<AdminAnonymousMetrics />} />

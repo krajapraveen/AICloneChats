@@ -106,6 +106,81 @@ async def admin_pricing_catalog(_admin: dict = Depends(_require_admin)):
     }
 
 
+@admin_router.post("/test-webhook")
+async def admin_test_webhook(payload: dict, request: Request, _admin: dict = Depends(_require_admin)):
+    """Admin-only: simulate a signed Cashfree webhook arrival against our own
+    webhook endpoint. Useful for end-to-end smoke tests of the signature
+    verification + idempotency + amount/currency match flow without needing
+    to go through Cashfree's dashboard.
+
+    Body: {order_id, event_type (optional), tamper (optional: 'amount'|'currency'|'signature'|'timestamp')}
+    """
+    import os as _os, json as _json, hmac as _hmac, base64 as _b64, hashlib as _hash, time as _time
+    import httpx as _httpx
+
+    order_id = payload.get("order_id")
+    event_type = payload.get("event_type") or "PAYMENT_SUCCESS_WEBHOOK"
+    tamper = payload.get("tamper")
+    if not order_id:
+        raise HTTPException(400, "order_id is required")
+    order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    amount = float(order.get("charge_amount") or order.get("amount_inr") or 0)
+    currency = (order.get("charge_currency") or "INR")
+    if tamper == "amount":
+        amount = 1.0
+    if tamper == "currency":
+        currency = "USD" if currency != "USD" else "INR"
+
+    body = _json.dumps({
+        "type": event_type,
+        "data": {
+            "order": {
+                "order_id": order_id,
+                "order_status": "PAID" if event_type == "PAYMENT_SUCCESS_WEBHOOK" else "FAILED",
+                "order_amount": amount,
+                "order_currency": currency,
+            },
+            "payment": {"payment_status": "SUCCESS" if event_type == "PAYMENT_SUCCESS_WEBHOOK" else "FAILED"}
+        }
+    }).encode()
+
+    secret = _os.environ.get("CASHFREE_SECRET_KEY", "").encode()
+    if not secret:
+        raise HTTPException(503, "CASHFREE_SECRET_KEY not configured")
+
+    ts = str(int(_time.time() * 1000))
+    if tamper == "timestamp":
+        ts = str(int((_time.time() - 3600) * 1000))  # 1 hour old
+
+    sig = _b64.b64encode(_hmac.new(secret, ts.encode() + body, _hash.sha256).digest()).decode()
+    if tamper == "signature":
+        sig = "tampered-signature"
+
+    target = "http://127.0.0.1:8001/api/payments/webhook/cashfree"
+    try:
+        async with _httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(target, content=body, headers={
+                "x-webhook-timestamp": ts,
+                "x-webhook-signature": sig,
+                "x-webhook-version": "2023-08-01",
+                "Content-Type": "application/json",
+            })
+        return {
+            "ok": r.status_code == 200,
+            "status_code": r.status_code,
+            "response_body": r.text[:500],
+            "tamper": tamper,
+            "event_type": event_type,
+            "signed_amount": amount,
+            "signed_currency": currency,
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Could not deliver test webhook: {e}")
+
+
 @admin_router.get("/overview")
 async def admin_billing_overview(_admin: dict = Depends(_require_admin), days: int = Query(default=30, ge=1, le=365)):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
