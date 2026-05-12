@@ -49,11 +49,16 @@ function MessageBubbleImpl({ msg, mySessionId, onReport }) {
       <div className={`max-w-[88%] sm:max-w-[78%] ${isMine ? "items-end" : "items-start"} flex flex-col gap-1`}>
         <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest">
           <span className={isMine ? "text-amber-soft" : isSeed ? "text-muted/70" : "text-rose-300"}>{msg.anonymous_handle}{isSeed ? " · seed" : ""}</span>
-          <span className="text-muted">{relativeTime(msg.created_at)}</span>
+          <span className="text-muted">{msg.pending ? "sending…" : msg.failed ? "failed" : relativeTime(msg.created_at)}</span>
         </div>
-        <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${isMine ? "bg-amber/15 border border-amber/30 text-ink rounded-tr-sm" : "bg-white/5 border border-white/10 text-ink/90 rounded-tl-sm"}`}>
+        <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${isMine ? "bg-amber/15 border border-amber/30 text-ink rounded-tr-sm" : "bg-white/5 border border-white/10 text-ink/90 rounded-tl-sm"} ${msg.pending ? "opacity-60" : ""} ${msg.failed ? "border-rose-400/60 bg-rose-500/10" : ""}`} data-testid={msg.pending ? `anon-msg-pending-${msg.message_id}` : msg.failed ? `anon-msg-failed-${msg.message_id}` : undefined}>
           {msg.content}
         </div>
+        {msg.failed && (
+          <div className="text-[10px] font-mono uppercase tracking-widest text-rose-300" data-testid={`anon-msg-failed-meta-${msg.message_id}`}>
+            {msg.error || "Couldn't send"}
+          </div>
+        )}
         {!isMine && !isSeed && (
           <button
             onClick={() => onReport(msg)}
@@ -84,7 +89,9 @@ const MessageBubble = memo(MessageBubbleImpl, (prev, next) => {
     a?.moderation_status === b?.moderation_status &&
     a?.message_type === b?.message_type &&
     a?.anonymous_handle === b?.anonymous_handle &&
-    a?.created_at === b?.created_at
+    a?.created_at === b?.created_at &&
+    a?.pending === b?.pending &&
+    a?.failed === b?.failed
   );
 });
 
@@ -203,14 +210,19 @@ export default function AnonymousRoom() {
     setSending(true);
     setBlockedNotice("");
     const text = draft.trim();
-    const result = await sendMessage(text);
+    // Clear the draft immediately so the optimistic bubble visibly takes over
+    // from the input. If sending fails, the failed bubble stays so the user
+    // doesn't lose their text and can read the error.
+    setDraft("");
+    const result = await sendMessage(text, {
+      session_id: session?.session_id,
+      anonymous_handle: session?.anonymous_handle,
+    });
     if (result?.status === "blocked") {
       setBlockedNotice(result.human_reason || "We blocked this to protect the room.");
       api.post("/anonymous/track", { event_name: "anonymous_message_blocked_seen", metadata: { room_slug: slug, category: result.category } }).catch(() => {});
     } else if (result?.status === "error") {
-      toast.error(result.error || "Couldn't send");
-    } else {
-      setDraft("");
+      toast.error(result.error || "Message could not be sent. Try again.");
     }
     setSending(false);
   };

@@ -22,6 +22,35 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Anonymous Chat Optimistic Send — P0 Bug Fix)** — Send now renders the user's message instantly.
+  - **Bug**: User typed a message → clicked Send → message did not appear in the chat window until 1–2s later (after server round-trip + WS broadcast). Felt broken; user thought send failed.
+  - **Root cause**: `useAnonymousChat::sendMessage` awaited the POST round-trip and relied on either WS broadcast OR polling-mode append to surface the message. No optimistic insert.
+  - **Fix**:
+    - New shared lib `frontend/src/lib/chatOptimistic.js` — pure helpers `mintTempId`, `buildOptimisticMessage`, `reconcileServerEcho`, `mergeIncoming`, `markTempFailed` (zero React imports → trivially testable).
+    - `useAnonymousChat::sendMessage`:
+      1. Mints a `temp_id`, appends a `pending: true` bubble that mimics server shape — visible in <50ms.
+      2. On POST 200 + `status: allowed` → `reconcileServerEcho` either replaces the temp with the server message OR drops the temp if the WS broadcast already delivered the canonical version (race-safe).
+      3. On POST `status: blocked`/`error` or thrown → `markTempFailed` keeps the user's text visible with `failed: true` + error message, no data loss.
+    - `useAnonymousChat::dedupeAndAppend` rewritten to use `mergeIncoming`, which collapses pending temps with matching `session_id::content` when a server message arrives via WS or polling — no duplicates regardless of arrival order.
+    - `AnonymousRoom.jsx`:
+      - `onSend` clears the draft IMMEDIATELY (optimistic bubble visibly takes over from input).
+      - Passes `session.session_id` + `session.anonymous_handle` into `sendMessage`.
+      - `MessageBubble` shows `sending…` / `failed` status indicator + red-bordered failed bubble + "Couldn't send" sub-meta.
+      - Bubble memo equality now includes `pending` + `failed`.
+  - **Tests** — `frontend/src/lib/__tests__/chatOptimistic.test.js` (14/14 passing) covers:
+    - `mintTempId` uniqueness + prefix.
+    - `buildOptimisticMessage` shape + default handle.
+    - `reconcileServerEcho` — POST-first replaces temp; no-temp no-op; WS-first race drops temp without duplicate.
+    - `mergeIncoming` — simple append; WS-first race collapses temp; already-seen filter; sort-by-created_at; different-session-id keeps both.
+    - `markTempFailed` — preserves user text, sets failed/error fields, idempotent.
+  - **All frontend tests green**: 40/40 across upgrade + share + chatOptimistic suites.
+  - **Live verified (mobile 390px)**:
+    - Message appears at **~50ms** after Send click.
+    - Input cleared immediately.
+    - Failed sends show red bubble + FAILED label + error sub-text (verified by anon-session not being initialized → backend returned 401 → temp marked failed).
+    - Pending bubble cleared after failure path settles.
+  - **Note**: Production needs redeploy.
+
 - **2026-05-11 (Voice → Message Share Button — P0 Bug Fix)** — Share now actually shares the reply text.
   - **Bug**: User reported the Share button on each generated reply card was "visible but not functioning". Audit: the button opened a `VoiceShareConfirm` modal that created a *public share URL* — different feature from what users expect ("share this reply text to WhatsApp / Twitter"). For most users this was effectively dead UX.
   - **Fix**:

@@ -22,6 +22,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import api from "../lib/api";
 import { getDeviceId } from "../lib/deviceId";
+import {
+  buildOptimisticMessage,
+  markTempFailed,
+  mergeIncoming,
+  mintTempId,
+  reconcileServerEcho,
+} from "../lib/chatOptimistic";
 
 const WS_MAX_ATTEMPTS = 2;
 const POLL_INTERVAL_MS = 3000;
@@ -58,19 +65,9 @@ export default function useAnonymousChat(slug) {
   const dedupeAndAppend = useCallback((newMsgs) => {
     if (!Array.isArray(newMsgs) || newMsgs.length === 0) return;
     setMessages((prev) => {
-      const seen = messageIdSetRef.current;
-      const incoming = [];
-      for (const m of newMsgs) {
-        if (!m || !m.message_id) continue;
-        if (seen.has(m.message_id)) continue;
-        seen.add(m.message_id);
-        incoming.push(m);
-      }
-      if (incoming.length === 0) return prev; // no-op: preserve identity → memoized bubbles don't repaint
-      const next = prev.concat(incoming);
-      next.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
-      const last = next[next.length - 1];
-      if (last) lastTsRef.current = last.created_at;
+      const { next, lastTs } = mergeIncoming(prev, newMsgs, messageIdSetRef.current);
+      if (next === prev) return prev; // identity-preserved → memoized bubbles don't repaint
+      if (lastTs) lastTsRef.current = lastTs;
       return next;
     });
   }, []);
@@ -252,20 +249,38 @@ export default function useAnonymousChat(slug) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  const sendMessage = useCallback(async (content) => {
+  const sendMessage = useCallback(async (content, sessionInfo) => {
     const text = (content || "").trim();
     if (!text) return { status: "skipped" };
+
+    // ---- 1. Optimistic insert ----
+    // The user MUST see their message in the chat the instant they hit Send.
+    // We mint a tempId, append a pending bubble, then reconcile when the POST
+    // returns (or fail it visibly on error).
+    const tempId = mintTempId();
+    const tempMessage = buildOptimisticMessage({
+      tempId,
+      content: text,
+      sessionId: sessionInfo?.session_id,
+      handle: sessionInfo?.anonymous_handle,
+    });
+    setMessages((prev) => prev.concat(tempMessage));
+
     try {
       const { data } = await api.post(`/anonymous/rooms/${slug}/messages`, { content: text });
-      // If WS is live, server will broadcast back. If polling, append from response.
-      if (data?.status === "allowed" && data.message && modeRef.current === "polling") {
-        dedupeAndAppend([data.message]);
+      if (data?.status === "allowed" && data.message) {
+        setMessages((prev) => reconcileServerEcho(prev, tempId, data.message));
+        messageIdSetRef.current.add(data.message.message_id);
         if (data.system_message) dedupeAndAppend([data.system_message]);
+      } else if (data?.status === "blocked" || data?.status === "error") {
+        setMessages((prev) => markTempFailed(prev, tempId, data.human_reason || data.reason || "Blocked"));
       }
       return data;
     } catch (err) {
       const detail = err?.response?.data?.detail;
-      return { status: "error", error: typeof detail === "string" ? detail : "Could not send message." };
+      const errMsg = typeof detail === "string" ? detail : "Message could not be sent. Try again.";
+      setMessages((prev) => markTempFailed(prev, tempId, errMsg));
+      return { status: "error", error: errMsg };
     }
   }, [slug, dedupeAndAppend]);
 
