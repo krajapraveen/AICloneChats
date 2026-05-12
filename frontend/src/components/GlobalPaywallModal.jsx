@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { buildUpgradeUrl } from "../lib/upgrade";
+
 /**
  * GlobalPaywallModal — listens for the `paywall:hit` window event emitted by
  * the axios interceptor on every 402 from a monetized backend surface, and
@@ -33,9 +35,9 @@ const COPY_BY_CODE = {
     cta: "See plans",
   },
   email_not_verified: {
-    title: "Verify your email first",
-    body: "We sent you a 6-digit code. Verify to unlock paid features.",
-    cta: "Verify email",
+    title: "Subscribe to unlock this feature",
+    body: "Pick a plan to start chatting.",
+    cta: "See plans",
   },
   subscription_required_for_topup: {
     title: "Top-ups are for subscribers",
@@ -76,14 +78,18 @@ export default function GlobalPaywallModal() {
 
   const onPrimary = () => {
     setOpen(false);
-    if (code === "email_not_verified") {
-      navigate("/verify-email");
-    } else if (code === "auth_required") {
+    if (code === "auth_required") {
       navigate("/login");
     } else if (code === "fraud_cooldown") {
-      // dismiss
+      // dismiss only
     } else {
-      navigate("/pricing");
+      // Every other code (subscription_required, plan_upgrade_required,
+      // insufficient_balance, daily_cap_reached, email_not_verified,
+      // subscription_required_for_topup, and any future code) funnels to
+      // /pricing through the centralized helper. The verify-email route
+      // remains available for users who want it but is no longer the
+      // CTA target — verify-gate is off in the current revenue config.
+      navigate(buildUpgradeUrl({ source: detail.surface || "paywall_modal" }));
     }
   };
 

@@ -22,6 +22,20 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Shared Upgrade Helper — P0 Bug-Class Fix)** — Defensive infra so Upgrade-to-Pro can't drift to broken targets ever again.
+  - **Scope**: User reported "Upgrade to Pro" sometimes lands somewhere other than `/pricing`. Audit shows current call sites already navigate to `/pricing`, but each one hardcodes the URL — high risk of regression.
+  - **Fix**:
+    - New `frontend/src/lib/upgradeUrl.js` (pure URL builder, no React imports — unit-testable).
+    - New `frontend/src/lib/upgrade.js` (re-exports `buildUpgradeUrl` + `UPGRADE_DESTINATION` + ships `useUpgradeToPro()` hook).
+    - **All upgrade call sites refactored** to use the helper:
+      - `SmartReplyStudio.jsx::handleUpgrade` → `upgradeToPro({ source: "smart_reply" })`
+      - `VoiceMessaging.jsx::onUpgradeClick` → `upgradeToPro({ source: "voice_messaging" })`
+      - `GlobalPaywallModal.jsx::onPrimary` → `navigate(buildUpgradeUrl({ source: detail.surface || "paywall_modal" }))` for every code EXCEPT `auth_required` (→ /login) and `fraud_cooldown` (dismiss-only). The `email_not_verified` branch that previously sent users to `/verify-email` (dead-end since the verify gate was disabled) now also funnels to `/pricing`.
+    - `email_not_verified` paywall copy updated: title "Subscribe to unlock this feature", CTA "See plans".
+  - **Frontend unit tests** (`frontend/src/lib/__tests__/upgrade.test.js`, 17/17 passing): contract-lock that `UPGRADE_DESTINATION === "/pricing"`, `buildUpgradeUrl()` returns plain `/pricing` with no source, source+default-intent encoded correctly, intent override respected, AND a parametrized matrix over 12 chat-surface sources asserts the pathname is always `/pricing` and the URL never contains `/billing | /upgrade | /plans | /subscribe`.
+  - **End-to-end live verified**: Smart Reply daily-limit modal → Upgrade → lands on `/pricing?source=smart_reply&intent=upgrade` with all 5 plan tiers + subscriber top-up section visible. The 8 chat surfaces that don't have explicit Upgrade CTAs all route through `GlobalPaywallModal` → now uses `buildUpgradeUrl` for every paywall code.
+  - **Note**: Production needs redeploy.
+
 - **2026-05-11 (Cashfree Leave/Cancel UX — P0 Bug Fix)** — "Confirming Your Payment" no longer shown for abandoned checkouts.
   - **Bug**: Clicking Leave/Cancel on the Cashfree checkout redirected the user back to `/pay/return?order_id=...`, where the PaymentReturn page immediately showed "Confirming your payment…" and polled for 30 seconds — even though no payment had been attempted. Mislead users into thinking a charge was in flight.
   - **Root cause**: When user closes Cashfree checkout without paying, the order at Cashfree stays `order_status=ACTIVE` (not `EXPIRED`/`TERMINATED`). Backend's `get_order_status` only checked `order_status` — couldn't distinguish "still settling" from "user dropped without paying" → kept the local status at `active` → frontend kept polling.

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
+import { useUpgradeToPro } from "../lib/upgrade";
 import Navbar from "../components/Navbar";
 import UsageLimitModal from "../components/UsageLimitModal";
 
@@ -156,10 +157,11 @@ export default function SmartReplyStudio() {
     }
   };
 
+  const upgradeToPro = useUpgradeToPro();
   const handleUpgrade = () => {
     track("smart_reply_upgrade_clicked", { source: "usage_limit_modal" });
     setPaywallOpen(false);
-    navigate("/pricing?source=smart_reply&intent=upgrade");
+    upgradeToPro({ source: "smart_reply" });
   };
 
   const remainingPill = () => {

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import api from "../lib/api";
 import { copyToClipboard } from "../lib/clipboard";
 import { useAuth } from "../contexts/AuthContext";
+import { useUpgradeToPro } from "../lib/upgrade";
 import Navbar from "../components/Navbar";
 import VoiceSignupWall from "../components/VoiceSignupWall";
 import VoiceShareConfirm from "../components/VoiceShareConfirm";
@@ -57,6 +58,7 @@ function track(event_name) {
 export default function VoiceMessaging() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const upgradeToPro = useUpgradeToPro();
   const [tab, setTab] = useState("record"); // record | upload | text
   const [stage, setStage] = useState("idle");
   const [usage, setUsage] = useState(null);
@@ -621,7 +623,7 @@ export default function VoiceMessaging() {
       <UsageLimitModal
         open={paywall}
         onClose={() => setPaywall(false)}
-        onUpgradeClick={() => { setPaywall(false); navigate("/pricing?source=voice_messaging&intent=upgrade"); }}
+        onUpgradeClick={() => { setPaywall(false); upgradeToPro({ source: "voice_messaging" }); }}
         daily_limit={20}
       />
       <VoiceShareConfirm
