@@ -3,11 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
 import { copyToClipboard } from "../lib/clipboard";
+import { shareText } from "../lib/share";
 import { useAuth } from "../contexts/AuthContext";
 import { useUpgradeToPro } from "../lib/upgrade";
 import Navbar from "../components/Navbar";
 import VoiceSignupWall from "../components/VoiceSignupWall";
-import VoiceShareConfirm from "../components/VoiceShareConfirm";
 import UsageLimitModal from "../components/UsageLimitModal";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 
@@ -74,9 +74,6 @@ export default function VoiceMessaging() {
   const [signupWall, setSignupWall] = useState(false);
   const [paywall, setPaywall] = useState(false);
   const [copiedId, setCopiedId] = useState("");
-  const [shareConfirm, setShareConfirm] = useState({ open: false, messageId: null });
-  const [shareBusy, setShareBusy] = useState(false);
-  const [shares, setShares] = useState({}); // message_id -> {url, redacted_categories}
 
   // Post-recording processing UX (2026-05-11):
   //   capturedAt: timestamp set when audio is captured, used to show the
@@ -309,36 +306,40 @@ export default function VoiceMessaging() {
     api.post("/voice/copy-event", { message_id: m.message_id }).catch(() => { /* analytics best-effort */ });
   }
 
-  function openShareConfirm(messageId) {
-    setShareConfirm({ open: true, messageId });
-  }
-
-  async function confirmShare() {
-    const messageId = shareConfirm.messageId;
-    if (!messageId) return;
-    setShareBusy(true);
-    try {
-      const { data } = await api.post(`/voice/messages/${messageId}/share`, { message_id: messageId, confirmed: true });
-      const url = `${window.location.origin}${data.url_path}`;
-      setShares((s) => ({ ...s, [messageId]: { url, redacted_categories: data.redacted_categories || [] } }));
-      const ok = await copyToClipboard(url);
-      if (ok) toast.success("Share link copied to clipboard");
-      else toast.success(`Share link ready: ${url}`);
-      setShareConfirm({ open: false, messageId: null });
-    } catch (err) {
-      const detail = err?.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "Could not create share link");
-    } finally {
-      setShareBusy(false);
+  // Share the reply text itself (2026-05-11).
+  //
+  // Behaviour:
+  //   - navigator.share when available → native share sheet (WhatsApp,
+  //     Twitter, Mail, etc).
+  //   - Else copyToClipboard + toast "Reply copied. Paste it anywhere to
+  //     share."
+  //   - User cancel of native sheet is a silent no-op.
+  //   - Total failure → "Could not share. Please copy manually."
+  async function shareReply(message) {
+    const text = (message?.message || "").trim();
+    if (!text) {
+      toast.error("Nothing to share yet.");
+      return;
     }
-  }
-
-  async function copyShareUrl(messageId) {
-    const url = shares[messageId]?.url;
-    if (!url) return;
-    const ok = await copyToClipboard(url);
-    if (ok) toast.success("Link copied");
-    else toast.error("Copy failed");
+    const result = await shareText({ text });
+    if (result.cancelled) return; // user dismissed the sheet
+    if (result.ok) {
+      if (result.method === "clipboard_fallback") {
+        toast.success("Reply copied. Paste it anywhere to share.");
+      }
+      track("smart_reply_shared", {
+        tone: message?.tone,
+        source_type: session?.source_type || "unknown",
+        share_method: result.method,
+      });
+      return;
+    }
+    toast.error("Could not share. Please copy manually.");
+    track("smart_reply_share_failed", {
+      tone: message?.tone,
+      source_type: session?.source_type || "unknown",
+      failure_reason: result.reason || "unknown",
+    });
   }
 
   async function handleFile(file) {
@@ -677,26 +678,15 @@ export default function VoiceMessaging() {
                     >
                       {justCopied ? "✓ Copied!" : "Copy"}
                     </button>
-                    {shares[m.message_id] ? (
-                      <button
-                        type="button"
-                        onClick={() => copyShareUrl(m.message_id)}
-                        className="btn-ghost text-sm"
-                        data-testid={`voice-share-copy-${m.tone}`}
-                        title={shares[m.message_id].url}
-                      >
-                        🔗 Link copied · copy again
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => openShareConfirm(m.message_id)}
-                        className="btn-ghost text-sm"
-                        data-testid={`voice-share-${m.tone}`}
-                      >
-                        Share
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => shareReply(m)}
+                      disabled={!m.message || !m.message.trim()}
+                      className="btn-ghost text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid={`voice-share-${m.tone}`}
+                    >
+                      Share
+                    </button>
                     {justCopied && (
                       <span className="text-xs font-mono text-emerald-soft animate-pulse" data-testid={`voice-copy-toast-${m.tone}`}>
                         Paste it where you need it.
@@ -727,12 +717,6 @@ export default function VoiceMessaging() {
         onClose={() => setPaywall(false)}
         onUpgradeClick={() => { setPaywall(false); upgradeToPro({ source: "voice_messaging" }); }}
         daily_limit={20}
-      />
-      <VoiceShareConfirm
-        open={shareConfirm.open}
-        busy={shareBusy}
-        onClose={() => setShareConfirm({ open: false, messageId: null })}
-        onConfirm={confirmShare}
       />
     </div>
   );

@@ -22,6 +22,30 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Voice → Message Share Button — P0 Bug Fix)** — Share now actually shares the reply text.
+  - **Bug**: User reported the Share button on each generated reply card was "visible but not functioning". Audit: the button opened a `VoiceShareConfirm` modal that created a *public share URL* — different feature from what users expect ("share this reply text to WhatsApp / Twitter"). For most users this was effectively dead UX.
+  - **Fix**:
+    - New helper `frontend/src/lib/share.js::shareText({ text, title, url })`:
+      - Prefers `navigator.share({ text })` on mobile (opens native share sheet).
+      - On `AbortError` (user dismissed the sheet) → silent no-op, no error toast.
+      - On any other share rejection OR when `navigator.share` is undefined → falls back to `copyToClipboard` + caller-side toast.
+      - On total failure (share + copy both fail) → returns `{ ok: false, method: null, reason: "share_and_copy_failed" }` so the caller can show "Could not share. Please copy manually."
+    - `VoiceMessaging.jsx::shareReply(m)` wires the helper to each generated reply card:
+      - Disabled when `m.message` is empty/whitespace (fixes the regression in this iteration where the wrong field name `m.content` left buttons permanently disabled).
+      - On clipboard-fallback success → toast "Reply copied. Paste it anywhere to share."
+      - On total failure → toast "Could not share. Please copy manually."
+    - Removed unreachable code: `openShareConfirm`, `confirmShare`, `copyShareUrl`, the `shareConfirm`/`shareBusy`/`shares` state, the `VoiceShareConfirm` modal mount, and its import.
+  - **Analytics** — backend `voice.py::track` allowlist + frontend:
+    - `smart_reply_shared` props: `tone`, `source_type`, `share_method` (`"native"` | `"clipboard_fallback"`)
+    - `smart_reply_share_failed` props: `tone`, `source_type`, `failure_reason`
+  - **Tests** — `frontend/src/lib/__tests__/share.test.js` (9/9 passing) covers: empty text no-op, whitespace no-op, native share happy path, title+url passthrough, AbortError cancel, NotAllowedError → fallback, no-navigator-share → fallback, both-fail → total failure, clipboard throws → total failure.
+  - **Live verified (mobile 390px, admin user)**:
+    - First Share button: `disabled=False` after fix.
+    - Native path: `navigator.share` called exactly once with reply text. Zero error toasts.
+    - Cancel path: AbortError thrown → zero error toasts shown.
+    - Fallback path: clipboard receives the reply text; toast "Reply copied. Paste it anywhere to share." visible.
+  - **Note**: Production needs redeploy.
+
 - **2026-05-11 (Voice → Message Processing-State UX — UX Enhancement)** — Stronger reassurance after recording stops.
   - **Bug**: Single-line "Generating 6 smart replies…" banner was too weak after the user pressed Stop. No success cue for "audio was captured", no explicit privacy reassurance during processing, no slow-state escalation.
   - **Fix** (`/app/frontend/src/pages/VoiceMessaging.jsx`):
