@@ -383,6 +383,29 @@ async def get_order_status(order_id: str, user: dict = Depends(get_current_user)
                         {"$set": {"status": cf_status.lower(), "updated_at": now_iso()}},
                     )
                     order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+                elif cf_status == "ACTIVE":
+                    # Order is still open at Cashfree. If there are zero
+                    # payment attempts, the user closed/left checkout without
+                    # paying — surface this as `unpaid` so the frontend can
+                    # bounce them back to /pricing instead of showing a
+                    # misleading "Confirming your payment…" spinner.
+                    try:
+                        pr = requests.get(
+                            f"{CF_BASE}/orders/{order_id}/payments",
+                            headers=_cf_headers(),
+                            timeout=10,
+                        )
+                        if pr.status_code == 200:
+                            payments = pr.json() or []
+                            # No attempts at all → user dropped/cancelled
+                            if isinstance(payments, list) and len(payments) == 0:
+                                await db.payment_orders.update_one(
+                                    {"order_id": order_id, "status": {"$in": ["created", "active"]}},
+                                    {"$set": {"status": "unpaid", "updated_at": now_iso()}},
+                                )
+                                order = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
+                    except Exception as e:  # pragma: no cover - network only
+                        logger.warning("order payments poll failed: %s", e)
         except Exception as e:
             logger.warning("order status poll failed: %s", e)
 

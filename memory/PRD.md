@@ -22,6 +22,24 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Cashfree Leave/Cancel UX — P0 Bug Fix)** — "Confirming Your Payment" no longer shown for abandoned checkouts.
+  - **Bug**: Clicking Leave/Cancel on the Cashfree checkout redirected the user back to `/pay/return?order_id=...`, where the PaymentReturn page immediately showed "Confirming your payment…" and polled for 30 seconds — even though no payment had been attempted. Mislead users into thinking a charge was in flight.
+  - **Root cause**: When user closes Cashfree checkout without paying, the order at Cashfree stays `order_status=ACTIVE` (not `EXPIRED`/`TERMINATED`). Backend's `get_order_status` only checked `order_status` — couldn't distinguish "still settling" from "user dropped without paying" → kept the local status at `active` → frontend kept polling.
+  - **Fix (backend)** — `payments_cashfree.py::get_order_status`:
+    - When Cashfree returns `order_status=ACTIVE`, also call `GET /orders/:id/payments`. If the payments list is empty (zero attempts), transition the local order to `status="unpaid"`. If at least one attempt exists, leave the status alone (user might still complete).
+  - **Fix (frontend)** — `PaymentReturn.jsx` (full rewrite):
+    - Phase state machine: `initial → pending | terminal | timeout | error`.
+    - "Confirming your payment…" copy is **only** shown in the `pending` phase, which is set only AFTER the first read confirms the order is in flight. Initial render shows a neutral "Checking your order…" state.
+    - New `TERMINAL_NOT_PAID = ["unpaid","user_dropped","failed","expired","terminated"]`. Any of these → `toast.error("Payment was not completed. You can try again.")` + `navigate("/pricing", {replace: true})` after 250ms.
+    - Paid orders still show the success card with credits added + dashboard CTA.
+  - **Tests** (`/app/backend/tests/test_payment_return_redirect.py`, 4/4 passing):
+    - `test_user_dropped_marks_order_unpaid` — Cashfree ACTIVE + 0 payments → local status becomes `unpaid`.
+    - `test_active_with_payment_attempt_remains_active` — Cashfree ACTIVE + 1 attempt → local status stays in-flight.
+    - `test_expired_terminal_status` / `test_terminated_terminal_status` — regression guards for existing terminal transitions.
+  - **Live verified (mobile 390px)**: Seeded an unpaid order, visited `/pay/return?order_id=...`. At 500ms — `[data-testid=payment-return-pending]` is absent (Confirming card never appears). Toast `Payment was not completed. You can try again.` fires. Final URL `/pricing`. All 4 paid tiers + top-ups still subscribe-able.
+  - **All tests green**: 54/54 across billing, mode normalization, payment-return redirect, email pipeline.
+  - **Note**: Production fix requires redeploy.
+
 - **2026-05-11 (Cashfree Subscribe Silent No-Op — P0 Revenue Unblock)** — Production checkout was inert.
   - **Bug**: Subscribe / top-up buttons clicked silently. No toast, no loading state, no navigation. Reported on production `aiclonechats.com` (iPhone Safari).
   - **Root cause**: Backend was returning `"mode": CASHFREE_MODE.lower()` from `/api/payments/config` AND from `/api/payments/create-order` / `/api/payments/create-topup-order`. With `CASHFREE_MODE=TEST` in env, the response carried `"mode": "test"`. The Cashfree JS SDK's `load({mode})` **only accepts the literals `"sandbox"` or `"production"`** — any other value silently no-ops with no console error and no thrown exception, leaving Subscribe buttons inert on mobile Safari.
