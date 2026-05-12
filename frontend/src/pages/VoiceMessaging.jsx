@@ -44,6 +44,10 @@ const STAGE_LABEL = {
   refining: "Rewriting…",
   editing: "Updating transcript…",
 };
+// Duration (ms) after which we surface "Still working…" reassurance
+const SLOW_PROCESSING_THRESHOLD_MS = 15000;
+// Duration (ms) the "Voice captured successfully" splash stays visible
+const CAPTURED_SPLASH_MS = 700;
 
 function fmtTime(sec) {
   const m = Math.floor(sec / 60);
@@ -51,8 +55,8 @@ function fmtTime(sec) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function track(event_name) {
-  api.post("/voice/track", { event_name }).catch(() => { /* analytics best-effort */ });
+function track(event_name, extra) {
+  api.post("/voice/track", { event_name, ...(extra || {}) }).catch(() => { /* analytics best-effort */ });
 }
 
 export default function VoiceMessaging() {
@@ -74,6 +78,18 @@ export default function VoiceMessaging() {
   const [shareBusy, setShareBusy] = useState(false);
   const [shares, setShares] = useState({}); // message_id -> {url, redacted_categories}
 
+  // Post-recording processing UX (2026-05-11):
+  //   capturedAt: timestamp set when audio is captured, used to show the
+  //               brief "Voice captured successfully" splash and to measure
+  //               total processing duration for analytics.
+  //   isSlow:     becomes true after SLOW_PROCESSING_THRESHOLD_MS so we can
+  //               append the "Still working… complex audio can take a little
+  //               longer." reassurance below the primary banner.
+  const [capturedAt, setCapturedAt] = useState(0);
+  const [isSlow, setIsSlow] = useState(false);
+  const processingStartRef = useRef(0);
+  const slowTimerRef = useRef(null);
+
   const fileInputRef = useRef(null);
   const transcriptBlockRef = useRef(null);
   const messagesBlockRef = useRef(null);
@@ -84,6 +100,11 @@ export default function VoiceMessaging() {
     track("voice_page_viewed");
     api.get("/voice/usage").then((r) => setUsage(r.data)).catch(() => { /* network — handled lazily */ });
   }, [user?.user_id]);
+
+  // Cleanup the slow-banner timer if the component unmounts mid-flight
+  useEffect(() => () => {
+    if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+  }, []);
 
   // Auto-fade copy chip
   useEffect(() => {
@@ -143,7 +164,44 @@ export default function VoiceMessaging() {
     return false;
   }
 
+  // Begin a processing run: stamp the start time, reset slow flag, schedule
+  // the slow-banner reveal, and emit start telemetry. Idempotent if called
+  // twice within the same run.
+  function beginProcessing(sourceType) {
+    if (processingStartRef.current) return;
+    const t0 = Date.now();
+    processingStartRef.current = t0;
+    setCapturedAt(t0);
+    setIsSlow(false);
+    if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+    slowTimerRef.current = setTimeout(() => {
+      setIsSlow(true);
+      track("voice_processing_slow", { source_type: sourceType });
+    }, SLOW_PROCESSING_THRESHOLD_MS);
+    track("voice_processing_started", { source_type: sourceType });
+  }
+
+  function endProcessing(outcome /* "completed" | "failed" */, sourceType, failure_reason) {
+    if (slowTimerRef.current) {
+      clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = null;
+    }
+    const t0 = processingStartRef.current;
+    processingStartRef.current = 0;
+    const duration_ms = t0 ? Date.now() - t0 : 0;
+    track(outcome === "completed" ? "voice_processing_completed" : "voice_processing_failed", {
+      source_type: sourceType,
+      processing_duration_ms: duration_ms,
+      ...(failure_reason ? { failure_reason } : {}),
+    });
+    // Hold the "Voice captured successfully" splash a beat after completion so
+    // the transition feels reassuring instead of a flicker
+    setTimeout(() => setCapturedAt(0), 200);
+    setIsSlow(false);
+  }
+
   async function submitAudio(blob, sourceType, filename) {
+    beginProcessing(sourceType);
     setStage("transcribing");
     setMessages([]);
     setSession(null);
@@ -157,12 +215,17 @@ export default function VoiceMessaging() {
       setEditedTranscript(data.cleaned_transcript || "");
       refreshUsage(data);
       // immediately generate-all
-      await runGenerateAll(data.session_id);
+      await runGenerateAll(data.session_id, sourceType);
       setTimeout(() => transcriptBlockRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+      endProcessing("completed", sourceType);
     } catch (err) {
-      if (handleLimitError(err)) return;
+      if (handleLimitError(err)) {
+        endProcessing("failed", sourceType, "limit_reached");
+        return;
+      }
       const detail = err?.response?.data?.detail;
       toast.error(typeof detail === "string" ? detail : "Could not process audio. Try again.");
+      endProcessing("failed", sourceType, "audio_error");
     } finally {
       setStage("idle");
       recorder.reset();
@@ -171,6 +234,7 @@ export default function VoiceMessaging() {
 
   async function submitText(text) {
     if (!text.trim()) return;
+    beginProcessing("text");
     setStage("cleaning");
     setMessages([]);
     setSession(null);
@@ -179,18 +243,23 @@ export default function VoiceMessaging() {
       setSession(data);
       setEditedTranscript(data.cleaned_transcript || "");
       refreshUsage(data);
-      await runGenerateAll(data.session_id);
+      await runGenerateAll(data.session_id, "text");
       setTimeout(() => transcriptBlockRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+      endProcessing("completed", "text");
     } catch (err) {
-      if (handleLimitError(err)) return;
+      if (handleLimitError(err)) {
+        endProcessing("failed", "text", "limit_reached");
+        return;
+      }
       const detail = err?.response?.data?.detail;
       toast.error(typeof detail === "string" ? detail : "Could not process text. Try again.");
+      endProcessing("failed", "text", "text_error");
     } finally {
       setStage("idle");
     }
   }
 
-  async function runGenerateAll(sessionId) {
+  async function runGenerateAll(sessionId, sourceType) {
     setStage("generating");
     try {
       const { data } = await api.post("/voice/generate-all", { session_id: sessionId });
@@ -483,11 +552,44 @@ export default function VoiceMessaging() {
           )}
         </div>
 
-        {/* Loading stage banner */}
-        {stageActive && (
-          <div className="glass-card p-4 mb-4 flex items-center gap-3" data-testid="voice-stage-banner">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald animate-pulse" />
-            <div className="text-sm font-mono text-ink/80">{STAGE_LABEL[stage]}</div>
+        {/* Processing-state banner — staged feedback after recording stops.
+            Renders immediately when `capturedAt` is set OR when the pipeline
+            is mid-flight. Sticky-positioned so it remains visible on mobile
+            (390px) during the longer generate step. */}
+        {(stageActive || capturedAt > 0) && (
+          <div
+            className="glass-card p-4 sm:p-5 mb-4 space-y-2.5 sticky top-2 z-30 border-emerald/30 bg-emerald-500/5 shadow-glow-amber"
+            data-testid="voice-stage-banner"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-center gap-3" data-testid="voice-stage-captured">
+              <span className="text-lg leading-none">🎙️</span>
+              <div className="text-sm font-display font-bold text-ink">
+                Voice captured successfully
+              </div>
+            </div>
+            <div className="flex items-start gap-3 pl-7">
+              <span className="inline-flex items-center justify-center w-4 h-4 mt-0.5 flex-shrink-0">
+                <span className="absolute inline-block w-4 h-4 rounded-full bg-emerald/40 animate-ping" />
+                <span className="relative inline-block w-2 h-2 rounded-full bg-emerald" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm text-ink/90 font-mono" data-testid="voice-stage-primary">
+                  {stage === "generating"
+                    ? "Generating smart replies…"
+                    : stage === "cleaning"
+                    ? "Cleaning up the message…"
+                    : "Transcribing and generating smart replies…"}
+                </div>
+                <div className="text-[11px] font-mono uppercase tracking-widest text-muted mt-0.5" data-testid="voice-stage-eta">
+                  {isSlow ? "Still working… complex audio can take a little longer." : "This usually takes a few seconds."}
+                </div>
+              </div>
+            </div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted/70 pl-7" data-testid="voice-stage-privacy">
+              Audio is never stored.
+            </div>
           </div>
         )}
 

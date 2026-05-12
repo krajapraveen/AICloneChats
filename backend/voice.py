@@ -641,10 +641,19 @@ async def track(payload: dict, actor: dict = Depends(voice_actor)):
         "voice_page_viewed", "voice_record_started", "voice_record_stopped",
         "voice_history_opened", "voice_message_regenerated", "voice_example_clicked",
         "voice_signup_wall_shown", "voice_share_warning_shown", "voice_share_warning_dismissed",
+        # Processing-state telemetry (added 2026-05-11 for the post-recording UX)
+        "voice_processing_started", "voice_processing_completed",
+        "voice_processing_failed", "voice_processing_slow",
     }
     if event_name not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported event")
-    await _emit(actor, event_name)
+    # Whitelist of optional numeric/string props clients can attach
+    props_in = payload or {}
+    props = {}
+    for k in ("processing_duration_ms", "source_type", "failure_reason"):
+        if k in props_in and props_in[k] is not None:
+            props[k] = props_in[k]
+    await _emit(actor, event_name, props or None)
     return {"ok": True}
 
 

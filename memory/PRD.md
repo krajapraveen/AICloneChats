@@ -22,6 +22,30 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 3. **Visitor** — chats with a clone via shared link, no account required
 
 ## Changelog
+- **2026-05-11 (Voice → Message Processing-State UX — UX Enhancement)** — Stronger reassurance after recording stops.
+  - **Bug**: Single-line "Generating 6 smart replies…" banner was too weak after the user pressed Stop. No success cue for "audio was captured", no explicit privacy reassurance during processing, no slow-state escalation.
+  - **Fix** (`/app/frontend/src/pages/VoiceMessaging.jsx`):
+    - Banner rewritten as a richer, sticky-positioned card visible without scrolling on 390px.
+    - Three rows of staged feedback:
+      1. 🎙️ **"Voice captured successfully"** — bold, instant success cue
+      2. Animated pulsing dot + dynamic primary line ("Transcribing and generating smart replies…" / "Cleaning up the message…" / "Generating smart replies…")
+      3. Subtext that escalates after 15s: "This usually takes a few seconds." → "Still working… complex audio can take a little longer."
+    - **"Audio is never stored."** reassurance preserved as last line.
+    - `beginProcessing(source)` / `endProcessing(outcome, source, failure_reason)` helpers wrap every entry path (audio + text). Stamp `processingStartRef` for duration measurement, schedule the 15s slow-banner reveal, idempotent if called twice.
+    - Record / Upload / Submit buttons remain disabled during `stageActive` (already in place — verified).
+    - Smooth transition: `capturedAt` is reset 200ms AFTER stage→idle so the success splash holds for a beat (no flicker).
+  - **Analytics** (backend `voice.py::track` allowlist + frontend):
+    - `voice_processing_started` (source_type)
+    - `voice_processing_completed` (source_type, processing_duration_ms)
+    - `voice_processing_failed` (source_type, processing_duration_ms, failure_reason)
+    - `voice_processing_slow` (source_type) — fires once at the 15s threshold
+    - Allowlist also accepts whitelisted props `processing_duration_ms`, `source_type`, `failure_reason`.
+  - **Live verified (mobile 390px, admin user)**:
+    - At 500ms after submit: banner visible with "🎙️ Voice captured successfully" + "Cleaning up the message…" + "THIS USUALLY TAKES A FEW SECONDS." + "AUDIO IS NEVER STORED."
+    - At 18s: banner gone, transcript block rendered, all 6 tone messages visible.
+    - No flicker between processing → results.
+  - **Note**: Production needs redeploy.
+
 - **2026-05-11 (Shared Upgrade Helper — P0 Bug-Class Fix)** — Defensive infra so Upgrade-to-Pro can't drift to broken targets ever again.
   - **Scope**: User reported "Upgrade to Pro" sometimes lands somewhere other than `/pricing`. Audit shows current call sites already navigate to `/pricing`, but each one hardcodes the URL — high risk of regression.
   - **Fix**:
