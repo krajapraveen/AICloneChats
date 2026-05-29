@@ -155,16 +155,20 @@ def test_base_refund_returns_not_implemented():
 
 
 # ---------- HTTP tests against the live backend ----------
-def test_status_endpoint_live_returns_unconfigured():
-    """The live backend has no provider registered (we just shipped the layer).
-    `GET /api/payments/status` must report configured=false so the Pricing page
-    stays in inert mode."""
+def test_status_endpoint_live_returns_unconfigured_until_creds_arrive():
+    """The live backend now has Instamojo registered (provider name visible)
+    but credentials are blank, so `configured` must be False and the Pricing
+    page should stay in inert mode."""
     r = requests.get(f"{BASE_URL}/api/payments/status", timeout=10)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["configured"] is False
-    assert body["provider"] == ""
-    assert isinstance(body["registered_providers"], list)
+    # Provider is reported even before credentials so the UI can render the
+    # right gateway name once it goes live.
+    assert "instamojo" in body["registered_providers"]
+    # When PAYMENT_PROVIDER=instamojo is set but creds are missing, the
+    # endpoint reports the requested provider name with configured=false.
+    assert body["provider"] in ("", "instamojo")
 
 
 def test_create_order_live_returns_503_without_provider():

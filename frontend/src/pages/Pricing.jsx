@@ -3,9 +3,11 @@
  *
  * 2026-05-11: Cashfree integration removed.
  * 2026-05-12: Easebuzz integration removed.
- * Subscribe + Top-up buttons are inert placeholders until the next payment
- * gateway is integrated. Plan + top-up catalogs continue to render so users
- * see what's coming.
+ * 2026-05-12: Payment Gateway Abstraction Layer wired in. Instamojo is the
+ * active provider; the page reads `/api/payments/status` on mount and shows
+ * "Payments offline" until the gateway reports `configured:true`. Subscribe
+ * and top-up CTAs then call `/api/payments/instamojo/create-order` and
+ * redirect the browser to the returned Instamojo checkout URL.
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -36,23 +38,26 @@ export default function Pricing() {
   const [costs, setCosts] = useState({});
   const [catalog, setCatalog] = useState(null);
   const [topups, setTopups] = useState({ packs: [], country_code: "", is_active_subscriber: false });
+  const [gateway, setGateway] = useState({ configured: false, provider: "", env: "", display_name: "" });
+  const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    // One write per page visit — used by Admin → Revenue → Funnel.
     api.post("/funnel/event", { event_name: "pricing_view", referrer: document.referrer || null }).catch(() => {});
     (async () => {
       try {
-        const [{ data: plansData }, { data: cat }, { data: tu }] = await Promise.all([
+        const [{ data: plansData }, { data: cat }, { data: tu }, { data: gw }] = await Promise.all([
           api.get("/plans"),
           api.get("/pricing/catalog"),
           api.get("/topups/catalog"),
+          api.get("/payments/status"),
         ]);
         if (cancelled) return;
         setPlans(plansData.plans || []);
         setCosts(plansData.credit_costs || {});
         setCatalog(cat || null);
         setTopups(tu || { packs: [], is_active_subscriber: false });
+        setGateway(gw || { configured: false });
       } catch (e) {
         toast.error("Could not load plans. Try refresh.");
       }
@@ -60,20 +65,40 @@ export default function Pricing() {
     return () => { cancelled = true; };
   }, []);
 
-  // Payments are offline pending gateway swap. All checkout CTAs route to this
-  // no-op so the user gets an honest explanation instead of a broken call.
-  const paymentsUnavailable = () => {
-    toast.error(PAYMENTS_UNAVAILABLE_MSG);
-  };
-  const checkout = (planId) => {
-    if (!user) { navigate("/login?redirect=/pricing"); return; }
-    paymentsUnavailable();
-    api.post("/funnel/event", { event_name: "payments_unavailable_click", referrer: planId }).catch(() => {});
-  };
-  const checkoutTopup = (packId) => {
-    if (!user) { navigate("/login?redirect=/pricing"); return; }
-    paymentsUnavailable();
-    api.post("/funnel/event", { event_name: "payments_unavailable_topup_click", referrer: packId }).catch(() => {});
+  const startCheckout = async ({ planId, packId }) => {
+    if (!user) {
+      navigate("/login?redirect=/pricing");
+      return;
+    }
+    if (!gateway.configured) {
+      toast.error(PAYMENTS_UNAVAILABLE_MSG);
+      api.post("/funnel/event", { event_name: "payments_unavailable_click", referrer: planId || packId }).catch(() => {});
+      return;
+    }
+    const id = planId || packId;
+    setBusyId(id);
+    api.post("/funnel/event", { event_name: "checkout_clicked", referrer: id }).catch(() => {});
+    const body = {};
+    if (planId) body.plan_id = planId;
+    if (packId) body.pack_id = packId;
+    try {
+      const { data } = await api.post("/payments/instamojo/create-order", body);
+      if (data?.checkout_url) {
+        // Redirect the browser to Instamojo's hosted checkout. Server already
+        // persisted the order with `provider=instamojo`; on return,
+        // /pay/return polls /api/payments/order/{id} which reconciles via the
+        // Instamojo Payment Details API + the webhook handler grants credits.
+        window.location.assign(data.checkout_url);
+        return;
+      }
+      toast.error("Gateway did not return a checkout URL. Please try again.");
+      setBusyId(null);
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const msg = (typeof detail === "object" ? detail?.message : detail) || e?.message || "Could not start checkout.";
+      toast.error(msg);
+      setBusyId(null);
+    }
   };
 
   return (
@@ -116,10 +141,18 @@ export default function Pricing() {
               </div>
             </div>
           )}
-          <div className="brutal-card p-4 border-amber/40 bg-amber-500/10" data-testid="pricing-payments-unavailable-banner">
-            <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Payments offline</div>
-            <div className="text-sm">We're switching payment providers. Subscribe and top-up buttons are temporarily inert. The catalog below stays accurate — your existing plan and credit balance are unaffected.</div>
-          </div>
+          {!gateway.configured && (
+            <div className="brutal-card p-4 border-amber/40 bg-amber-500/10" data-testid="pricing-payments-unavailable-banner">
+              <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Payments offline</div>
+              <div className="text-sm">We're finishing the new gateway setup. Subscribe and top-up buttons are temporarily inert. The catalog below stays accurate — your existing plan and credit balance are unaffected.</div>
+            </div>
+          )}
+          {gateway.configured && gateway.env === "test" && (
+            <div className="brutal-card p-3 border-amber/40 bg-amber-500/5" data-testid="pricing-test-mode-banner">
+              <div className="text-amber font-mono text-[10px] uppercase tracking-widest">Test mode · {gateway.display_name || gateway.provider} sandbox</div>
+              <div className="text-xs text-muted mt-1">Use sandbox test card / UPI details. No real money is charged.</div>
+            </div>
+          )}
         </header>
 
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="pricing-plans-grid">
@@ -137,6 +170,7 @@ export default function Pricing() {
                       minimumFractionDigits: localPrice.display_decimals,
                     }).format(localPrice.display_amount)
                   : `₹${p.price_inr.toLocaleString("en-IN")}`);
+            const isBusy = busyId === p.plan_id;
             return (
               <article key={p.plan_id} className={`brutal-card p-5 flex flex-col gap-3 ${tone.border}`} data-testid={`pricing-card-${p.plan_id}`}>
                 <div>
@@ -188,12 +222,13 @@ export default function Pricing() {
                   <div className="btn-ghost text-xs text-center cursor-default" data-testid={`pricing-cta-${p.plan_id}`}>Your current plan</div>
                 ) : (
                   <button
-                    onClick={() => checkout(p.plan_id)}
-                    className="btn-brutal text-xs opacity-70 cursor-not-allowed"
+                    onClick={() => startCheckout({ planId: p.plan_id })}
+                    disabled={isBusy || !gateway.configured}
+                    className={`btn-brutal text-xs ${(!gateway.configured) ? "opacity-50 cursor-not-allowed" : ""}`}
                     data-testid={`pricing-cta-${p.plan_id}`}
-                    title={PAYMENTS_UNAVAILABLE_MSG}
+                    title={!gateway.configured ? PAYMENTS_UNAVAILABLE_MSG : `Subscribe to ${p.name}`}
                   >
-                    Coming soon · {displayLabel}
+                    {isBusy ? "Opening checkout…" : (gateway.configured ? `Subscribe · ${displayLabel}` : `Coming soon · ${displayLabel}`)}
                   </button>
                 )}
               </article>
@@ -229,6 +264,7 @@ export default function Pricing() {
                   }).format(tp.display_amount)
                 : `₹${pack.price_inr}`;
               const locked = !topups.is_active_subscriber;
+              const isBusy = busyId === pack.pack_id;
               return (
                 <article key={pack.pack_id} className={`brutal-card p-4 flex flex-col gap-2 ${pack.is_popular ? "border-violet/40" : "border-white/10"} ${locked ? "opacity-60" : ""}`} data-testid={`topup-card-${pack.pack_id}`}>
                   <div className="flex items-center justify-between">
@@ -246,13 +282,13 @@ export default function Pricing() {
                   <div className="text-sm font-display font-bold text-ink">{pack.credits.toLocaleString("en-IN")} credits</div>
                   <p className="text-xs text-muted flex-1">{pack.blurb}</p>
                   <button
-                    onClick={() => checkoutTopup(pack.pack_id)}
-                    disabled={locked}
-                    className="btn-brutal text-xs opacity-70 cursor-not-allowed"
+                    onClick={() => startCheckout({ packId: pack.pack_id })}
+                    disabled={locked || isBusy || !gateway.configured}
+                    className={`btn-brutal text-xs ${(locked || !gateway.configured) ? "opacity-50 cursor-not-allowed" : ""}`}
                     data-testid={`topup-cta-${pack.pack_id}`}
-                    title={PAYMENTS_UNAVAILABLE_MSG}
+                    title={locked ? "Subscribe to unlock top-ups" : (!gateway.configured ? PAYMENTS_UNAVAILABLE_MSG : `Buy ${pack.name}`)}
                   >
-                    {locked ? "Subscribers only" : `Coming soon · ${label}`}
+                    {locked ? "Subscribers only" : (isBusy ? "Opening checkout…" : (gateway.configured ? `Buy · ${label}` : `Coming soon · ${label}`))}
                   </button>
                 </article>
               );
@@ -274,7 +310,7 @@ export default function Pricing() {
         </section>
 
         <footer className="pt-6 border-t border-white/5 text-[11px] font-mono uppercase tracking-widest text-muted" data-testid="pricing-footer">
-          Secure server-side payment verification · No card data touches our servers
+          {gateway.configured ? `Payments by ${gateway.display_name || gateway.provider} · ` : ""}Secure server-side payment verification · No card data touches our servers
         </footer>
       </div>
     </div>

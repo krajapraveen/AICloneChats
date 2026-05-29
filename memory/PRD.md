@@ -23,6 +23,41 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-05-12 (Instamojo Payment Gateway — INTEGRATED, awaiting credentials)** — P0 revenue restoration.
+  - **Architecture**: Built on top of the Payment Gateway Abstraction Layer shipped earlier today. Instamojo is now the active provider (`PAYMENT_PROVIDER=instamojo` in `backend/.env`). When credentials are pasted in, `/api/payments/status` flips to `configured:true` and the Pricing page automatically re-enables Subscribe/Top-up CTAs — no frontend code change required.
+  - **Files added**:
+    - `/app/backend/payments/providers/instamojo.py` — full provider: create_order (POST payment-requests/), verify_payment (GET payment-requests/{id}/), handle_webhook (HMAC-SHA1 MAC verify, dedup, amount-equality, idempotent credit grant via `credit_payment()`), refund_payment (placeholder pending ops sign-off).
+    - `/app/backend/payments/providers/__init__.py` — imports providers so they self-register.
+    - `/app/backend/payments_instamojo_aliases.py` — thin aliases for the P0-spec URL shape: `POST /api/payments/instamojo/create-order`, `POST /api/payments/instamojo/webhook`, `GET /api/payments/instamojo/order/{order_id}`. All wrap the generic abstraction router.
+    - `/app/backend/tests/test_payments_instamojo.py` — 8 tests, all passing.
+  - **Files modified**:
+    - `/app/backend/server.py` — `import payments.providers` + `app.include_router(payments_instamojo_aliases.router)`.
+    - `/app/backend/.env` — added `PAYMENT_PROVIDER=instamojo`, `INSTAMOJO_ENV=test`, `INSTAMOJO_API_KEY`, `INSTAMOJO_AUTH_TOKEN`, `INSTAMOJO_WEBHOOK_SECRET`, `INSTAMOJO_BASE_URL`, `BACKEND_PUBLIC_URL`, `INSTAMOJO_SUCCESS_URL`, `INSTAMOJO_FAILURE_URL`.
+    - `/app/frontend/src/pages/Pricing.jsx` — rewritten to read `/api/payments/status`, show "Test mode · Instamojo sandbox" banner when configured + env=test, and call `/api/payments/instamojo/create-order` + `window.location.assign(checkout_url)` on Subscribe/Top-up click. Still falls back to inert "Payments offline" + Coming soon CTAs when `configured:false` (current state).
+  - **Instamojo API used** (v1.1 REST):
+    - Sandbox base: `https://test.instamojo.com/api/1.1/`
+    - Live base: `https://www.instamojo.com/api/1.1/`
+    - Headers: `X-Api-Key`, `X-Auth-Token`
+    - Create: `POST payment-requests/` → returns `payment_request.id` + `payment_request.longurl` (the redirect target)
+    - Status: `GET payment-requests/{id}/` → returns `payment_request.payments[]` with `status=Credit` on success
+    - Webhook MAC: HMAC-SHA1 of pipe-joined sorted values, key = `INSTAMOJO_WEBHOOK_SECRET` (Private Salt)
+  - **Security guarantees baked in**:
+    - HMAC-SHA1 MAC verification before any state change (`hmac.compare_digest` constant-time check).
+    - Amount equality check (`abs(payload_amount - order.amount) <= 0.01`) blocks attacker-tampered low-amount Credit webhooks.
+    - Webhook dedup via `webhook_dedup` unique index on key `instamojo:{payment_request_id}:{payment_id}:{status}`.
+    - Second-line idempotency via `credited_at` on `payment_orders` — if a webhook + verify_payment race, only the first call credits.
+    - All Instamojo arrivals (valid or invalid) logged to `webhook_logs` with `mac_valid` + `result` fields for audit.
+    - `INSTAMOJO_API_KEY` + `INSTAMOJO_AUTH_TOKEN` + `INSTAMOJO_WEBHOOK_SECRET` are server-side only — never returned by any endpoint (verified via `/api/payments/status` which only exposes `{provider, env, configured, display_name, registered_providers}`).
+  - **Tests** — 22 total payment tests, all passing:
+    - `test_payments_instamojo.py` (8): MAC algorithm matches spec, MAC ignores `mac` field, status reflects creds, webhook with invalid MAC → no credit, webhook success → credit + replay no double-credit, failure status → no credit, amount-mismatch attack blocked, unknown payment_request_id audit-logged but not credited.
+    - `test_payments_abstraction.py` (14): registry behavior, fail-closed when unconfigured, webhook dispatch by URL, alias endpoints, regression that Cashfree/Easebuzz endpoints stay 404.
+  - **Database schema changes**: `payment_orders` documents written by Instamojo now include `instamojo_payment_request_id`, `instamojo_payment_id`, `longurl`. Existing fields (`provider`, `status`, `credited_at`, `balance_after`) unchanged.
+  - **Pending user action**: paste Instamojo sandbox `API Key`, `Auth Token`, and `Private Salt` into `/app/backend/.env` and restart backend. The webhook URL to register in the Instamojo sandbox dashboard is `https://digital-twin-119.preview.emergentagent.com/api/payments/instamojo/webhook`.
+  - **Rollback plan**: 3-line revert.
+    1. `unset PAYMENT_PROVIDER` (or set to blank) in `backend/.env`
+    2. `sudo supervisorctl restart backend`
+    3. `/api/payments/status` returns `configured:false` and the Pricing page goes back to inert mode — no code changes, historical orders untouched. To remove Instamojo entirely later, delete `payments/providers/instamojo.py`, `payments_instamojo_aliases.py`, and the `INSTAMOJO_*` env vars.
+
 - **2026-05-12 (Payment Gateway Abstraction Layer — P0 Foundation)** — App is now ready for the next gateway integration as a single-file drop-in.
   - **Why**: After Cashfree (2026-05-11) and Easebuzz (2026-05-12) were both ripped out, the codebase needed a stable seam so the next gateway integration can't reach into chat/credit/auth code or duplicate request-validation logic.
   - **Files added**:
