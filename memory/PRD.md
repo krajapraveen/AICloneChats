@@ -23,6 +23,45 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-05-12 (Payment Gateway Abstraction Layer — P0 Foundation)** — App is now ready for the next gateway integration as a single-file drop-in.
+  - **Why**: After Cashfree (2026-05-11) and Easebuzz (2026-05-12) were both ripped out, the codebase needed a stable seam so the next gateway integration can't reach into chat/credit/auth code or duplicate request-validation logic.
+  - **Files added**:
+    - `/app/backend/payments/__init__.py` — package exports.
+    - `/app/backend/payments/base.py` — `PaymentProvider` ABC + gateway-agnostic dataclasses (`OrderRequest`, `OrderResponse`, `VerifyResult`, `WebhookResult`, `RefundResult`, `ProviderStatus`) + `GatewayNotConfigured` exception.
+    - `/app/backend/payments/registry.py` — process-local provider registry, `PAYMENT_PROVIDER` env-var driven active-provider resolution.
+    - `/app/backend/payments/router.py` — generic FastAPI router that delegates every endpoint to whichever provider is active.
+    - `/app/backend/tests/test_payments_abstraction.py` — **13/13 passing**.
+  - **Files modified**:
+    - `/app/backend/server.py` — registered `payments.router` after the existing `analytics_revenue` router. No other touch.
+  - **Public API surface** (provider-agnostic):
+    - `GET  /api/payments/status` — public, no network calls. Returns `{provider, env, configured, display_name, registered_providers}`. Pricing page reads this on mount and shows the "Payments offline" banner when `configured=false`.
+    - `POST /api/payments/create-order` — auth required. Server-side pricing via existing `compute_price_for_plan`. Builds an `OrderRequest` and calls `provider.create_order`. Returns `{ok, order_id, provider, env, checkout_url, access_key, merchant_key, payload}` — fields used depend on whether the provider uses inline SDK or redirect.
+    - `GET  /api/payments/order/{order_id}` — auth required. If status is still `created`/`pending`, calls the *originating* provider's `verify_payment` for an authoritative reconcile.
+    - `POST /api/payments/webhook/{provider_name}` — public. Dispatches by URL path. Unknown provider → 410 Gone so the gateway eventually stops retrying.
+    - `POST /api/payments/return/{provider_name}` — public, browser POST landing for surl/furl gateways. Verifies then 303-redirects to `/pay/return?order_id=...`.
+    - `POST /api/payments/refund` — admin only. Calls the provider's `refund_payment`; base impl returns 501 `refund_not_implemented` until a real provider overrides it.
+  - **Constitutional rules baked into the layer**:
+    - Frontend NEVER sends amount or currency — server resolves price via `compute_price_for_plan(item_id, country_code)`.
+    - Credits are NEVER granted from the router — only `provider.handle_webhook` / `provider.verify_payment` may call `credit_payment()` after hash verification + amount equality + idempotency.
+    - Every `payment_orders` row is tagged `provider=<name>` so historical Cashfree (`provider=cashfree`) and Easebuzz (`provider=easebuzz, legacy=true`) audit data remains meaningful and can never be fulfilled by a different gateway.
+    - When `PAYMENT_PROVIDER` is unset OR points to an unregistered provider OR points to a registered-but-unconfigured provider → all mutating endpoints return HTTP 503 `gateway_not_configured`. The Pricing page already keys off this signal.
+  - **How to add the next gateway** (one-file drop-in):
+    1. Create `/app/backend/payments/providers/<name>.py` exposing a class that subclasses `PaymentProvider`, sets `name = "<name>"` + `display_name = "<Pretty Name>"`, implements `status() / create_order() / verify_payment() / handle_webhook()` (and optionally `refund_payment()`).
+    2. At the module's bottom, call `register_provider(MyProvider())`.
+    3. Add an `import payments.providers.<name>` line at the end of `server.py` so the module loads at boot.
+    4. Set `PAYMENT_PROVIDER=<name>` + the provider's own credential env vars in `backend/.env`.
+    5. Restart the backend supervisor.
+    No edits to `Pricing.jsx`, `PaymentReturn.jsx`, `billing_api.py`, `credits.py`, or `credit_guard.py` are required. The frontend will see `configured=true` on its next `/api/payments/status` poll and re-enable Subscribe/Top-up CTAs automatically once the Pricing UI is wired to the new endpoint shape (currently still on the inert toast — frontend wiring is a small, separate task once the gateway is chosen).
+  - **Tests** (`backend/tests/test_payments_abstraction.py`): 13/13 passing
+    - Registry: name required, raises when unset / not-registered / not-configured, returns when configured, case-insensitive lookup.
+    - Base class: `refund_payment` default returns `not_implemented`.
+    - Live HTTP: status returns `configured:false`, create-order rejects unauth, webhook to unknown provider → 410, refund requires auth, order GET requires auth.
+    - Regression: no Easebuzz endpoint remains (`/api/payments/easebuzz/*` all 404).
+  - **Files preserved (audit, must not be touched)**:
+    - `/app/backend/migrations/tag_cashfree_history.py`
+    - `/app/backend/migrations/tag_easebuzz_history.py`
+  - **Net state**: app has NO active payment gateway BUT now has a clean, tested seam for the next one. Next decision: Instamojo (fastest KYC approval) vs Razorpay (cleaner DX, requires KYC).
+
 - **2026-05-12 (Easebuzz Payment Gateway — REMOVED, same day as added)** — User directive: rip out Easebuzz completely. App is back between gateways.
   - **Files deleted**:
     - `/app/backend/payments_easebuzz.py`

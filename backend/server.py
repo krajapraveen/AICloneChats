@@ -82,6 +82,12 @@ app.include_router(billing_api.admin_router)
 import analytics_revenue  # noqa: E402
 app.include_router(analytics_revenue.router)
 app.include_router(analytics_revenue.public_router)
+# Payment Gateway Abstraction Layer — generic router. Provider modules
+# self-register via `payments.registry.register_provider()` at import time.
+# When no provider is registered, the layer's endpoints fail closed
+# (503 gateway_not_configured) so the Pricing page stays in inert mode.
+from payments.router import router as payments_router  # noqa: E402
+app.include_router(payments_router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
