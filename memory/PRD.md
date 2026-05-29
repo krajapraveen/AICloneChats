@@ -23,37 +23,36 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
-- **2026-05-12 (Easebuzz Payment Gateway — P0 Restoration)** — Payments are accepted again (test mode).
-  - **Why**: Cashfree was fully removed on 2026-05-11 leaving the app with no payment gateway. Easebuzz is now the active provider.
-  - **Backend** (`/app/backend/payments_easebuzz.py`):
-    - `POST /api/payments/easebuzz/create-order` (auth required): resolves price server-side, persists `payment_orders` row with `provider="easebuzz"`, calls Easebuzz `initiateLink` with SHA-512 hash, returns `{access_key, key, env, hosted_url}` for the frontend SDK.
-    - `POST /api/payments/easebuzz/webhook` (public): form-encoded; hash-verified; idempotent via `webhook_dedup`; rejects amount-mismatch; only credits on `status=success` AND `credited_at` is unset. Logs every arrival to `webhook_logs`.
-    - `POST /api/payments/easebuzz/surl` + `/furl`: browser-POST landings that verify + 303-redirect to `/pay/return?order_id=...`.
-    - `GET /api/payments/order/{order_id}` (auth): returns the order; if still pending, re-queries Easebuzz Transaction API and reconciles.
-    - `POST /api/payments/easebuzz/verify` (auth): manual reconcile for support cases.
-    - `GET /api/payments/easebuzz/config` (public): returns `{provider, env, configured}` — never exposes key/salt.
-  - **Hash spec implemented (Easebuzz/PayU SHA-512)**:
-    - Request: `key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5|udf6|udf7|udf8|udf9|udf10|SALT`
-    - Response (reversed): `SALT|status|udf10|udf9|udf8|udf7|udf6|udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key`
-  - **Frontend**:
-    - New helper `frontend/src/lib/easebuzz.js` — dynamically loads the Easebuzz Checkout JS SDK, falls back to hosted URL on SDK load failure, always returns user to `/pay/return?order_id=...` (server is the only credit-granting authority).
-    - `Pricing.jsx` re-wired: calls `/payments/easebuzz/config` on mount, shows "Payments offline" banner when not configured, shows "Test mode · Easebuzz sandbox" banner when env=test, and routes Subscribe/Top-up CTAs through `startEasebuzzCheckout`.
-    - `PaymentReturn.jsx` neutralized — removed "Cashfree" branding.
-  - **Env vars added** (`backend/.env`): `EASEBUZZ_MERCHANT_KEY`, `EASEBUZZ_SALT`, `EASEBUZZ_ENV=test`, `EASEBUZZ_SUCCESS_URL`, `EASEBUZZ_FAILURE_URL`.
-  - **Security**:
-    - Credits are NEVER granted client-side — only `_process_callback` (after SHA-512 hash verification + amount equality + dedup) calls `credit_payment()`.
-    - Webhook dedup key: `easebuzz:{txnid}:{status}:{easepayid}` enforced by unique index.
-    - `credited_at` is a second-line idempotency guard inside `payment_orders`.
-    - The `key` and `salt` are never exposed to the frontend (only `/config` returns env + configured flag).
-    - Replay of identical webhook → `duplicate` reason, no double-credit.
-  - **Tests** (`backend/tests/test_payments_easebuzz.py`) — 8/8 passing:
-    - Request hash deterministic + format matches Easebuzz spec.
-    - Response hash matches reversed spec + flips when payload is tampered.
-    - Webhook with invalid hash: order stays pending, no credit.
-    - Webhook with valid hash + status=success: credits granted, plan activated, replay does not double-credit.
-    - Webhook with status=failure: order → failed, no credit.
-    - Amount mismatch attack: rejected, no credit.
-  - **Pending user action**: provide Easebuzz **test merchant_key + salt** (generated from the Easebuzz merchant dashboard) for the create-order handshake to work end-to-end. Until then, the public `/config` endpoint reports `configured: false` and the UI shows the "Payments offline" banner — exactly what the screenshot smoke-test confirmed.
+- **2026-05-12 (Easebuzz Payment Gateway — REMOVED, same day as added)** — User directive: rip out Easebuzz completely. App is back between gateways.
+  - **Files deleted**:
+    - `/app/backend/payments_easebuzz.py`
+    - `/app/backend/tests/test_payments_easebuzz.py`
+    - `/app/frontend/src/lib/easebuzz.js`
+  - **Files modified**:
+    - `/app/backend/server.py` — removed `import payments_easebuzz` + router include.
+    - `/app/backend/.env` — removed `EASEBUZZ_MERCHANT_KEY`, `EASEBUZZ_SALT`, `EASEBUZZ_ENV`, `EASEBUZZ_SUCCESS_URL`, `EASEBUZZ_FAILURE_URL`.
+    - `/app/frontend/src/pages/Pricing.jsx` — rewritten to inert-state (toast "Payments are temporarily unavailable" on Subscribe/Top-up click). No SDK loader, no `lib/easebuzz` import.
+  - **Files added** (defensive audit trail):
+    - `/app/backend/migrations/tag_easebuzz_history.py` — symmetric to `tag_cashfree_history.py`; tags any historical `payment_orders` / `webhook_logs` with `provider=easebuzz` as `legacy=true`. Ran once: 0 orders + 12 webhook_logs (all from unit-test runs against the shared dev DB) marked legacy.
+  - **API endpoints removed** (all return 404 now):
+    - `POST /api/payments/easebuzz/create-order`
+    - `POST /api/payments/easebuzz/webhook`
+    - `POST /api/payments/easebuzz/surl`
+    - `POST /api/payments/easebuzz/furl`
+    - `GET  /api/payments/order/{order_id}`
+    - `POST /api/payments/easebuzz/verify`
+    - `GET  /api/payments/easebuzz/config`
+  - **Codebase audit**: `grep -rIln "easebuzz\|Easebuzz\|EASEBUZZ" /app/backend /app/frontend/src` now returns only `tag_easebuzz_history.py` (migration kept for audit) and `Pricing.jsx` (one changelog comment). Env vars: zero matches.
+  - **Database**: No `payment_orders` with `provider=easebuzz` ever existed in production (gateway never had live credentials). 12 `webhook_logs` rows from test runs tagged `legacy=true`. Historical Cashfree records untouched.
+  - **Validation**: Backend supervisor restart clean. `/api/health` returns ok. All removed routes return 404. Frontend Pricing page renders all 5 plans with "Payments offline" banner.
+  - **Net state after this session**: app has NO active payment gateway. Same as the pre-Easebuzz state from 2026-05-11.
+
+- **2026-05-12 (Easebuzz Payment Gateway — added, then removed same day)** — Full integration was built and unit-tested (8/8) but never went live. See removal entry above for the cleanup. This entry exists only so the audit trail shows the brief existence of the integration in git history.
+
+
+## Changelog (most recent first)
+
+- **2026-05-12 (Easebuzz Payment Gateway — superseded by removal entry above)** — Initial integration build was completed and unit-tested (8/8) but never went live (no credentials issued by Easebuzz dashboard, and user reversed direction the same day). Code removed by the entry above; this stub is kept only so the audit trail acknowledges the brief existence.
 
 
 ## Changelog
