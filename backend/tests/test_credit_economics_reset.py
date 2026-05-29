@@ -169,17 +169,8 @@ class TestPaywallFreeUser:
             if detail.get("code") == "subscription_required":
                 assert detail.get("required_plan") in ("Starter", "Starter Chat")
 
-    def test_topup_403_for_free_user(self, session, free_token):
-        r = session.post(
-            f"{API}/payments/create-topup-order",
-            json={"pack_id": "topup_small"},
-            headers=_auth_headers(free_token),
-            timeout=20,
-        )
-        assert r.status_code == 403, r.text
-        detail = r.json().get("detail") or {}
-        if isinstance(detail, dict):
-            assert detail.get("code") == "subscription_required_for_topup", detail
+    # Topup endpoint removed 2026-05-11 along with the Cashfree integration.
+    # Subscription/top-up checkout will be re-added with the next gateway.
 
 
 # ---------- Subscriber happy path ----------
@@ -207,40 +198,10 @@ class TestSubscriberFlow:
         # mood_chat cost is 1 (slug=companion routes to mood_chat per spec)
         assert before - after == 1, f"Expected 1 credit deducted, before={before} after={after}"
 
-    def test_topup_order_creation_subscriber(self, session, subscriber_token):
-        r = session.post(
-            f"{API}/payments/create-topup-order",
-            json={"pack_id": "topup_small"},
-            headers=_auth_headers(subscriber_token),
-            timeout=30,
-        )
-        # Cashfree sandbox may be unreachable from sandbox env
-        if r.status_code in (502, 503, 504):
-            pytest.skip(f"gateway_unreachable: {r.status_code}")
-        assert r.status_code == 200, r.text
-        data = r.json()
-        order_id = data.get("order_id")
-        assert order_id, data
-        assert data.get("payment_session_id") or data.get("session_id") or data.get("cf_order_id")
-
-        # Verify payment_orders doc was created with kind='topup' and credits=300
-        import sys
-        sys.path.insert(0, "/app/backend")
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from dotenv import load_dotenv
-        load_dotenv("/app/backend/.env")
-
-        async def _check():
-            c = AsyncIOMotorClient(os.environ["MONGO_URL"])
-            db = c[os.environ["DB_NAME"]]
-            doc = await db.payment_orders.find_one({"order_id": order_id}, {"_id": 0})
-            c.close()
-            return doc
-
-        doc = asyncio.get_event_loop().run_until_complete(_check())
-        assert doc is not None, "payment_orders doc not created"
-        assert doc.get("kind") == "topup"
-        assert doc.get("credits") == 300
+    def test_topup_order_creation_subscriber_REMOVED(self):
+        """Topup order endpoint removed with Cashfree 2026-05-11; re-add when next gateway lands."""
+        import pytest
+        pytest.skip("topup endpoint removed with cashfree migration")
 
     def test_tier_gate_video_avatar_blocks_pro(self, session, subscriber_token):
         r = session.post(

@@ -1,13 +1,9 @@
 /**
- * Pricing page — five plans, server-authored Cashfree checkout.
+ * Pricing page — five plans, marketing-only display.
  *
- * Frontend NEVER passes amount, plan price, or credit count to the backend.
- * It passes plan_id only. Backend reads PLANS server-side.
- *
- * Cashfree integration uses the official JS SDK in dropIn mode; after
- * checkout completes (success or cancel) the user lands on /pay/return
- * which polls /api/payments/order/:id for the AUTHORITATIVE status.
- * URL-based "success" flags are ignored.
+ * 2026-05-11: Cashfree integration removed. Subscribe buttons are inert
+ * placeholders until the next payment gateway is integrated. Plan + top-up
+ * catalogs continue to render so users see what's coming.
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -16,7 +12,8 @@ import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
 import { useCredits } from "../hooks/useCredits";
-import { load as loadCashfree } from "@cashfreepayments/cashfree-js";
+
+const PAYMENTS_UNAVAILABLE_MSG = "Payments are temporarily unavailable. New gateway coming soon.";
 
 function planTone(tier) {
   return [
@@ -35,11 +32,8 @@ export default function Pricing() {
 
   const [plans, setPlans] = useState([]);
   const [costs, setCosts] = useState({});
-  const [catalog, setCatalog] = useState(null);  // { country_code, currency_code, prices: {plan_id: {...}}, country_source }
+  const [catalog, setCatalog] = useState(null);
   const [topups, setTopups] = useState({ packs: [], country_code: "", is_active_subscriber: false });
-  const [busyPlan, setBusyPlan] = useState(null);
-  const [busyTopup, setBusyTopup] = useState(null);
-  const [cashfreeMode, setCashfreeMode] = useState("sandbox");
 
   useEffect(() => {
     let cancelled = false;
@@ -47,18 +41,14 @@ export default function Pricing() {
     api.post("/funnel/event", { event_name: "pricing_view", referrer: document.referrer || null }).catch(() => {});
     (async () => {
       try {
-        const [{ data: plansData }, { data: cfg }, { data: cat }, { data: tu }] = await Promise.all([
+        const [{ data: plansData }, { data: cat }, { data: tu }] = await Promise.all([
           api.get("/plans"),
-          api.get("/payments/config"),
           api.get("/pricing/catalog"),
           api.get("/topups/catalog"),
         ]);
         if (cancelled) return;
         setPlans(plansData.plans || []);
         setCosts(plansData.credit_costs || {});
-        // Backend now normalizes mode to 'sandbox' | 'production'. Guard anyway.
-        const m = (cfg?.mode || "").toLowerCase();
-        setCashfreeMode(m === "production" ? "production" : "sandbox");
         setCatalog(cat || null);
         setTopups(tu || { packs: [], is_active_subscriber: false });
       } catch (e) {
@@ -68,78 +58,22 @@ export default function Pricing() {
     return () => { cancelled = true; };
   }, []);
 
-  // Single source of truth for the Cashfree SDK launch. Returns nothing.
-  // On any failure (SDK load / invalid mode / checkout call), a user-facing
-  // toast is shown; nothing is silently swallowed.
-  const launchCashfree = async (paymentSessionId, orderId) => {
-    if (cashfreeMode !== "sandbox" && cashfreeMode !== "production") {
-      // Defensive: backend should always return one of these. If somehow not,
-      // surface a real error instead of letting the SDK silently no-op.
-      // eslint-disable-next-line no-console
-      console.error("Invalid Cashfree mode:", cashfreeMode);
-      throw new Error("Payment gateway is misconfigured. Please contact support.");
-    }
-    if (!paymentSessionId) {
-      throw new Error("Payment session could not be created. Please try again.");
-    }
-    let cashfree;
-    try {
-      cashfree = await loadCashfree({ mode: cashfreeMode });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("loadCashfree failed:", err);
-      throw new Error("Payment gateway didn't load. Please refresh and retry.");
-    }
-    if (!cashfree || typeof cashfree.checkout !== "function") {
-      throw new Error("Payment gateway didn't load. Please refresh and retry.");
-    }
-    await cashfree.checkout({
-      paymentSessionId,
-      returnUrl: `${window.location.origin}/pay/return?order_id=${orderId}`,
-      redirectTarget: "_self",
-    });
+  // Payments are offline pending gateway swap (2026-05-11). All checkout
+  // CTAs route to this no-op so the user gets an honest explanation instead
+  // of a broken Cashfree call.
+  const paymentsUnavailable = () => {
+    toast.error(PAYMENTS_UNAVAILABLE_MSG);
   };
-
-  const checkout = async (planId) => {
-    if (!user) {
-      navigate("/login?redirect=/pricing");
-      return;
-    }
-    setBusyPlan(planId);
-    try {
-      const { data: order } = await api.post("/payments/create-order", { plan_id: planId });
-      await launchCashfree(order?.payment_session_id, order?.order_id);
-    } catch (e) {
-      const detail = e?.response?.data?.detail;
-      const apiMsg = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
-      const msg = (typeof apiMsg === "string" && apiMsg) || e?.message || "Could not start checkout.";
-      toast.error(msg);
-    } finally {
-      setBusyPlan(null);
-    }
+  const checkout = (planId) => {
+    if (!user) { navigate("/login?redirect=/pricing"); return; }
+    paymentsUnavailable();
+    // Mark which plan was attempted for future analytics — silent best-effort
+    api.post("/funnel/event", { event_name: "payments_unavailable_click", referrer: planId }).catch(() => {});
   };
-
-  const checkoutTopup = async (packId) => {
-    if (!user) {
-      navigate("/login?redirect=/pricing");
-      return;
-    }
-    if (!topups.is_active_subscriber) {
-      toast.error("Top-up packs are for active subscribers only. Subscribe to a plan first.");
-      return;
-    }
-    setBusyTopup(packId);
-    try {
-      const { data: order } = await api.post("/payments/create-topup-order", { pack_id: packId });
-      await launchCashfree(order?.payment_session_id, order?.order_id);
-    } catch (e) {
-      const detail = e?.response?.data?.detail;
-      const apiMsg = typeof detail === "object" ? detail?.message : detail;
-      const msg = (typeof apiMsg === "string" && apiMsg) || e?.message || "Could not start top-up checkout.";
-      toast.error(msg);
-    } finally {
-      setBusyTopup(null);
-    }
+  const checkoutTopup = (packId) => {
+    if (!user) { navigate("/login?redirect=/pricing"); return; }
+    paymentsUnavailable();
+    api.post("/funnel/event", { event_name: "payments_unavailable_topup_click", referrer: packId }).catch(() => {});
   };
 
   return (
@@ -182,6 +116,10 @@ export default function Pricing() {
               </div>
             </div>
           )}
+          <div className="brutal-card p-4 border-amber/40 bg-amber-500/10" data-testid="pricing-payments-unavailable-banner">
+            <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Payments offline</div>
+            <div className="text-sm">We're switching payment providers. Subscribe and top-up buttons are temporarily inert. The catalog below stays accurate — your existing plan and credit balance are unaffected.</div>
+          </div>
         </header>
 
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="pricing-plans-grid">
@@ -252,11 +190,11 @@ export default function Pricing() {
                 ) : (
                   <button
                     onClick={() => checkout(p.plan_id)}
-                    disabled={busyPlan === p.plan_id}
-                    className="btn-brutal text-xs"
+                    className="btn-brutal text-xs opacity-70 cursor-not-allowed"
                     data-testid={`pricing-cta-${p.plan_id}`}
+                    title={PAYMENTS_UNAVAILABLE_MSG}
                   >
-                    {busyPlan === p.plan_id ? "Opening checkout…" : `Subscribe · ${displayLabel}`}
+                    Coming soon · {displayLabel}
                   </button>
                 )}
               </article>
@@ -310,11 +248,12 @@ export default function Pricing() {
                   <p className="text-xs text-muted flex-1">{pack.blurb}</p>
                   <button
                     onClick={() => checkoutTopup(pack.pack_id)}
-                    disabled={locked || busyTopup === pack.pack_id}
-                    className="btn-brutal text-xs"
+                    disabled={locked}
+                    className="btn-brutal text-xs opacity-70 cursor-not-allowed"
                     data-testid={`topup-cta-${pack.pack_id}`}
+                    title={PAYMENTS_UNAVAILABLE_MSG}
                   >
-                    {busyTopup === pack.pack_id ? "Opening checkout…" : locked ? "Subscribers only" : `Buy · ${label}`}
+                    {locked ? "Subscribers only" : `Coming soon · ${label}`}
                   </button>
                 </article>
               );

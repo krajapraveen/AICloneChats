@@ -10,12 +10,12 @@ Architecture:
      Order creation calls compute_price_for_user(user, plan_id) which is the
      single source of truth.
 
-Cashfree India processes INR only. For non-INR display we:
+India-domiciled gateways process INR only. For non-INR display we:
   - Show local price in the user's currency (display_amount, display_currency)
   - Charge in INR (charge_amount = display_amount converted at locked rate)
   - Surface this in the order so the frontend can show the disclosure banner
-When Cashfree International is enabled OR Stripe is added, flip
-GATEWAY_CHARGE_CURRENCIES to include the new currencies.
+When an international-charging gateway is added, flip GATEWAY_CHARGE_CURRENCIES
+to include the new currencies.
 
 Detection priority (compute_user_country):
   1. user.currency_preference (manual override the user set in profile)
@@ -141,9 +141,9 @@ FIXED_PRICES: dict[str, dict[str, int]] = {
 # USD anchor used to derive long-tail country prices.
 USD_ANCHOR_PLAN: dict[str, float] = {pid: float(prices["USD"]) for pid, prices in FIXED_PRICES.items()}
 
-# Gateway currencies — the currencies in which Cashfree (or whatever provider
-# we're using) can actually charge the customer. Everything else is shown for
-# transparency but charged via conversion to one of these.
+# Gateway currencies — the currencies in which the configured provider can
+# actually charge the customer. Everything else is shown for transparency but
+# charged via conversion to one of these.
 GATEWAY_CHARGE_CURRENCIES: set[str] = set(
     (os.environ.get("GATEWAY_CHARGE_CURRENCIES") or "INR").split(",")
 )

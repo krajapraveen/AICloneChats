@@ -151,8 +151,9 @@ PLAN_INDEX = {p["plan_id"]: p for p in PLANS}
 
 # ----- Top-up packs (subscribers-only) -----
 # Founder-locked 2026-05-11. Top-ups never carry a recurring plan; they only
-# top up the balance of an ACTIVE subscriber. Server-side enforcement lives
-# in payments_cashfree.create_topup_order — frontend gating is cosmetic.
+# top up the balance of an ACTIVE subscriber. Server-side enforcement is
+# enforced at the gateway integration layer (currently OFFLINE — payments
+# being migrated 2026-05-11).
 TOP_UP_PACKS = [
     {
         "pack_id": "topup_small",
@@ -360,12 +361,14 @@ async def refund_credits(user: dict, surface: str, request_id: Optional[str] = N
 
 
 async def credit_payment(user_id: str, credits: int, order_id: str, plan_id: Optional[str] = None, kind: str = "subscription", pack_id: Optional[str] = None) -> int:
-    """Add credits from a verified Cashfree webhook. Idempotency is the caller's
+    """Add credits from a verified payment webhook. Idempotency is the caller's
     responsibility — this function is only ever called from inside the webhook
     handler after the order's credited_at marker is checked.
 
     For kind="subscription": sets plan_id, marks plan as active, increments credits.
     For kind="topup":         credits-only top up. Plan/status untouched.
+
+    Kept after Cashfree removal (2026-05-11) for the future gateway integration.
     """
     set_fields: dict = {}
     if kind == "subscription" and plan_id:
