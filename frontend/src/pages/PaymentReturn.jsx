@@ -118,7 +118,7 @@ export default function PaymentReturn() {
           <div className="brutal-card p-6 text-center" data-testid="payment-return-pending">
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">PROCESSING</div>
             <h1 className="font-display text-2xl font-bold mb-2">Confirming your payment…</h1>
-            <p className="text-sm text-muted">We're checking with Cashfree directly. This takes a few seconds.</p>
+            <p className="text-sm text-muted">We're checking with the payment gateway directly. This takes a few seconds.</p>
           </div>
         )}
 
@@ -138,7 +138,7 @@ export default function PaymentReturn() {
           <div className="brutal-card p-6" data-testid="payment-return-still-pending">
             <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-2">STILL PROCESSING</div>
             <h1 className="font-display text-xl font-bold mb-1">We haven't received confirmation yet.</h1>
-            <p className="text-sm text-muted">Cashfree is taking longer than usual. If you completed payment, your credits will appear automatically once it confirms.</p>
+            <p className="text-sm text-muted">The payment gateway is taking longer than usual. If you completed payment, your credits will appear automatically once it confirms.</p>
             <div className="flex gap-2 flex-wrap mt-4">
               <Link to="/dashboard" className="btn-ghost text-sm">Back to dashboard</Link>
               <Link to="/pricing" className="btn-ghost text-sm">Pricing</Link>
