@@ -29,6 +29,15 @@ from db import db  # noqa: E402
 from auth import get_current_user  # noqa: E402
 
 
+@pytest.fixture(scope="session")
+def event_loop():
+    """Single event loop for the whole session so motor's cached loop stays alive."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
 async def _test_auth(request: Request):
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer "):
