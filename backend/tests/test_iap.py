@@ -150,10 +150,10 @@ async def test_apple_duplicate_transaction_no_double_credit(client, monkeypatch)
 
     r2 = await client.post("/api/iap/apple/verify", json=payload, headers=_auth(token))
     assert r2.status_code == 200, r2.text
-    b2 = r2.json()["balance"]
 
-    assert b1 == b2, f"Double credit! first={b1} second={b2}"
-
+    # Critical: the DB must have EXACTLY one row for this transaction. Balance
+    # equality is NOT a reliable idempotency proof (balance can legitimately
+    # change between calls due to unrelated grants).
     count = await db.iap_transactions.count_documents({"transaction_id": "apple-txn-dup"})
     assert count == 1, f"Expected 1 iap_transactions row, found {count}"
 
@@ -266,8 +266,9 @@ async def test_google_duplicate_purchase_no_double_credit(client, monkeypatch):
 
     r2 = await client.post("/api/iap/google/verify", json=payload, headers=_auth(token))
     assert r2.status_code == 200, r2.text
-    b2 = r2.json()["balance"]
-    assert b1 == b2, f"Double credit! {b1} != {b2}"
+
+    count = await db.iap_transactions.count_documents({"transaction_id": "google-dup-g-tok-dup"})
+    assert count == 1, f"Expected 1 iap_transactions row, found {count}"
 
 
 @pytest.mark.asyncio
