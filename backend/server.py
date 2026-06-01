@@ -33,6 +33,7 @@ import admin_email_health  # noqa: E402
 import payments_cashfree  # noqa: E402
 import billing_api  # noqa: E402
 from credits import ensure_plans_seeded  # noqa: E402
+from iap import ensure_iap_indexes  # noqa: E402
 
 app = FastAPI(title="CloneMe AI")
 
@@ -84,6 +85,8 @@ app.include_router(billing_api.admin_router)
 import analytics_revenue  # noqa: E402
 app.include_router(analytics_revenue.router)
 app.include_router(analytics_revenue.public_router)
+import iap  # noqa: E402
+app.include_router(iap.router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
@@ -247,6 +250,10 @@ async def on_startup():
         await ensure_plans_seeded()
     except Exception as e:
         logger.warning("ensure_plans_seeded failed: %s", e)
+    try:
+        await ensure_iap_indexes()
+    except Exception as e:
+        logger.warning("ensure_iap_indexes failed: %s", e)
     logger.info("Startup complete: indexes ensured")
 
     # Seed system Companion clone for /mood-chat
