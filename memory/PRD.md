@@ -23,6 +23,56 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-05-12 (Cashfree v3 PRODUCTION provider — INTEGRATED, awaiting credentials)** — Active payment gateway flipped from Instamojo to Cashfree per user directive (reuse the same Cashfree merchant account that powers Visionary Suite).
+  - **Why**: Instamojo KYC delay was blocking revenue. User's existing Cashfree merchant (live + KYC-approved for Visionary Suite) can issue a new App for aiclonechats.com inside the same merchant, giving us same-day revenue restoration.
+  - **Architecture**: Built as another provider behind the Payment Gateway Abstraction Layer. Instamojo provider code is preserved + still registered — flipping providers is `PAYMENT_PROVIDER=cashfree` ↔ `PAYMENT_PROVIDER=instamojo` in `.env`.
+  - **Files added**:
+    - `/app/backend/payments/providers/cashfree.py` — full Cashfree v3 provider. POST /pg/orders for create_order, GET /pg/orders/{id} + GET /pg/orders/{id}/payments for verify_payment, HMAC-SHA256 (base64) signature verify on webhook, dedup via `webhook_dedup` + `credited_at` second-line guard, refund_payment (placeholder pending ops sign-off).
+    - `/app/backend/payments_cashfree_aliases.py` — provider-specific URL aliases: `POST /api/payments/cashfree/create-order`, `POST /api/payments/cashfree/webhook`, `GET /api/payments/cashfree/order/{order_id}`.
+    - `/app/frontend/src/lib/cashfree.js` — dynamic loader for Cashfree v3 JS SDK (`https://sdk.cashfree.com/js/v3/cashfree.js`) + `launchCashfreeCheckout({paymentSessionId, mode})` which calls `cashfree.checkout({redirectTarget:"_self"})`.
+    - `/app/backend/tests/test_payments_cashfree.py` — 10 tests, all passing.
+    - `/app/backend/tests/conftest.py` — shared event loop across all payment test modules (fixes Motor binding when running multiple gateway test files in one pytest invocation).
+  - **Files modified**:
+    - `/app/backend/payments/providers/__init__.py` — added Cashfree import.
+    - `/app/backend/server.py` — added `app.include_router(payments_cashfree_aliases.router)`.
+    - `/app/backend/.env` — added `PAYMENT_PROVIDER=cashfree`, `CASHFREE_ENV=prod`, blank `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_WEBHOOK_SECRET`, `CASHFREE_BASE_URL`. Instamojo env vars left in place (provider still registered, just inactive).
+    - `/app/frontend/src/pages/Pricing.jsx` — provider-aware checkout: routes to `/payments/cashfree/create-order` when active gateway is Cashfree, calls `launchCashfreeCheckout(paymentSessionId)` (loads Cashfree SDK + redirects via `redirectTarget:"_self"`). Instamojo redirect-style path preserved as the fallback branch.
+    - `/app/backend/tests/test_payments_abstraction.py` + `test_payments_instamojo.py` — switched to shared event loop via conftest; emails uniqueified to prevent cross-test E11000 collisions.
+  - **Cashfree v3 API used**:
+    - Live base: `https://api.cashfree.com/pg`
+    - Sandbox base: `https://sandbox.cashfree.com/pg`
+    - Headers: `x-client-id`, `x-client-secret`, `x-api-version: 2023-08-01`
+    - Create: `POST /orders` → returns `payment_session_id` + `cf_order_id`
+    - Status: `GET /orders/{id}` → `order_status: PAID|ACTIVE|EXPIRED|TERMINATED`
+    - Payments: `GET /orders/{id}/payments` → list of `{cf_payment_id, payment_status, payment_amount, payment_method, payment_group}`
+    - Webhook signature: `base64(HMAC-SHA256(secret, timestamp + raw_body))` matched against `x-webhook-signature` header (with `x-webhook-timestamp`)
+  - **Security guarantees baked in**:
+    - HMAC-SHA256 signature verification with `hmac.compare_digest` constant-time check.
+    - Webhook signature includes timestamp → replay protection (an old signed body can't be reused).
+    - Amount equality (`abs(payment_amount - order.amount) <= 0.01`) blocks attacker-tampered low-amount SUCCESS webhooks.
+    - Dedup key `cashfree:{order_id}:{cf_payment_id}:{status}` via `webhook_dedup` unique index.
+    - Second-line idempotency via `credited_at` on `payment_orders` — verify_payment + webhook race is safe.
+    - All Cashfree webhook arrivals (valid or invalid) audit-logged to `webhook_logs` with `sig_valid` + `result` fields.
+    - `CASHFREE_SECRET_KEY` + `CASHFREE_WEBHOOK_SECRET` are server-side only; `/api/payments/status` only exposes `{provider, env, configured, display_name, registered_providers}`.
+  - **Tests** — 34 total payment tests now passing (10 Cashfree + 10 Instamojo + 14 abstraction):
+    - `test_payments_cashfree.py` (10): signature algorithm matches v3 spec, signature rejects tampered body / wrong secret / missing components, phone normalization, status reflects creds, invalid signature → no credit, valid SUCCESS → credit + replay no double-credit, FAILED → no credit, amount-mismatch attack blocked, unknown order_id audit-logged but not credited.
+    - `test_payments_abstraction.py` (14): registry, fail-closed, webhook dispatch by URL, refund placeholder, status assertion updated for multi-provider registry.
+    - Easebuzz endpoints still 404 (regression test).
+  - **Frontend wiring**:
+    - On Pricing page mount, fetch `/api/payments/status` → sets `gateway.provider`.
+    - On Subscribe/Top-up click, call `/api/payments/{provider}/create-order` (provider-specific alias) → backend returns `{provider, payload:{payment_session_id, mode}}` for Cashfree or `{checkout_url}` for Instamojo.
+    - Cashfree path: dynamically load Cashfree v3 SDK from CDN, call `cashfree.checkout({paymentSessionId, redirectTarget:"_self"})` → SDK redirects to Cashfree-hosted checkout → user pays → SDK returns user to `return_url` (`/pay/return?order_id=...`).
+    - On `/pay/return`, frontend polls `GET /api/payments/order/{id}` which calls `provider.verify_payment` for an authoritative reconcile (handles the case where webhook hasn't landed yet).
+  - **Pending user action**:
+    1. In Cashfree merchant dashboard (https://merchant.cashfree.com), create a **NEW App** specifically for aiclonechats.com. Do NOT reuse the Visionary Suite App ID.
+    2. Configure that App with Webhook URL = `https://aiclonechats.com/api/payments/cashfree/webhook` (or the preview URL while testing) and Return URL = `https://aiclonechats.com/pay/return?order_id={order_id}`.
+    3. Copy App ID + Secret Key + Webhook Secret into `backend/.env`.
+    4. `sudo supervisorctl restart backend`. `/api/payments/status` will flip to `configured:true` and Subscribe CTAs auto-enable.
+  - **Rollback plan**: 3-line revert.
+    1. Set `PAYMENT_PROVIDER=instamojo` (or blank) in `backend/.env`
+    2. `sudo supervisorctl restart backend`
+    3. Done — Pricing page either flips to the alternate gateway or back to inert mode. No code changes, historical orders untouched. Full Cashfree removal: delete `payments/providers/cashfree.py`, `payments_cashfree_aliases.py`, and `CASHFREE_*` env vars.
+
 - **2026-05-12 (Instamojo Payment Gateway — INTEGRATED, awaiting credentials)** — P0 revenue restoration.
   - **Architecture**: Built on top of the Payment Gateway Abstraction Layer shipped earlier today. Instamojo is now the active provider (`PAYMENT_PROVIDER=instamojo` in `backend/.env`). When credentials are pasted in, `/api/payments/status` flips to `configured:true` and the Pricing page automatically re-enables Subscribe/Top-up CTAs — no frontend code change required.
   - **Files added**:

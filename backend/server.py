@@ -91,6 +91,8 @@ app.include_router(payments_router)
 import payments.providers  # noqa: E402, F401  — self-registers all providers
 import payments_instamojo_aliases  # noqa: E402
 app.include_router(payments_instamojo_aliases.router)
+import payments_cashfree_aliases  # noqa: E402
+app.include_router(payments_cashfree_aliases.router)
 
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.

@@ -16,6 +16,7 @@ import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
 import { useCredits } from "../hooks/useCredits";
+import { launchCashfreeCheckout } from "../lib/cashfree";
 
 const PAYMENTS_UNAVAILABLE_MSG = "Payments are temporarily unavailable. New gateway coming soon.";
 
@@ -82,16 +83,37 @@ export default function Pricing() {
     if (planId) body.plan_id = planId;
     if (packId) body.pack_id = packId;
     try {
-      const { data } = await api.post("/payments/instamojo/create-order", body);
+      // Provider-aware create-order URL. Each provider has its own alias path,
+      // but the response shape is identical (defined by OrderResponse in
+      // backend/payments/base.py). The dispatch below picks the right SDK.
+      const aliasPath = gateway.provider === "cashfree"
+        ? "/payments/cashfree/create-order"
+        : "/payments/instamojo/create-order";
+      const { data } = await api.post(aliasPath, body);
+      const providerName = data?.provider || gateway.provider;
+      const payload = data?.payload || {};
+
+      if (providerName === "cashfree" && payload.payment_session_id) {
+        // Cashfree v3: launch their JS SDK; SDK redirects browser to return_url
+        const res = await launchCashfreeCheckout({
+          paymentSessionId: payload.payment_session_id,
+          mode: payload.mode || data?.env || "production",
+        });
+        if (!res.started) {
+          toast.error(res.error || "Could not start checkout.");
+          setBusyId(null);
+        }
+        // If started, Cashfree owns the screen until it redirects back.
+        return;
+      }
+
       if (data?.checkout_url) {
-        // Redirect the browser to Instamojo's hosted checkout. Server already
-        // persisted the order with `provider=instamojo`; on return,
-        // /pay/return polls /api/payments/order/{id} which reconciles via the
-        // Instamojo Payment Details API + the webhook handler grants credits.
+        // Instamojo + any other redirect-style gateway
         window.location.assign(data.checkout_url);
         return;
       }
-      toast.error("Gateway did not return a checkout URL. Please try again.");
+
+      toast.error("Gateway did not return a usable checkout token. Please try again.");
       setBusyId(null);
     } catch (e) {
       const detail = e?.response?.data?.detail;
@@ -144,7 +166,7 @@ export default function Pricing() {
           {!gateway.configured && (
             <div className="brutal-card p-4 border-amber/40 bg-amber-500/10" data-testid="pricing-payments-unavailable-banner">
               <div className="text-amber font-mono text-[11px] uppercase tracking-widest mb-1">Payments offline</div>
-              <div className="text-sm">We're finishing the new gateway setup. Subscribe and top-up buttons are temporarily inert. The catalog below stays accurate — your existing plan and credit balance are unaffected.</div>
+              <div className="text-sm">We&apos;re finishing the new gateway setup. Subscribe and top-up buttons are temporarily inert. The catalog below stays accurate — your existing plan and credit balance are unaffected.</div>
             </div>
           )}
           {gateway.configured && gateway.env === "test" && (

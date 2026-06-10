@@ -24,8 +24,7 @@ os.environ["INSTAMOJO_ENV"] = "test"
 from payments.providers.instamojo import InstamojoProvider, _compute_mac  # noqa: E402
 from db import db  # noqa: E402
 
-_LOOP = asyncio.new_event_loop()
-asyncio.set_event_loop(_LOOP)
+_LOOP = asyncio.get_event_loop()
 
 
 def _run(coro):
@@ -84,9 +83,9 @@ def test_webhook_invalid_mac_does_not_credit():
         order_id = f"inst_test_{uuid.uuid4().hex[:10]}"
         user_id = f"user_{uuid.uuid4().hex[:8]}"
         pr_id = f"MOJO{uuid.uuid4().hex[:8]}"
-        await db.users.insert_one({"user_id": user_id, "email": "u@x.com", "plan_id": "free", "credits_balance": 0})
+        await db.users.insert_one({"user_id": user_id, "email": f"inst_u_{uuid.uuid4().hex[:6]}@x.com", "plan_id": "free", "credits_balance": 0})
         await db.payment_orders.insert_one({
-            "order_id": order_id, "user_id": user_id, "email": "u@x.com",
+            "order_id": order_id, "user_id": user_id, "email": f"inst_u_{uuid.uuid4().hex[:6]}@x.com",
             "kind": "subscription", "plan_id": "pro", "pack_id": None,
             "credits": 2500, "amount": 1499.00, "amount_inr": 1499.00,
             "status": "pending", "provider": "instamojo", "env": "test",
@@ -96,7 +95,7 @@ def test_webhook_invalid_mac_does_not_credit():
         payload = {
             "payment_request_id": pr_id, "payment_id": "MOJO_PAY_1",
             "amount": "1499.00", "status": "Credit", "buyer_name": "U",
-            "buyer_email": "u@x.com",
+            "buyer_email": f"inst_u_{uuid.uuid4().hex[:6]}@x.com",
             "mac": "0" * 40,   # invalid
         }
         prov = InstamojoProvider()
@@ -117,9 +116,9 @@ def test_webhook_success_grants_credits_once():
         order_id = f"inst_test_{uuid.uuid4().hex[:10]}"
         user_id = f"user_{uuid.uuid4().hex[:8]}"
         pr_id = f"MOJO{uuid.uuid4().hex[:8]}"
-        await db.users.insert_one({"user_id": user_id, "email": "u2@x.com", "plan_id": "free", "credits_balance": 0})
+        await db.users.insert_one({"user_id": user_id, "email": f"inst_u2_{uuid.uuid4().hex[:6]}@x.com", "plan_id": "free", "credits_balance": 0})
         await db.payment_orders.insert_one({
-            "order_id": order_id, "user_id": user_id, "email": "u2@x.com",
+            "order_id": order_id, "user_id": user_id, "email": f"inst_u2_{uuid.uuid4().hex[:6]}@x.com",
             "kind": "subscription", "plan_id": "pro", "pack_id": None,
             "credits": 2500, "amount": 1499.00, "amount_inr": 1499.00,
             "status": "pending", "provider": "instamojo", "env": "test",
@@ -130,7 +129,7 @@ def test_webhook_success_grants_credits_once():
         payload = _signed_payload({
             "payment_request_id": pr_id, "payment_id": payment_id,
             "amount": "1499.00", "status": "Credit",
-            "buyer_name": "U", "buyer_email": "u2@x.com",
+            "buyer_name": "U", "buyer_email": f"inst_u2_{uuid.uuid4().hex[:6]}@x.com",
         })
         prov = InstamojoProvider()
         result = await prov.handle_webhook(raw_body=_body(payload), headers={}, content_type="application/x-www-form-urlencoded")
@@ -160,9 +159,9 @@ def test_webhook_failed_status_does_not_credit():
         order_id = f"inst_test_{uuid.uuid4().hex[:10]}"
         user_id = f"user_{uuid.uuid4().hex[:8]}"
         pr_id = f"MOJO{uuid.uuid4().hex[:8]}"
-        await db.users.insert_one({"user_id": user_id, "email": "u3@x.com", "plan_id": "free", "credits_balance": 0})
+        await db.users.insert_one({"user_id": user_id, "email": f"inst_u3_{uuid.uuid4().hex[:6]}@x.com", "plan_id": "free", "credits_balance": 0})
         await db.payment_orders.insert_one({
-            "order_id": order_id, "user_id": user_id, "email": "u3@x.com",
+            "order_id": order_id, "user_id": user_id, "email": f"inst_u3_{uuid.uuid4().hex[:6]}@x.com",
             "kind": "topup", "plan_id": None, "pack_id": "topup_small",
             "credits": 300, "amount": 299.00, "amount_inr": 299.00,
             "status": "pending", "provider": "instamojo", "env": "test",
@@ -172,7 +171,7 @@ def test_webhook_failed_status_does_not_credit():
         payload = _signed_payload({
             "payment_request_id": pr_id, "payment_id": f"MOJO_PAY_{uuid.uuid4().hex[:6]}",
             "amount": "299.00", "status": "Failed",
-            "buyer_name": "U", "buyer_email": "u3@x.com",
+            "buyer_name": "U", "buyer_email": f"inst_u3_{uuid.uuid4().hex[:6]}@x.com",
             "failure_reason": "Card declined",
         })
         prov = InstamojoProvider()
@@ -194,9 +193,9 @@ def test_webhook_amount_mismatch_blocks_credit():
         order_id = f"inst_test_{uuid.uuid4().hex[:10]}"
         user_id = f"user_{uuid.uuid4().hex[:8]}"
         pr_id = f"MOJO{uuid.uuid4().hex[:8]}"
-        await db.users.insert_one({"user_id": user_id, "email": "u4@x.com", "plan_id": "free", "credits_balance": 0})
+        await db.users.insert_one({"user_id": user_id, "email": f"inst_u4_{uuid.uuid4().hex[:6]}@x.com", "plan_id": "free", "credits_balance": 0})
         await db.payment_orders.insert_one({
-            "order_id": order_id, "user_id": user_id, "email": "u4@x.com",
+            "order_id": order_id, "user_id": user_id, "email": f"inst_u4_{uuid.uuid4().hex[:6]}@x.com",
             "kind": "subscription", "plan_id": "pro", "pack_id": None,
             "credits": 2500, "amount": 1499.00, "amount_inr": 1499.00,
             "status": "pending", "provider": "instamojo", "env": "test",
@@ -207,7 +206,7 @@ def test_webhook_amount_mismatch_blocks_credit():
         payload = _signed_payload({
             "payment_request_id": pr_id, "payment_id": f"MOJO_PAY_{uuid.uuid4().hex[:6]}",
             "amount": "1.00", "status": "Credit",
-            "buyer_name": "U", "buyer_email": "u4@x.com",
+            "buyer_name": "U", "buyer_email": f"inst_u4_{uuid.uuid4().hex[:6]}@x.com",
         })
         prov = InstamojoProvider()
         result = await prov.handle_webhook(raw_body=_body(payload), headers={}, content_type="application/x-www-form-urlencoded")
@@ -227,7 +226,7 @@ def test_webhook_unknown_payment_request_id_audit_only():
         payload = _signed_payload({
             "payment_request_id": unknown_pr, "payment_id": "X",
             "amount": "100.00", "status": "Credit",
-            "buyer_name": "U", "buyer_email": "u@x.com",
+            "buyer_name": "U", "buyer_email": f"inst_u_{uuid.uuid4().hex[:6]}@x.com",
         })
         prov = InstamojoProvider()
         result = await prov.handle_webhook(raw_body=_body(payload), headers={}, content_type="application/x-www-form-urlencoded")
