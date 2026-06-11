@@ -734,3 +734,31 @@ Built full legal/compliance surface for aiclonechats.com (5 pages + reusable lay
 **Testing**
 - iteration_19 — all features passed. Verified anonymous render, signed-in interactivity (sr-tester@example.com), localStorage persistence, mobile viewport (375px) no-overflow, document.title / meta description on every page.
 
+
+---
+
+## Forgot Password Hardening + Multi-Admin Unlimited — Feb 11, 2026
+
+**Forgot Password — 3 delta enhancements to existing production-grade flow:**
+- Backend `password_reset.py`:
+  - `_password_is_strong()` now requires: 8+ chars, ≥1 upper, ≥1 lower, ≥1 digit, **≥1 special character (non-alphanumeric, non-whitespace)**, **no whitespace**, max 200. Field-level error messages.
+  - New `_send_reset_confirmation_email()` sends an HTML/text confirmation after successful reset via `multi_send_email(purpose='password_reset_confirmation')`. Includes a short opaque IP-hash reference id, no raw IP.
+  - Reset success audit log now includes `confirmation_email_sent` (bool) and `confirmation_email_error` (str or null).
+- Frontend `ResetPassword.jsx` — rewritten:
+  - Live 6-rule checklist (`reset-rule-len`, `reset-rule-upper`, `reset-rule-lower`, `reset-rule-digit`, `reset-rule-special`, `reset-rule-nospace`) updates as you type.
+  - Field-level match/mismatch indicators (`reset-confirm-match`, `reset-confirm-mismatch`).
+  - Submit disabled until `allRulesPass && matches && !loading`. Loading text changes to "Updating…".
+  - Confirmation toast says "A confirmation email has been sent" and redirects to `/login` after 2.5s. No auto-login.
+
+**Multi-admin unlimited credits (B2):**
+- `/app/backend/credits.py` — `ADMIN_UNLIMITED_EMAIL` now accepts CSV (`a@x.com, b@x.com`). Parsed by `_parse_admin_unlimited_emails()` → `ADMIN_UNLIMITED_EMAILS: set[str]`. Legacy `ADMIN_UNLIMITED_EMAIL` constant retained as alias for any external callers. `is_admin_unlimited_user()` now does `email in ADMIN_UNLIMITED_EMAILS`.
+- `/app/backend/migrations/reset_credits_2026_05_11.py` — updated to `$nin`/`$in` against the email list (protects all admin emails on any future re-run).
+
+**Testing:** iteration_20 — 14/14 backend pytest + 11/11 frontend Playwright tests passed. sr-tester restored. Strength tests: 11 unit-style cases covering every individual rule + edge cases (too-short, no-upper, no-lower, no-digit, no-special, whitespace, max-length, valid).
+
+**Production rollout pending (user):**
+- Set `ADMIN_EMAILS = krajapraveen@gmail.com,admin@aiclonechats.com` (new key — needs Emergent Support to add).
+- Set `ADMIN_UNLIMITED_EMAIL = krajapraveen@gmail.com,admin@aiclonechats.com` (was single value).
+- Re-deploy to push code + env changes.
+- Register `admin@aiclonechats.com` via `/register` on production; use `/forgot-password` to set strong password.
+
