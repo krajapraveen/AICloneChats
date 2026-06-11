@@ -710,3 +710,27 @@ to yourself from 2035"
 4. Add clone analytics page (views, chats, popular questions)
 5. "Future Self Mode" preset
 6. Stripe-based premium tier (unlimited memory, voice, private clones)
+
+---
+
+## Legal & Compliance Pages — Feb 11, 2026
+
+Built full legal/compliance surface for aiclonechats.com (5 pages + reusable layout):
+
+**New routes**
+- `/privacy-policy` (alias `/privacy`) — elaborate privacy policy, 12 numbered sections, retention table, third-party processor table, identity-content alert.
+- `/terms-of-service` (alias `/terms`) — 16-section Terms with explicit deepfake/consent/identity clauses, refund policy, refund subject template, liability cap.
+- `/cookie-policy` — essential / auth / payment / analytics breakdown with tables, browser-control links.
+- `/security` — account protection, secure payments, encryption (in-transit/at-rest), abuse table, vulnerability reporting (mailto:admin@aiclonechats.com?subject=SECURITY).
+- `/privacy-settings` — interactive page. Cookie toggles (analytics + marketing) persist to `localStorage['aicc_cookie_prefs_v1']`. Data-action buttons (Download / Delete media / Delete outputs / Delete account / Sign out) require sign-in and open prefilled `mailto:` to admin@aiclonechats.com with structured subject lines.
+
+**Architecture**
+- Reusable shell at `/app/frontend/src/pages/LegalPage.jsx` exports `LegalPage` (default) + `LegalSection`, `LegalAlert`, `LegalTable` (named). Sets `document.title` and `<meta name="description">` per page. Includes a cross-link "Related" nav block linking all 5 legal pages + Acceptable Use.
+- Footer in `Landing.jsx` extended to 4 columns, links to all 5 pages with stable data-testids (`footer-terms`, `footer-privacy`, `footer-cookie-policy`, `footer-acceptable-use`, `footer-privacy-settings`, `footer-security`).
+
+**Compliance language**
+- Both Privacy Policy and Terms carry explicit identity-content alerts: users may only upload/describe likenesses of themselves OR people with explicit, verifiable, revocable consent. Deepfake misuse, non-consensual likeness, sexualized impersonation, and AI-generated content used to defraud are categorically prohibited and grounds for immediate termination.
+
+**Testing**
+- iteration_19 — all features passed. Verified anonymous render, signed-in interactivity (sr-tester@example.com), localStorage persistence, mobile viewport (375px) no-overflow, document.title / meta description on every page.
+
