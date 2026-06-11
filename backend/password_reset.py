@@ -63,12 +63,26 @@ def _hash_token(raw: str) -> str:
 
 
 def _password_is_strong(pw: str) -> Tuple[bool, str]:
+    """Production password strength rules.
+
+    Required: 8+ chars, at least one upper, one lower, one digit, one
+    special (non-alphanumeric, non-whitespace). Returns (ok, message_or_empty).
+    The message is field-level — e.g. "Password must contain at least one digit."
+    """
     if not pw or len(pw) < 8:
         return False, "Password must be at least 8 characters."
-    if pw.lower() == pw or pw.upper() == pw:
-        return False, "Password must include upper and lower case letters."
+    if len(pw) > 200:
+        return False, "Password is too long."
+    if not re.search(r"[a-z]", pw):
+        return False, "Password must contain at least one lowercase letter."
+    if not re.search(r"[A-Z]", pw):
+        return False, "Password must contain at least one uppercase letter."
     if not re.search(r"\d", pw):
         return False, "Password must contain at least one digit."
+    if not re.search(r"[^A-Za-z0-9\s]", pw):
+        return False, "Password must contain at least one special character."
+    if re.search(r"\s", pw):
+        return False, "Password must not contain spaces."
     return True, ""
 
 
@@ -142,6 +156,60 @@ async def _send_reset_email(to_email: str, reset_link: str) -> Tuple[bool, Optio
         html=html,
         text=text,
         purpose="password_reset",
+    )
+    return ok, None if ok else "all_providers_failed"
+
+
+async def _send_reset_confirmation_email(to_email: str, ip_hash_short: str) -> Tuple[bool, Optional[str]]:
+    """Sent AFTER a successful password reset. Confirms the change to the user
+    so an unauthorized reset gets noticed immediately. We do NOT include the
+    raw IP or location — only a short, opaque hash for support correlation —
+    and we tell the user how to react if it wasn't them.
+    """
+    subject = "Your aiclonechats.com password was changed"
+    text = (
+        "Your aiclonechats.com password was just changed.\n\n"
+        "All previous sessions on every device have been signed out automatically.\n\n"
+        "If this was you — nothing to do. You can sign in with your new password "
+        "at https://aiclonechats.com/login.\n\n"
+        "If this was NOT you — your account may be compromised. Take these steps:\n"
+        "  1. Reset your password again immediately at "
+        "https://aiclonechats.com/forgot-password\n"
+        "  2. Email admin@aiclonechats.com with the subject \"SECURITY\" and reference "
+        f"id {ip_hash_short}.\n"
+    )
+    html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; color: #0d0d10;">
+      <h2 style="margin: 0 0 12px; font-size: 22px;">Your password was changed</h2>
+      <p style="font-size: 14px; line-height: 1.6; margin: 0 0 16px;">
+        Your aiclonechats.com password was just changed. All previous sessions on every device
+        have been signed out automatically.
+      </p>
+      <p style="margin: 24px 0;">
+        <a href="https://aiclonechats.com/login"
+           style="background:#f59e0b; color:#0d0d10; padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: 700;">
+          Sign in with new password
+        </a>
+      </p>
+      <div style="background:#fef3c7; border:1px solid #f59e0b; border-radius: 10px; padding: 14px; margin-top: 18px;">
+        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color:#92400e; margin-bottom: 6px;">Was this NOT you?</div>
+        <p style="margin: 0 0 8px; font-size: 13px; line-height: 1.5; color:#78350f;">
+          Reset your password again at
+          <a href="https://aiclonechats.com/forgot-password" style="color:#92400e; text-decoration: underline;">/forgot-password</a>
+          immediately, then email
+          <a href="mailto:admin@aiclonechats.com?subject=SECURITY" style="color:#92400e; text-decoration: underline;">admin@aiclonechats.com</a>
+          with subject <strong>SECURITY</strong>.
+        </p>
+        <p style="margin: 0; font-size: 11px; color:#78350f;">Reference id: <code>{ip_hash_short}</code></p>
+      </div>
+    </div>
+    """
+    ok, _provider = await multi_send_email(
+        to_email=to_email,
+        subject=subject,
+        html=html,
+        text=text,
+        purpose="password_reset_confirmation",
     )
     return ok, None if ok else "all_providers_failed"
 
@@ -298,12 +366,28 @@ async def reset_password(payload: ResetPasswordRequest, request: Request, respon
     )
     invalidated = await db.user_sessions.delete_many({"user_id": user["user_id"]})
 
+    # Confirmation email — best-effort, never fails the request
+    confirmation_sent = False
+    confirmation_err: Optional[str] = None
+    try:
+        ip_hash_short = hashlib.sha256(ip.encode()).hexdigest()[:12]
+        confirmation_sent, confirmation_err = await _send_reset_confirmation_email(
+            user.get("email", ""), ip_hash_short,
+        )
+    except Exception as e:
+        confirmation_err = f"exception:{type(e).__name__}"
+        logger.warning("password_reset confirmation email failed user_id=%s err=%s", user.get("user_id"), e)
+
     await _audit(
         "password_reset_completed",
         request_id=request_id,
         user_id=user["user_id"],
         email=user.get("email"),
-        metadata={"sessions_invalidated": invalidated.deleted_count},
+        metadata={
+            "sessions_invalidated": invalidated.deleted_count,
+            "confirmation_email_sent": confirmation_sent,
+            "confirmation_email_error": confirmation_err,
+        },
     )
     return {
         "ok": True,
