@@ -762,3 +762,48 @@ Built full legal/compliance surface for aiclonechats.com (5 pages + reusable lay
 - Re-deploy to push code + env changes.
 - Register `admin@aiclonechats.com` via `/register` on production; use `/forgot-password` to set strong password.
 
+
+---
+
+## Anti-Abuse Layer (Production-grade) — Feb 11, 2026
+
+**Goal:** Hard backend enforcement on every expensive surface, exempting ONLY admin emails (`krajapraveen@gmail.com`, `admin@aiclonechats.com`). Counter-based sliding-window rate limits stored in MongoDB. Per-user, per-IP, per-hour and per-minute windows. User-level `abuse_status` (normal / limited / blocked). Admin observability dashboards.
+
+**Files added:**
+- `/app/backend/anti_abuse.py` (~420 lines) — public API: `is_anti_abuse_exempt_user()`, `enforce_rate_limit()`, `check_user_abuse_status()`, `set_user_abuse_status()`, `reset_abuse_counters()`, `guard_expensive_action()`, `guard_public_endpoint()`, `ensure_indexes()`. Exemption set = env `ADMIN_EMAILS` ∪ env `ADMIN_UNLIMITED_EMAIL` ∪ db.admin_users (30s cache). Admin defense-in-depth: even a poisoned `abuse_status='blocked'` in the user doc is overridden for admin emails.
+- `/app/backend/admin_anti_abuse.py` — endpoints under `/api/admin/anti-abuse/*`: `GET /summary`, `GET /recent`, `GET /suspicious-users`, `GET /blocked-users`, `POST /set-status`, `POST /reset-counters`. All gated by `Depends(get_admin_user)`.
+- `/app/backend/tests/test_anti_abuse.py` — 9 unit tests covering exemption, rate-limit trigger, admin-never-limited (20x over limit), per-key isolation, abuse_status set/reset, admin-immutability, IP hashing.
+
+**Files modified:**
+- `/app/backend/server.py` — registers `admin_anti_abuse.router`; calls `anti_abuse.ensure_indexes()` on startup (TTL 14d on anti_abuse_events; compound `(scope, key, created_at)`).
+- `/app/backend/chat.py` — `POST /clones/{id}/chat` now guards with `scope='chat.send'`, 30/min, 300/hour per user.
+- `/app/backend/storage.py` — `POST /storage/upload-avatar` guards with `scope='upload.avatar'`, 6/min, 60/hour per user.
+- `/app/backend/payments/router.py` — `POST /payments/create-order` guards with `scope='payment.create_order'`, 5/min, 20/hour per user.
+
+**New collections:**
+- `db.anti_abuse_events` — every hit (scope, key, exempt flag, user_id, email, ip_hash, endpoint, created_at). TTL-expires after 14 days.
+- `db.users.abuse_status` — `normal` / `limited` / `blocked`. `abuse_status_reason`, `abuse_status_set_at`, `abuse_status_set_by` for audit.
+
+**Audit events written to `db.login_events`** (with `event_id` UUID for the existing unique index):
+- `anti_abuse_rate_limited` — limit triggered
+- `anti_abuse_exempt_bypassed` — admin bypassed a limit (still recorded for visibility)
+- `anti_abuse_user_limited` / `anti_abuse_user_blocked` / `anti_abuse_user_unblocked`
+- `anti_abuse_blocked_user_attempt` — blocked user tried an expensive action
+- `anti_abuse_counters_reset` — admin reset a user's counters
+
+**Failure modes:**
+- Expensive endpoints (chat/upload/payment): fail-CLOSED on DB error (deny by default — protects revenue).
+- IP-only checks: fail-OPEN on infra blip (don't punish whole NAT pool).
+- Audit writes: best-effort, never block the user-facing response.
+
+**Testing:** unit 9/9 + integration (iteration_21) 10/10 PASS. Verified: admin exempt path (20 over limit, all 200), normal user hits 429 at 31st request, admin endpoints auth-gated (403 for non-admin), block/unblock cycle, audit log entries, indexes ensured.
+
+**Not yet instrumented (P2 backlog):**
+- Auth endpoints (login, register) — already have brute-force counters in `auth.py`, but could be unified with the new layer.
+- Forgot-password endpoint — already has dedicated 10/IP + 5/email limit in `password_reset.py`, kept separate intentionally.
+- Voice/avatar/lipsync generation endpoints — should be guarded with `scope='generation.<type>'`. Not done in this iteration to limit blast radius.
+- Contact/support forms — would use `guard_public_endpoint(scope='contact.submit')`.
+- Frontend admin dashboard UI for `/api/admin/anti-abuse/*` — endpoints are live but no UI yet.
+
+**Production rollout:** code change only — no new env vars required (reuses existing `ADMIN_EMAILS` / `ADMIN_UNLIMITED_EMAIL`). Once production env vars are unblocked (Emergent Support has been emailed re: PAYMENT_PROVIDER, public URLs), this rolls out with the next redeploy automatically.
+
