@@ -173,7 +173,7 @@ export default function Landing() {
 
       <footer className="border-t border-white/5 py-10" data-testid="footer">
         <div className="max-w-6xl mx-auto px-5 md:px-8 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
             <div>
               <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">aiclonechats.com</div>
               <p className="text-sm text-ink/75 leading-relaxed max-w-sm">
@@ -183,9 +183,18 @@ export default function Landing() {
             <div>
               <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">Legal</div>
               <ul className="space-y-1.5 text-sm">
-                <li><Link to="/terms" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-terms">Terms of Service</Link></li>
-                <li><Link to="/privacy" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-privacy">Privacy Policy</Link></li>
+                <li><Link to="/terms-of-service" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-terms">Terms of Service</Link></li>
+                <li><Link to="/privacy-policy" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-privacy">Privacy Policy</Link></li>
+                <li><Link to="/cookie-policy" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-cookie-policy">Cookie Policy</Link></li>
                 <li><Link to="/acceptable-use" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-acceptable-use">Acceptable Use</Link></li>
+              </ul>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">Account & Safety</div>
+              <ul className="space-y-1.5 text-sm">
+                <li><Link to="/privacy-settings" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-privacy-settings">Privacy Settings</Link></li>
+                <li><Link to="/security" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-security">Security</Link></li>
+                <li><Link to="/pricing" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-pricing">Pricing</Link></li>
               </ul>
             </div>
             <div>

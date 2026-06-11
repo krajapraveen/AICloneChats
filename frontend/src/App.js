@@ -14,6 +14,9 @@ import ResetPassword from "./pages/ResetPassword";
 import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
 import AcceptableUse from "./pages/AcceptableUse";
+import CookiePolicy from "./pages/CookiePolicy";
+import Security from "./pages/Security";
+import PrivacySettings from "./pages/PrivacySettings";
 import Dashboard from "./pages/Dashboard";
 import CloneEditor from "./pages/CloneEditor";
 import MemoryManager from "./pages/MemoryManager";
@@ -74,7 +77,12 @@ function AppRouter() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/terms" element={<Terms />} />
+      <Route path="/terms-of-service" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/privacy-policy" element={<Privacy />} />
+      <Route path="/cookie-policy" element={<CookiePolicy />} />
+      <Route path="/security" element={<Security />} />
+      <Route path="/privacy-settings" element={<PrivacySettings />} />
       <Route path="/acceptable-use" element={<AcceptableUse />} />
       <Route path="/explore" element={<Explore />} />
       <Route path="/mood-chat" element={<MoodChat />} />
