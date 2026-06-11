@@ -32,7 +32,11 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 async def run(dry_run: bool) -> int:
     mongo_url = os.environ["MONGO_URL"]
     db_name = os.environ["DB_NAME"]
-    admin_email = (os.environ.get("ADMIN_UNLIMITED_EMAIL") or "krajapraveen@gmail.com").lower().strip()
+    # ADMIN_UNLIMITED_EMAIL supports CSV (multiple admin emails). Default keeps
+    # backward compatibility with the original single-email behavior.
+    raw_admin = os.environ.get("ADMIN_UNLIMITED_EMAIL") or "krajapraveen@gmail.com"
+    admin_emails = sorted({e.lower().strip() for e in raw_admin.split(",") if e and e.strip()})
+    admin_email = admin_emails[0] if admin_emails else ""  # display only
 
     cli = AsyncIOMotorClient(mongo_url)
     db = cli[db_name]
@@ -47,9 +51,9 @@ async def run(dry_run: bool) -> int:
 
     # Count what we'll touch
     total_users = await db.users.count_documents({})
-    admin_users = await db.users.count_documents({"email": admin_email})
+    admin_users = await db.users.count_documents({"email": {"$in": admin_emails}})
     non_admin_with_credits = await db.users.count_documents({
-        "email": {"$ne": admin_email},
+        "email": {"$nin": admin_emails},
         "$or": [
             {"credits_balance": {"$gt": 0}},
             {"credits": {"$gt": 0}},
@@ -58,13 +62,13 @@ async def run(dry_run: bool) -> int:
             {"welcome_credits": {"$gt": 0}},
         ],
     })
-    non_admin_total = await db.users.count_documents({"email": {"$ne": admin_email}})
+    non_admin_total = await db.users.count_documents({"email": {"$nin": admin_emails}})
 
     print("==============================================")
     print("CREDIT RESET MIGRATION  ·  credit_reset_2026_05_11")
     print("==============================================")
     print(f"  mode                      : {'DRY-RUN (no writes)' if dry_run else 'EXECUTE'}")
-    print(f"  admin protected email     : {admin_email}")
+    print(f"  admin protected emails    : {', '.join(admin_emails)}")
     print(f"  admin users found         : {admin_users}")
     print(f"  total users in DB         : {total_users}")
     print(f"  non-admin users           : {non_admin_total}")
@@ -77,6 +81,7 @@ async def run(dry_run: bool) -> int:
             "migration": "credit_reset_2026_05_11",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "admin_email": admin_email,
+            "admin_emails": admin_emails,
             "admin_users_protected": admin_users,
             "non_admin_users": non_admin_total,
             "non_admin_with_positive_credits": non_admin_with_credits,
@@ -87,7 +92,7 @@ async def run(dry_run: bool) -> int:
     # The actual mutation
     if not dry_run:
         res = await db.users.update_many(
-            {"email": {"$ne": admin_email}},
+            {"email": {"$nin": admin_emails}},
             {"$set": {
                 "credits_balance": 0,
                 "credits": 0,
@@ -106,7 +111,7 @@ async def run(dry_run: bool) -> int:
 
         # Verify
         leak = await db.users.find_one(
-            {"email": {"$ne": admin_email}, "credits_balance": {"$gt": 0}},
+            {"email": {"$nin": admin_emails}, "credits_balance": {"$gt": 0}},
             {"_id": 0, "email": 1, "credits_balance": 1},
         )
         if leak:
@@ -117,10 +122,10 @@ async def run(dry_run: bool) -> int:
             )
             return 2
 
-        # Verify admin untouched
-        admin_doc = await db.users.find_one({"email": admin_email}, {"_id": 0, "credits_balance": 1, "email": 1})
+        # Verify admins untouched
+        admin_docs = await db.users.find({"email": {"$in": admin_emails}}, {"_id": 0, "credits_balance": 1, "email": 1}).to_list(length=100)
         print(f"  matched={res.matched_count} modified={res.modified_count}")
-        print(f"  admin doc post-migration: {admin_doc}")
+        print(f"  admin docs post-migration: {admin_docs}")
 
         await db.audit_log.update_one(
             {"migration": "credit_reset_2026_05_11", "phase": "started"},
@@ -128,7 +133,7 @@ async def run(dry_run: bool) -> int:
                 "phase": "completed",
                 "matched": res.matched_count,
                 "modified": res.modified_count,
-                "admin_doc_after": admin_doc,
+                "admin_docs_after": admin_docs,
                 "ended_at": datetime.now(timezone.utc).isoformat(),
             }},
         )

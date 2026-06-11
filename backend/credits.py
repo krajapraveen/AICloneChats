@@ -33,7 +33,24 @@ logger = logging.getLogger(__name__)
 
 
 # ----- Admin allowlist (backend-only, NEVER trust frontend) -----
-ADMIN_UNLIMITED_EMAIL = os.environ.get("ADMIN_UNLIMITED_EMAIL", "krajapraveen@gmail.com").lower().strip()
+def _parse_admin_unlimited_emails() -> set[str]:
+    """Parse ADMIN_UNLIMITED_EMAIL env var. Supports a single email or a CSV
+    list. Returns a set of lowercase, stripped emails. Empty entries are
+    ignored. Backward-compatible: a single email still works exactly as before.
+    """
+    raw = os.environ.get("ADMIN_UNLIMITED_EMAIL", "krajapraveen@gmail.com")
+    return {
+        e.lower().strip()
+        for e in raw.split(",")
+        if e and e.strip()
+    }
+
+
+ADMIN_UNLIMITED_EMAILS: set[str] = _parse_admin_unlimited_emails()
+# Backward-compatible alias for any external import that referenced the old name.
+# Kept as the first email so equality checks against legacy callers still work
+# when only one admin is configured.
+ADMIN_UNLIMITED_EMAIL = next(iter(ADMIN_UNLIMITED_EMAILS), "")
 
 
 def is_admin_unlimited_user(user: dict) -> bool:
@@ -41,13 +58,14 @@ def is_admin_unlimited_user(user: dict) -> bool:
 
     Reads the email off the authenticated user document looked up by session
     token. Does NOT consult any client-supplied header, body, role flag, or
-    JWT claim. If the email matches the env-configured admin address, the
-    user has unlimited credits, no daily cap, and no fraud-cooldown lockout.
+    JWT claim. If the email matches one of the env-configured admin addresses
+    (ADMIN_UNLIMITED_EMAIL — supports comma-separated list), the user has
+    unlimited credits, no daily cap, and no fraud-cooldown lockout.
     """
     if not user:
         return False
     email = (user.get("email") or "").lower().strip()
-    return bool(email) and email == ADMIN_UNLIMITED_EMAIL
+    return bool(email) and email in ADMIN_UNLIMITED_EMAILS
 
 
 # ----- Plans -----
@@ -253,7 +271,7 @@ async def grant_signup_credits_if_eligible(user_id: str, email: str, ip_address:
     at 0 credits and must subscribe. Admin is handled by the unlimited bypass.
     """
     email_norm = (email or "").lower().strip()
-    if email_norm == ADMIN_UNLIMITED_EMAIL:
+    if email_norm in ADMIN_UNLIMITED_EMAILS:
         return {"granted": False, "reason": "admin_unlimited", "credits": 0}
     return {"granted": False, "reason": "signup_grants_disabled", "credits": 0}
 
