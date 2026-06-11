@@ -116,6 +116,16 @@ async def create_order(payload: dict, request: Request, user: dict = Depends(get
     Server is authoritative for price + credits. The request body only needs
     `plan_id` OR `pack_id`. Frontend never sends an amount.
     """
+    # Anti-abuse guard — payments are high-value: strict caps. Admin emails
+    # are blocked from checkout by design (admin_no_checkout below) but
+    # exempt from rate limiting so a friend on a shared NAT can't lock them out.
+    from anti_abuse import guard_expensive_action
+    await guard_expensive_action(
+        user=user, scope="payment.create_order", request=request,
+        max_per_user_per_min=5, max_per_user_per_hour=20,
+        endpoint="POST /api/payments/create-order",
+    )
+
     try:
         provider = get_active_provider()
     except GatewayNotConfigured as e:

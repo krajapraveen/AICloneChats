@@ -2,7 +2,7 @@ import os
 import re
 import uuid
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -158,7 +158,16 @@ async def get_recent_messages(conversation_id: str, limit: int = 20) -> List[dic
 
 # ---------- routes ----------
 @router.post("/{clone_id_or_slug}/chat")
-async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest, user: dict = Depends(get_current_user)):
+async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest, request: Request, user: dict = Depends(get_current_user)):
+    # Anti-abuse guard — admin emails bypass; everyone else is rate-limited
+    # per user (30/min, 300/hour) and per IP (900/hour).
+    from anti_abuse import guard_expensive_action
+    await guard_expensive_action(
+        user=user, scope="chat.send", request=request,
+        max_per_user_per_min=30, max_per_user_per_hour=300,
+        endpoint="POST /api/clones/{id}/chat",
+    )
+
     # Try slug first then id
     clone = await db.clones.find_one({"slug": clone_id_or_slug.lower()}, {"_id": 0})
     if not clone:

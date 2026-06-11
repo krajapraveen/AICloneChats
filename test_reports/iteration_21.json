@@ -1,0 +1,41 @@
+{
+  "summary": "End-to-end HTTP integration testing of the anti-abuse layer. 10/10 pytest cases PASS. Verified: admin-endpoint auth gating (403 vs 200), chat rate-limit (31st concurrent call returns 429 with detail.code=rate_limited), audit log entries in db.login_events (anti_abuse_rate_limited + anti_abuse_exempt_bypassed), admin block flow (set-status=blocked → next chat 403 account_blocked → set-status=normal → chat passes), admin-cannot-block-admin (400 user_is_admin), reset-counters wipes events, and indexes on db.anti_abuse_events (compound scope/key/created_at + 14-day TTL on created_at). The 9/9 unit-test file at tests/test_anti_abuse.py was also re-confirmed earlier.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "anti_abuse.enforce_rate_limit", "issue": "TOCTOU race: count_documents() happens BEFORE the insert, so under high concurrency (35 simultaneous chat requests) only ~2–4 hit 429 instead of the expected 5 — i.e. up to ~33 requests can squeak through a 30/min limit in a thundering-herd burst. Functionally correct on sequential traffic; matters under bot-scale abuse. Consider an atomic $inc on a window-bucketed counter doc or accept the slack and document it."},
+      {"endpoint": "anti_abuse._audit_log + _record_event", "issue": "Mixed created_at types — anti_abuse_events stores datetime, login_events stores ISO string. summary() compares created_at to since.isoformat() (string compare) — works because UTC ISO sorts lex, but it's a foot-gun for any future code that does $gte with datetime."},
+      {"endpoint": "admin/anti-abuse/reset-counters", "issue": "reset_abuse_counters() only deletes events keyed by user_id/email; the per-IP ip_per_hour scope's events (key=ip_hash) for that user's IP remain. Probably intentional (don't unstick everyone behind a NAT) but worth a one-line code comment."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_anti_abuse_integration.py",
+    "/app/backend/tests/test_anti_abuse.py",
+    "/app/test_reports/pytest/anti_abuse_integration.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: harden enforce_rate_limit against the TOCTOU race — bucket-counter approach or `$inc + $cond` to make the count include the in-flight insert before the check.",
+    "OPTIONAL: align created_at type across anti_abuse_events (datetime) and login_events (ISO string) so future queries don't have to special-case both shapes.",
+    "OPTIONAL: add an explicit comment in reset_abuse_counters() that ip_per_hour-keyed rows are intentionally retained."
+  ],
+  "critical_code_review_comments": [
+    "GOOD: is_anti_abuse_exempt_user() handles None, dict, raw email, mixed-case, surrounding whitespace, and merges env ADMIN_EMAILS + ADMIN_UNLIMITED_EMAIL + db.admin_users with a 30s TTL cache.",
+    "GOOD: guard_expensive_action layers per-user-per-min, per-user-per-hour, and per-IP-per-hour with fail_closed=True on user buckets and fail_closed=False on the IP bucket (correctly avoids punishing NATs on infra blips).",
+    "GOOD: check_user_abuse_status() forces admins to 'normal' even if their DB row has abuse_status='blocked' — defense in depth against a poisoned row.",
+    "GOOD: set_user_abuse_status() refuses to block any exempt email and audit-logs the by_admin actor + reason.",
+    "GOOD: ensure_indexes() creates the compound (scope,key,created_at desc) index AND a 14-day TTL on created_at — both verified at runtime (1209600s expireAfterSeconds).",
+    "ISSUE (minor): enforce_rate_limit has a check-then-insert race that lets a small burst exceed max_count under concurrency. Acceptable for human-scale abuse but a tighter design would be an atomic counter increment.",
+    "ISSUE (minor): created_at type inconsistency between anti_abuse_events (datetime) and login_events (ISO string)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_anti_abuse_integration.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "n/a (backend-only request)"},
+  "test_credentials": "sr-tester@example.com / TestPass123! (normal user, role=user, plan=pro, 2500 credits at start). admin@aiclonechats.com / TestPass123! (created on first run via /api/auth/register, auto-promoted to role=admin because email is in ADMIN_EMAILS env). krajapraveen@gmail.com exists in db.users (admin) but password not known to the test — admin@aiclonechats.com is the test-admin used for all admin endpoint calls.",
+  "seed_data_creation": "Created admin@aiclonechats.com via /api/auth/register on first run (idempotent — subsequent runs skip via 400 email_already_registered). No other seed data created. State cleanup: an autouse session-scoped fixture wipes sr-tester's anti_abuse_events and resets abuse_status to unset on suite end so the next run starts clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with `cd /app/backend && python3 -m pytest tests/test_anti_abuse_integration.py -v -s` — takes ~70s (LLM latency on the chat endpoint). If the rate-limit test ever flakes with all-200, it's because >35 concurrent chat events from a prior run are still inside the 60s window for the user_per_min scope; the test helper resets_counters_for(NORMAL_EMAIL) before firing but only deletes by email/user_id (which is correct for the user_per_min scope where key=user_id). The fix is just to wait 60s and retry, OR to wipe `db.anti_abuse_events` for that email manually. Tests use REACT_APP_BACKEND_URL from /app/frontend/.env or fall back to http://localhost:8001. test_admin_chat_writes_exempt_event makes 3 admin chat calls which can run up the daily LLM bill on real keys — keep MAX of 3 there.",
+  "rca of the issue": "Initial 2 failures were a test-design issue, not a backend bug: chat endpoint takes ~2s per call due to LLM latency, so 35 sequential POSTs spanned >60s and the per-minute sliding window had slid past the early hits before the 31st landed. Fix: switched to concurrent execution via ThreadPoolExecutor(max_workers=20) so 35 calls all land inside the 60s window. With the fix, 31× 200 and 4× 429 with detail.code=rate_limited is the observed (and correct) behavior. The slight slack (4 instead of 5 expected 429s) is the TOCTOU race noted in backend_issues.minor — the rate limiter counts before inserting so a thundering herd can each see count<=30 before any of them inserts. Functionally OK at human scale; only matters for bot-scale bursts."
+}

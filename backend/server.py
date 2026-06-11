@@ -94,6 +94,11 @@ app.include_router(payments_instamojo_aliases.router)
 import payments_cashfree_aliases  # noqa: E402
 app.include_router(payments_cashfree_aliases.router)
 
+# Anti-abuse layer — admin observability + control. Endpoint-side enforcement
+# lives in anti_abuse.py and is called from chat / upload / payment / auth.
+import admin_anti_abuse  # noqa: E402
+app.include_router(admin_anti_abuse.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
@@ -251,6 +256,12 @@ async def on_startup():
         await seed_admins_from_env()
     except Exception as e:
         logger.warning("seed_admins_from_env failed: %s", e)
+    # Anti-abuse indexes (TTL on anti_abuse_events + compound for fast counts)
+    try:
+        from anti_abuse import ensure_indexes as _aa_indexes
+        await _aa_indexes()
+    except Exception as e:
+        logger.warning("anti_abuse.ensure_indexes failed: %s", e)
     # Seed billing plans on every boot — plans are code, not user data
     try:
         await ensure_plans_seeded()

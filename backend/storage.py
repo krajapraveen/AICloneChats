@@ -2,7 +2,7 @@ import os
 import uuid
 import logging
 import requests
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Response
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Response, Request
 from urllib.parse import quote
 
 from auth import get_current_user
@@ -81,7 +81,14 @@ def _get(path: str) -> tuple[bytes, str]:
 
 
 @router.post("/upload-avatar")
-async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+async def upload_avatar(request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    # Anti-abuse guard — admin emails bypass. Upload is expensive: tighter caps.
+    from anti_abuse import guard_expensive_action
+    await guard_expensive_action(
+        user=user, scope="upload.avatar", request=request,
+        max_per_user_per_min=6, max_per_user_per_hour=60,
+        endpoint="POST /api/storage/upload-avatar",
+    )
     if file.content_type not in ALLOWED_IMG:
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, WebP, or GIF allowed")
     data = await file.read()
