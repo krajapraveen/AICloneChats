@@ -89,6 +89,8 @@ function TimelineRow({ e }) {
             <Location city={e.city} region={e.region} country={e.country} />
             {e.method && <span className="text-muted"> · {e.method}</span>}
             {e.browser && <span className="text-muted"> · {e.browser} / {e.os}</span>}
+            {e.device && <span className="text-muted"> · {e.device}</span>}
+            {e.ip_hash && <span className="text-muted"> · ip:<code className="text-emerald-300/80">{e.ip_hash.slice(0, 10)}…</code></span>}
             {e.failure_reason && <span className="text-rose-soft"> · {e.failure_reason}</span>}
           </>
         )}
@@ -158,10 +160,36 @@ function UserDetailPanel({ userId, days, onClose }) {
               <div className="brutal-card p-3">
                 <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Logins · {days}d</div>
                 <div className="text-lg font-display font-semibold mt-0.5">{data.summary.logins_in_window}</div>
+                {data.summary.failed_logins_in_window > 0 && (
+                  <div className="text-[10px] text-rose-soft font-mono mt-0.5">⚠ {data.summary.failed_logins_in_window} failed</div>
+                )}
               </div>
               <div className="brutal-card p-3">
                 <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Feature uses</div>
                 <div className="text-lg font-display font-semibold mt-0.5">{data.summary.feature_uses_in_window}</div>
+              </div>
+              <div className="brutal-card p-3">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Distinct IPs / cities</div>
+                <div className="text-lg font-display font-semibold mt-0.5">
+                  {data.summary.distinct_ip_count} <span className="text-muted text-sm">·</span> {data.summary.distinct_city_count}
+                </div>
+              </div>
+              <div className="brutal-card p-3">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Paywall hits</div>
+                <div className="text-lg font-display font-semibold mt-0.5">{data.summary.paywall_hits_in_window}</div>
+              </div>
+              <div className="brutal-card p-3">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Lifetime spend</div>
+                <div className="text-lg font-display font-semibold mt-0.5">
+                  ₹{(data.summary.lifetime_spend_inr || 0).toLocaleString("en-IN")}
+                </div>
+                <div className="text-[10px] font-mono text-muted mt-0.5">{data.summary.paid_orders_count} order(s)</div>
+              </div>
+              <div className="brutal-card p-3">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Last device</div>
+                <div className="text-[12px] font-mono mt-0.5">
+                  {[data.summary.last_login_device, data.summary.last_login_browser, data.summary.last_login_os].filter(Boolean).join(" · ") || "—"}
+                </div>
               </div>
             </section>
 
@@ -174,10 +202,31 @@ function UserDetailPanel({ userId, days, onClose }) {
                 {(data.summary.last_login_city || data.summary.last_login_country) && (
                   <span className="text-muted"> · <Location
                     city={data.summary.last_login_city}
+                    region={data.summary.last_login_region}
                     country={data.summary.last_login_country} /></span>
                 )}
                 {data.summary.last_login_method && <span className="text-muted"> · {data.summary.last_login_method}</span>}
               </div>
+              {data.summary.last_login_ip_hash && (
+                <div>
+                  <span className="text-muted">last IP hash</span> · <code className="text-emerald-300/90">{data.summary.last_login_ip_hash}</code>
+                  <span className="text-[10px] text-muted ml-2">(raw IP never stored)</span>
+                </div>
+              )}
+              {data.summary.distinct_cities_sample?.length > 0 && (
+                <div>
+                  <span className="text-muted">cities seen</span> ·{" "}
+                  {data.summary.distinct_cities_sample.map((c, i) => (
+                    <span key={c} className="font-mono">
+                      {i > 0 && <span className="text-muted">, </span>}
+                      {c}
+                    </span>
+                  ))}
+                  {data.summary.distinct_city_count > data.summary.distinct_cities_sample.length && (
+                    <span className="text-muted"> + {data.summary.distinct_city_count - data.summary.distinct_cities_sample.length} more</span>
+                  )}
+                </div>
+              )}
               {data.user.cancel_at_period_end && (
                 <div className="text-amber">
                   Pending cancellation · requested {formatDateTime(data.user.cancel_requested_at)}
@@ -354,7 +403,8 @@ export default function AdminUserActivity() {
                 <th className="p-3">User</th>
                 <th className="p-3">Plan</th>
                 <th className="p-3">Last login</th>
-                <th className="p-3">Location</th>
+                <th className="p-3">Location · device</th>
+                <th className="p-3">IP / security</th>
                 <th className="p-3 text-right">Logins · {days}d</th>
                 <th className="p-3 text-right">Features · {days}d</th>
                 <th className="p-3">Top features</th>
@@ -362,10 +412,10 @@ export default function AdminUserActivity() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} className="p-6 text-center text-muted text-sm">Loading…</td></tr>
+                <tr><td colSpan={8} className="p-6 text-center text-muted text-sm">Loading…</td></tr>
               )}
               {!loading && items.length === 0 && (
-                <tr><td colSpan={7} className="p-6 text-center text-muted text-sm" data-testid="ua-empty">No users match these filters.</td></tr>
+                <tr><td colSpan={8} className="p-6 text-center text-muted text-sm" data-testid="ua-empty">No users match these filters.</td></tr>
               )}
               {!loading && items.map((u) => (
                 <tr
@@ -382,6 +432,7 @@ export default function AdminUserActivity() {
                     </div>
                     <div className="text-[10px] font-mono text-muted/70 mt-0.5">
                       signed up {relative(u.created_at)}{u.auth_provider && u.auth_provider !== "email" ? ` · via ${u.auth_provider}` : ""}
+                      {u.email_verified === false && <span className="text-rose-soft"> · unverified</span>}
                     </div>
                   </td>
                   <td className="p-3"><PlanBadge plan_id={u.plan_id} plan_status={u.plan_status} /></td>
@@ -390,6 +441,7 @@ export default function AdminUserActivity() {
                       <>
                         <div>{relative(u.last_login_at)}</div>
                         <div className="text-muted">{formatDateTime(u.last_login_at)}</div>
+                        {u.last_login_method && <div className="text-muted/70">{u.last_login_method}</div>}
                       </>
                     ) : (
                       <span className="text-muted italic">never in window</span>
@@ -399,7 +451,28 @@ export default function AdminUserActivity() {
                     {(u.last_login_city || u.last_login_country) ? (
                       <>
                         <Location city={u.last_login_city} region={u.last_login_region} country={u.last_login_country} />
-                        {u.last_login_method && <div className="text-[10px] font-mono text-muted">{u.last_login_method}</div>}
+                        <div className="text-[10px] font-mono text-muted mt-0.5">
+                          {[u.last_login_device, u.last_login_browser, u.last_login_os].filter(Boolean).join(" · ") || "—"}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-muted italic">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 text-[11px] font-mono">
+                    {u.last_login_ip_hash ? (
+                      <>
+                        <div className="text-muted truncate max-w-[120px]" title={u.last_login_ip_hash}>
+                          {u.last_login_ip_hash.slice(0, 10)}…
+                        </div>
+                        <div className="text-[10px] text-muted/70 mt-0.5">
+                          {u.distinct_ip_count} IP{u.distinct_ip_count === 1 ? "" : "s"} · {u.distinct_city_count} cit{u.distinct_city_count === 1 ? "y" : "ies"}
+                        </div>
+                        {u.failed_logins_in_window > 0 && (
+                          <div className="text-rose-soft text-[10px] mt-0.5">
+                            ⚠ {u.failed_logins_in_window} failed
+                          </div>
+                        )}
                       </>
                     ) : (
                       <span className="text-muted italic">—</span>

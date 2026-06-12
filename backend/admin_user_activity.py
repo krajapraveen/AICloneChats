@@ -80,16 +80,16 @@ def _window_iso(days: int) -> str:
 
 async def _aggregate_window(user_ids: list[str], since_iso: str) -> dict[str, dict]:
     """For a batch of user_ids, compute window-bounded:
-      - last_login_at + last_login_city/country/method
-      - logins_in_window
+      - last_login_at + last_login_city/country/method/browser/os/device/ip_hash
+      - logins_in_window + failed_logins_in_window
+      - distinct_ip_count, distinct_country_count, distinct_city_count
       - feature_uses_in_window
-      - top_features (top 3 by count)
-    in two aggregations (one per collection) for efficiency.
+      - top_features (top 5 by count)
     """
     if not user_ids:
         return {}
 
-    # ─── login_events aggregate ───
+    # ─── login_events aggregate — successes ───
     login_agg = await db.login_events.aggregate([
         {"$match": {
             "user_id": {"$in": user_ids},
@@ -107,8 +107,29 @@ async def _aggregate_window(user_ids: list[str], since_iso: str) -> dict[str, di
             "last_login_method": {"$first": "$login_method"},
             "last_login_device": {"$first": "$device_type"},
             "last_login_browser": {"$first": "$browser"},
+            "last_login_os": {"$first": "$os"},
+            "last_login_ip_hash": {"$first": "$ip_address_hash"},
+            # Distinct counts: security signal (multiple IPs/cities = travel
+            # OR account sharing OR compromised account)
+            "distinct_ip_hashes": {"$addToSet": "$ip_address_hash"},
+            "distinct_countries": {"$addToSet": "$ip_country"},
+            "distinct_cities": {"$addToSet": {"$concat": [
+                {"$ifNull": ["$ip_city", "unknown"]}, ", ",
+                {"$ifNull": ["$ip_country", "unknown"]},
+            ]}},
         }},
     ]).to_list(len(user_ids) * 2)
+
+    # ─── login_events aggregate — failures (security signal) ───
+    failed_agg = await db.login_events.aggregate([
+        {"$match": {
+            "user_id": {"$in": user_ids},
+            "event_type": "login_failed",
+            "created_at": {"$gte": since_iso},
+        }},
+        {"$group": {"_id": "$user_id", "failed_logins_in_window": {"$sum": 1}}},
+    ]).to_list(len(user_ids) * 2)
+    fail_by_uid = {r["_id"]: int(r["failed_logins_in_window"] or 0) for r in failed_agg}
 
     # ─── credit_events aggregate (feature usage) ───
     feature_agg = await db.credit_events.aggregate([
@@ -134,8 +155,12 @@ async def _aggregate_window(user_ids: list[str], since_iso: str) -> dict[str, di
 
     out: dict[str, dict] = {}
     for r in login_agg:
+        ips = [x for x in (r.get("distinct_ip_hashes") or []) if x]
+        countries = [x for x in (r.get("distinct_countries") or []) if x]
+        cities = [x for x in (r.get("distinct_cities") or []) if x and "unknown" not in x.lower()]
         out[r["_id"]] = {
             "logins_in_window": int(r.get("logins_in_window") or 0),
+            "failed_logins_in_window": fail_by_uid.get(r["_id"], 0),
             "last_login_at": r.get("last_login_at"),
             "last_login_country": r.get("last_login_country"),
             "last_login_city": r.get("last_login_city"),
@@ -143,12 +168,21 @@ async def _aggregate_window(user_ids: list[str], since_iso: str) -> dict[str, di
             "last_login_method": r.get("last_login_method"),
             "last_login_device": r.get("last_login_device"),
             "last_login_browser": r.get("last_login_browser"),
+            "last_login_os": r.get("last_login_os"),
+            "last_login_ip_hash": r.get("last_login_ip_hash"),
+            "distinct_ip_count": len(ips),
+            "distinct_country_count": len(countries),
+            "distinct_city_count": len(cities),
+            "distinct_cities_sample": sorted(cities)[:5],
         }
+    # Also surface failed-login counts even when there are 0 successful logins
+    for uid, n in fail_by_uid.items():
+        if uid not in out:
+            out[uid] = {"failed_logins_in_window": n, "logins_in_window": 0}
     for r in feature_agg:
         bucket = out.setdefault(r["_id"], {})
         bucket["feature_uses_in_window"] = int(r.get("feature_uses_in_window") or 0)
         bucket["last_feature_at"] = r.get("last_feature_at")
-        # Truncate top features to the top 5
         bucket["top_features"] = (r.get("top_features") or [])[:5]
     return out
 
@@ -202,6 +236,7 @@ async def user_activity_list(
         rows.append({
             **u,
             "logins_in_window": a.get("logins_in_window", 0),
+            "failed_logins_in_window": a.get("failed_logins_in_window", 0),
             "feature_uses_in_window": a.get("feature_uses_in_window", 0),
             "last_login_at": last_login,
             "last_login_city": a.get("last_login_city"),
@@ -210,6 +245,12 @@ async def user_activity_list(
             "last_login_method": a.get("last_login_method"),
             "last_login_device": a.get("last_login_device"),
             "last_login_browser": a.get("last_login_browser"),
+            "last_login_os": a.get("last_login_os"),
+            "last_login_ip_hash": a.get("last_login_ip_hash"),
+            "distinct_ip_count": a.get("distinct_ip_count", 0),
+            "distinct_country_count": a.get("distinct_country_count", 0),
+            "distinct_city_count": a.get("distinct_city_count", 0),
+            "distinct_cities_sample": a.get("distinct_cities_sample", []),
             "last_feature_at": last_feature,
             "last_active_at": last_active,
             "top_features": a.get("top_features", []),
@@ -301,6 +342,7 @@ async def user_activity_detail(
             "device": e.get("device_type"),
             "browser": e.get("browser"),
             "os": e.get("os"),
+            "ip_hash": e.get("ip_address_hash"),
             "failure_reason": e.get("failure_reason"),
         })
     for e in features:
@@ -335,23 +377,43 @@ async def user_activity_detail(
     aggs = await _aggregate_window([user_id], since_iso)
     a = aggs.get(user_id, {})
 
+    # Lifetime spend — sum of paid orders (any time)
+    paid_orders = await db.payment_orders.find(
+        {"user_id": user_id, "status": "paid"},
+        {"_id": 0, "amount_inr": 1, "plan_id": 1, "paid_at": 1, "order_id": 1},
+    ).sort("paid_at", -1).to_list(50)
+    lifetime_spend_inr = sum(float(o.get("amount_inr") or 0) for o in paid_orders)
+
     return {
         "user": user,
         "window_days": days,
         "summary": {
             "logins_in_window": a.get("logins_in_window", 0),
+            "failed_logins_in_window": a.get("failed_logins_in_window", 0),
             "feature_uses_in_window": a.get("feature_uses_in_window", 0),
             "paywall_hits_in_window": len(paywall_hits),
             "last_login_at": a.get("last_login_at"),
             "last_login_city": a.get("last_login_city"),
+            "last_login_region": a.get("last_login_region"),
             "last_login_country": a.get("last_login_country"),
             "last_login_method": a.get("last_login_method"),
+            "last_login_browser": a.get("last_login_browser"),
+            "last_login_os": a.get("last_login_os"),
+            "last_login_device": a.get("last_login_device"),
+            "last_login_ip_hash": a.get("last_login_ip_hash"),
+            "distinct_ip_count": a.get("distinct_ip_count", 0),
+            "distinct_country_count": a.get("distinct_country_count", 0),
+            "distinct_city_count": a.get("distinct_city_count", 0),
+            "distinct_cities_sample": a.get("distinct_cities_sample", []),
             "top_features": a.get("top_features", []),
+            "lifetime_spend_inr": round(lifetime_spend_inr, 2),
+            "paid_orders_count": len(paid_orders),
         },
         "logins": logins,
         "features": features,
         "paywall_hits": paywall_hits,
         "subscription_transitions": transitions,
+        "paid_orders": paid_orders,
         "timeline": timeline[:300],
         "computed_at": _now().isoformat(),
     }

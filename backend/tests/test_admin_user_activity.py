@@ -138,6 +138,18 @@ def test_list_endpoint_envelope_and_aggregates(admin_token, seeded_user):
     assert feats[0]["count"] == 3
     assert feats[1]["feature"] == "voice"
     assert feats[1]["count"] == 2
+    # New elaborate fields surfaced
+    assert row["last_login_browser"] == "Chrome"
+    assert row["last_login_os"] == "macOS"
+    assert row["last_login_device"] == "desktop"
+    assert row["last_login_ip_hash"]  # non-empty
+    assert row["distinct_ip_count"] >= 1
+    # We seeded 3 cities (Bangalore, Mumbai, Pune) → distinct_city_count == 3
+    assert row["distinct_city_count"] == 3
+    assert set(row["distinct_cities_sample"]) == {
+        "Bangalore, IN", "Mumbai, IN", "Pune, IN",
+    }
+    assert row["failed_logins_in_window"] == 0
 
 
 def test_list_endpoint_plan_filter(admin_token, seeded_user):
@@ -226,13 +238,25 @@ def test_detail_endpoint_returns_full_envelope(admin_token, seeded_user):
     body = r.json()
     for k in ("user", "window_days", "summary", "logins", "features",
               "paywall_hits", "subscription_transitions", "timeline",
-              "computed_at"):
+              "paid_orders", "computed_at"):
         assert k in body, f"missing key {k}"
     assert body["user"]["user_id"] == seeded_user["user_id"]
-    assert body["summary"]["logins_in_window"] == 3
-    assert body["summary"]["feature_uses_in_window"] == 5
+    s = body["summary"]
+    assert s["logins_in_window"] == 3
+    assert s["feature_uses_in_window"] == 5
     assert len(body["logins"]) == 3
     assert len(body["features"]) == 5
+    # Elaborate detail fields are present
+    for k in ("failed_logins_in_window", "distinct_ip_count",
+              "distinct_country_count", "distinct_city_count",
+              "distinct_cities_sample", "last_login_browser",
+              "last_login_os", "last_login_device", "last_login_ip_hash",
+              "lifetime_spend_inr", "paid_orders_count"):
+        assert k in s, f"summary missing key {k}"
+    # Timeline login rows now carry ip_hash
+    for e in body["timeline"]:
+        if e["kind"] == "login":
+            assert "ip_hash" in e
 
 
 def test_detail_endpoint_timeline_is_chronological_desc(admin_token, seeded_user):
