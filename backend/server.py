@@ -109,6 +109,10 @@ import profile_aliases  # noqa: E402
 app.include_router(profile_aliases.router)
 app.include_router(profile_aliases.admin_router)
 
+# Renewal reminders — admin-trigger endpoint + startup hook (best-effort, idempotent)
+import renewal_reminders  # noqa: E402
+app.include_router(renewal_reminders.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
@@ -288,6 +292,14 @@ async def on_startup():
         await _si_indexes()
     except Exception as e:
         logger.warning("support_inbox.ensure_indexes failed: %s", e)
+    # Renewal reminders — fire any due reminders at boot. Idempotent (writes
+    # renewal_reminder_sent_for=order_id, so re-runs are safe). Skips admins.
+    try:
+        from renewal_reminders import run_due_reminders as _renewal_run
+        summary = await _renewal_run(dry_run=False)
+        logger.info("renewal_reminders boot scan: %s", summary)
+    except Exception as e:
+        logger.warning("renewal_reminders boot scan failed: %s", e)
     # Seed billing plans on every boot — plans are code, not user data
     try:
         await ensure_plans_seeded()
