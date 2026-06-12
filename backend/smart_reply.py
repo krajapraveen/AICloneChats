@@ -292,6 +292,18 @@ async def generate(payload: GenerateRequest, user: dict = Depends(get_current_us
             system_message=system_prompt,
         ).with_model(SMART_REPLY_MODEL[0], SMART_REPLY_MODEL[1])
         raw = await chat.send_message(UserMessage(text=user_msg_text))
+        # Provider-metered cost ingestion (best-effort)
+        try:
+            from provider_cost_recorder import record_llm_call
+            await record_llm_call(
+                user_id=user_id, request_id=deduction.get("request_id"),
+                feature="chat", surface="smart_reply",
+                provider=SMART_REPLY_MODEL[0], model=SMART_REPLY_MODEL[1],
+                input_text=(system_prompt or "") + "\n" + (user_msg_text or ""),
+                output_text=(raw or ""),
+            )
+        except Exception:
+            pass
     except Exception as e:
         await refund_credits(user_doc or user, surface="smart_reply", request_id=f"sr_refund_llm_fail")
         logger.exception("Smart Reply LLM failed")

@@ -206,7 +206,13 @@ async def _check_usage(actor: dict, consume: bool) -> dict:
 
 
 # -------------- Whisper --------------
-async def _transcribe_audio(audio_bytes: bytes, filename: str) -> dict:
+async def _transcribe_audio(
+    audio_bytes: bytes,
+    filename: str,
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict:
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="LLM not configured")
     stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
@@ -226,6 +232,19 @@ async def _transcribe_audio(audio_bytes: bytes, filename: str) -> dict:
     text = (getattr(resp, "text", None) or "").strip()
     duration = getattr(resp, "duration", None)
     language = getattr(resp, "language", None)
+
+    # Provider-metered cost ingestion (best-effort, swallowed on failure)
+    try:
+        from provider_cost_recorder import record_audio_call
+        await record_audio_call(
+            user_id=user_id, request_id=request_id,
+            feature="voice", surface="voice_message",
+            provider="openai", model="whisper-1",
+            duration_seconds=float(duration or 0),
+        )
+    except Exception:
+        pass
+
     return {"text": text, "duration": duration, "language": language}
 
 
@@ -238,7 +257,12 @@ def _claude_chat(system: str, session_id: Optional[str] = None) -> LlmChat:
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
 
-async def _clean_transcript(raw: str) -> str:
+async def _clean_transcript(
+    raw: str,
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> str:
     if not raw.strip():
         return ""
     system = """You are cleaning messy speech / chat text into a clear input for a smart-message assistant.
@@ -255,10 +279,29 @@ Rules:
     except Exception as e:
         logger.warning("Cleaning failed, using raw: %s", e)
         return raw.strip()
-    return (cleaned or "").strip().strip('"').strip("'") or raw.strip()
+    out = (cleaned or "").strip().strip('"').strip("'") or raw.strip()
+    # Provider-metered cost ingestion (best-effort)
+    try:
+        from provider_cost_recorder import record_llm_call
+        await record_llm_call(
+            user_id=user_id, request_id=request_id,
+            feature="voice", surface="voice_message",
+            provider="anthropic", model="claude-sonnet-4-5-20250929",
+            input_text=(system or "") + "\n" + (raw or ""),
+            output_text=out,
+        )
+    except Exception:
+        pass
+    return out
 
 
-async def _generate_message(cleaned: str, tone: str) -> str:
+async def _generate_message(
+    cleaned: str,
+    tone: str,
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> str:
     desc = TONE_DESCRIPTIONS.get(tone, "")
     system = f"""You are a smart-message assistant. Convert the user's cleaned input into a polished message they can send right now.
 
@@ -277,10 +320,29 @@ RULES:
     except Exception as e:
         logger.exception("Message generation failed")
         raise HTTPException(status_code=502, detail=f"Generation failed: {type(e).__name__}")
-    return (out or "").strip().strip('"').strip("'") or "(no message generated)"
+    final = (out or "").strip().strip('"').strip("'") or "(no message generated)"
+    # Provider-metered cost ingestion (best-effort)
+    try:
+        from provider_cost_recorder import record_llm_call
+        await record_llm_call(
+            user_id=user_id, request_id=request_id,
+            feature="voice", surface="voice_message",
+            provider="anthropic", model="claude-sonnet-4-5-20250929",
+            input_text=(system or "") + "\n" + (cleaned or ""),
+            output_text=final,
+        )
+    except Exception:
+        pass
+    return final
 
 
-async def _refine_message(original: str, refine_type: str) -> str:
+async def _refine_message(
+    original: str,
+    refine_type: str,
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> str:
     instruction = REFINE_INSTRUCTIONS.get(refine_type, "Improve clarity.")
     system = f"""You are a smart-message refiner. Given a message, rewrite it according to the instruction.
 
@@ -296,7 +358,20 @@ RULES:
     except Exception as e:
         logger.exception("Refine failed")
         raise HTTPException(status_code=502, detail=f"Refine failed: {type(e).__name__}")
-    return (out or "").strip().strip('"').strip("'") or original
+    final = (out or "").strip().strip('"').strip("'") or original
+    # Provider-metered cost ingestion (best-effort)
+    try:
+        from provider_cost_recorder import record_llm_call
+        await record_llm_call(
+            user_id=user_id, request_id=request_id,
+            feature="voice", surface="voice_message",
+            provider="anthropic", model="claude-sonnet-4-5-20250929",
+            input_text=(system or "") + "\n" + (original or ""),
+            output_text=final,
+        )
+    except Exception:
+        pass
+    return final
 
 
 # -------------- Session helpers --------------
@@ -369,7 +444,10 @@ async def transcribe(
     # Verify quota (don't consume yet)
     await _check_usage(actor, consume=False)
 
-    result = await _transcribe_audio(audio_bytes, audio_file.filename or "audio.webm")
+    result = await _transcribe_audio(
+        audio_bytes, audio_file.filename or "audio.webm",
+        user_id=actor.get("user_id"), request_id=None,
+    )
     raw = result["text"]
     if not raw or len(raw) < 3:
         await _emit(actor, "voice_transcription_failed", {"reason": "empty_or_too_short"})
@@ -377,7 +455,7 @@ async def transcribe(
     if len(raw) > 2000:
         raw = raw[:2000]
 
-    cleaned = await _clean_transcript(raw)
+    cleaned = await _clean_transcript(raw, user_id=actor.get("user_id"), request_id=None)
     session_id = await _create_session(
         actor, raw, cleaned, source_type=source_type,
         duration=result["duration"], language=result["language"],
@@ -407,7 +485,7 @@ async def text_input(payload: TextInputRequest, actor: dict = Depends(voice_acto
     await _check_usage(actor, consume=False)
 
     raw = payload.text.strip()
-    cleaned = await _clean_transcript(raw)
+    cleaned = await _clean_transcript(raw, user_id=actor.get("user_id"), request_id=None)
     session_id = await _create_session(actor, raw, cleaned, source_type="text")
     usage = await _check_usage(actor, consume=True)
 
@@ -451,7 +529,11 @@ async def generate(payload: GenerateRequest, actor: dict = Depends(voice_actor))
     credit_handle = await charge_credits_or_402(user_doc, surface="voice_message")
 
     try:
-        msg = await _generate_message(cleaned, payload.tone)
+        msg = await _generate_message(
+            cleaned, payload.tone,
+            user_id=actor.get("user_id"),
+            request_id=getattr(credit_handle, "request_id", None),
+        )
     except Exception:
         await credit_handle.refund(reason="generation_failed")
         raise HTTPException(502, "Voice message generation failed, try again.")
@@ -488,7 +570,11 @@ async def generate_all(payload: GenerateAllRequest, actor: dict = Depends(voice_
     credit_handle = await charge_credits_or_402(user_doc, surface="voice_message")
 
     results = await asyncio.gather(
-        *[_generate_message(cleaned, t) for t in TONES],
+        *[_generate_message(
+            cleaned, t,
+            user_id=actor.get("user_id"),
+            request_id=getattr(credit_handle, "request_id", None),
+        ) for t in TONES],
         return_exceptions=True,
     )
     # If ALL tones failed, refund and surface error
@@ -535,7 +621,11 @@ async def refine(payload: RefineRequest, actor: dict = Depends(voice_actor)):
     credit_handle = await charge_credits_or_402(user_doc, surface="voice_message")
 
     try:
-        rewritten = await _refine_message(msg["generated_message"], payload.refine_type)
+        rewritten = await _refine_message(
+            msg["generated_message"], payload.refine_type,
+            user_id=actor.get("user_id"),
+            request_id=getattr(credit_handle, "request_id", None),
+        )
     except Exception:
         await credit_handle.refund(reason="refine_failed")
         raise HTTPException(502, "Refine failed, try again.")

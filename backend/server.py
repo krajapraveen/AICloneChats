@@ -139,6 +139,9 @@ app.include_router(cost_telemetry.router)
 import provider_cost_recorder  # noqa: E402
 app.include_router(provider_cost_recorder.router)
 
+import cost_telemetry_rollup  # noqa: E402
+app.include_router(cost_telemetry_rollup.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
@@ -336,6 +339,18 @@ async def on_startup():
         await _pcr_indexes()
     except Exception as e:
         logger.warning("provider_cost_recorder.ensure_indexes failed: %s", e)
+    # Daily cost-telemetry rollup indexes + boot snapshot (today + yesterday)
+    try:
+        from cost_telemetry_rollup import ensure_indexes as _ctr_indexes
+        await _ctr_indexes()
+    except Exception as e:
+        logger.warning("cost_telemetry_rollup.ensure_indexes failed: %s", e)
+    try:
+        from cost_telemetry_rollup import rollup_recent as _ctr_rollup
+        summary = await _ctr_rollup(days=2)
+        logger.info("cost_telemetry rollup boot scan: %s days written", len(summary))
+    except Exception as e:
+        logger.warning("cost_telemetry_rollup boot scan failed: %s", e)
     # Renewal reminders — fire any due reminders at boot. Idempotent (writes
     # renewal_reminder_sent_for=order_id, so re-runs are safe). Skips admins.
     try:

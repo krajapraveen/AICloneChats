@@ -102,7 +102,15 @@ def _degraded_score(reason: str = "") -> dict:
     }
 
 
-async def score_argument(content: str, debate_title: str, side: str, side_label: str) -> dict:
+async def score_argument(
+    content: str,
+    debate_title: str,
+    side: str,
+    side_label: str,
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict:
     """Score a debate argument. Always returns a dict with a stable schema."""
     text = (content or "").strip()
     h = _heuristic_block(text)
@@ -127,6 +135,18 @@ async def score_argument(content: str, debate_title: str, side: str, side_label:
             f"Score this argument as the user's contribution to their side."
         )
         raw = await chat.send_message(UserMessage(text=user_msg))
+        # Provider-metered cost ingestion (best-effort)
+        try:
+            from provider_cost_recorder import record_llm_call
+            await record_llm_call(
+                user_id=user_id, request_id=request_id,
+                feature="chat", surface="debate_chat",
+                provider="anthropic", model="claude-sonnet-4-5-20250929",
+                input_text=(SYSTEM_PROMPT or "") + "\n" + (user_msg or ""),
+                output_text=(raw or ""),
+            )
+        except Exception:
+            pass
     except Exception as e:
         logger.exception("Debate scoring LLM failed: %s", e)
         return _degraded_score("llm_error")

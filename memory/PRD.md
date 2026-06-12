@@ -1108,3 +1108,52 @@ Closed the remaining gaps from the formal spec on top of the My Profile suite bu
 
 **Production rollout:** code only — no env var changes. Ready for next redeploy.
 
+
+---
+
+## Cost Telemetry — Recovery Actions, P1 Surface Coverage, Daily Rollups — Feb 12, 2026
+
+Closed the cost-telemetry maturity gap that the previous fork left open. Three discrete bodies of work, all backed by green pytest:
+
+**P0 — Recovery Actions & Validation Guardrails (closed):**
+- `cost_telemetry.py` already had data-driven `recovery_action` and `data_validation` suspect-margin flagging. The previously failing pytest `test_top_expensive_sorted_desc` was a **test-isolation** bug, not a product defect (stale `req_lm_*` rows from earlier runs polluted the window). Fix: autouse cleanup fixture in `test_loss_making_alerts.py` purges only `req_lm_*` rows pre/post each test.
+- Frontend `AdminCostTelemetry.jsx` renders the `recovery_action` column (kind-toned color) and `lm-validation-banner` correctly — verified by screenshot.
+- All 8 tests in `test_loss_making_alerts.py` now green.
+
+**P1 — Provider Cost Recorder hooked into 5 remaining surfaces:**
+- `voice.py` — `_clean_transcript`, `_generate_message`, `_refine_message` (claude LLM) and `_transcribe_audio` (whisper STT, audio-metered).
+- `translation_chat.py` — `translate_message` (claude LLM, tagged `chat`/`translation_chat`).
+- `smart_reply.py` — inline LLM call in the route (claude, tagged `chat`/`smart_reply`).
+- `debates_scoring.py` — `score_argument` (claude, tagged `chat`/`debate_chat`).
+- `clone_artifacts.py` — `_run_extraction` (claude, tagged `ai_clone`/`conversation_memory`).
+- Each surface emits a row to `provider_cost_events` with correct `feature`, `surface`, `provider`, `model`, and (where applicable) `user_id`/`request_id`. New test file `test_surfaces_cost_ingestion.py` proves each surface invokes the recorder with the right tags (8/8 green).
+
+**P2 — Daily Cost Telemetry Rollups (new module):**
+- `cost_telemetry_rollup.py` — produces one document per (date, feature) in `cost_telemetry_daily`, capturing credits, metered cost, configured/estimated cost, apportioned revenue, gross profit, margin pct, plus denormalized day-totals so the row is self-describing.
+- Endpoints:
+  - `POST /api/admin/cost-telemetry/rollup?days=N` — idempotent recompute (cron-safe).
+  - `GET  /api/admin/cost-telemetry/daily?days=N&feature=X` — returns per-(date, feature) series + per-date totals_series for trend charts.
+- Boot scan in `server.py` runs `rollup_recent(days=2)` so today+yesterday are always fresh on every backend start; ensures indexes via `cost_telemetry_daily(date,feature)` unique.
+- Test coverage: 9/9 in `test_cost_telemetry_rollup.py` (math correctness, idempotency, ascending series, feature filter, admin gate).
+
+**Regression status:** 62/62 pytests pass across all touched suites (`test_loss_making_alerts`, `test_cost_telemetry`, `test_cost_telemetry_rollup`, `test_provider_cost_recorder`, `test_credit_feature_tagging`, `test_surfaces_cost_ingestion`).
+
+**Note for next session:** Pre-existing failures in `test_smart_reply.py` (10 tests), `test_revenue_mirror.py`, `test_debates.py`, `test_delayed_messages.py`, etc., are unrelated to this work — same failures exist on `main` before this session's edits. They appear to be admin endpoint session/token state issues that need a separate sweep.
+
+**Production rollout:** code-only — no env-var changes. Indexes are created on boot. Ready for redeploy.
+
+### Files added/modified
+- `backend/cost_telemetry_rollup.py` (new)
+- `backend/tests/test_cost_telemetry_rollup.py` (new)
+- `backend/tests/test_surfaces_cost_ingestion.py` (new)
+- `backend/tests/test_loss_making_alerts.py` (autouse cleanup fixture)
+- `backend/voice.py`, `backend/translation_chat.py`, `backend/smart_reply.py`,
+  `backend/debates_scoring.py`, `backend/debates.py`, `backend/clone_artifacts.py`
+  (instrumented for `record_llm_call` / `record_audio_call`)
+- `backend/server.py` (mounts `cost_telemetry_rollup.router`, runs boot rollup)
+
+### Remaining backlog
+- Daily trend chart UI: `AdminCostTelemetry.jsx` should consume `/api/admin/cost-telemetry/daily` and render a per-feature recharts line (data is now persisted server-side; UI is the last mile).
+- Exit Insights Dashboard (P3).
+- Optimistic UI rollout across remaining chat surfaces (P4).
+- Pre-existing failing test sweep (smart_reply class-fixture state, admin revenue endpoints, etc.).

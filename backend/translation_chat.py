@@ -151,7 +151,14 @@ def detect_language_heuristic(text: str) -> Optional[str]:
 
 
 # ---- Translation service ----
-async def translate_message(text: str, source_lang: str, targets: list[str]) -> dict[str, str]:
+async def translate_message(
+    text: str,
+    source_lang: str,
+    targets: list[str],
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict[str, str]:
     """Returns dict of {lang: translated_text}. Same-language returns text as-is.
     Falls back to original text on LLM failure (degraded mode — never blocks send)."""
     out: dict[str, str] = {source_lang: text}
@@ -190,6 +197,18 @@ async def translate_message(text: str, source_lang: str, targets: list[str]) -> 
             f"Message:\n{text}"
         )
         raw = await chat.send_message(UserMessage(text=user_msg))
+        # Provider-metered cost ingestion (best-effort)
+        try:
+            from provider_cost_recorder import record_llm_call
+            await record_llm_call(
+                user_id=user_id, request_id=request_id,
+                feature="chat", surface="translation_chat",
+                provider="anthropic", model="claude-sonnet-4-5-20250929",
+                input_text=(sys_prompt or "") + "\n" + (user_msg or ""),
+                output_text=(raw or ""),
+            )
+        except Exception:
+            pass
         raw_str = (raw or "").strip().strip("`")
         if raw_str.startswith("json"):
             raw_str = raw_str[4:].strip()
@@ -355,7 +374,11 @@ async def send_message(room_id: str, payload: SendMessageRequest, user: dict = D
         src_lang = detect_language_heuristic(text) or member.get("preferred_language") or "en"
 
     try:
-        translations = await translate_message(text, src_lang, SUPPORTED_LANGS)
+        translations = await translate_message(
+            text, src_lang, SUPPORTED_LANGS,
+            user_id=member_id,
+            request_id=getattr(credit_handle, "request_id", None),
+        )
     except Exception:
         await credit_handle.refund(reason="translation_failed")
         raise HTTPException(502, "Translation service unavailable, try again.")

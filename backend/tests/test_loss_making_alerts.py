@@ -40,6 +40,25 @@ def _run(coro):
     return get_shared_loop().run_until_complete(coro)
 
 
+@pytest.fixture(autouse=True)
+def _purge_test_rows():
+    """Strict isolation: every test starts with a clean slate for our seeded
+    rows. We only purge rows tagged with the `req_lm_` request_id prefix so
+    real telemetry remains untouched.
+
+    Using autouse + function scope ensures a deterministic ordering of seeded
+    rows inside each test, instead of accumulating across the module/file.
+    """
+    async def _clear():
+        client = AsyncIOMotorClient(MONGO_URL)
+        db = client[DB_NAME]
+        await db.provider_cost_events.delete_many({"request_id": {"$regex": "^req_lm_"}})
+        await db.credit_events.delete_many({"request_id": {"$regex": "^req_lm_"}})
+    _run(_clear())
+    yield
+    _run(_clear())
+
+
 @pytest.fixture(scope="module")
 def admin_token() -> str:
     async def _mint():

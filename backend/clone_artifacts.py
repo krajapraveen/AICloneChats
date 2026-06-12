@@ -161,7 +161,13 @@ def _coerce_extraction(payload: dict) -> dict:
     }
 
 
-async def _run_extraction(conversation_id: str, transcript: list[dict]) -> dict:
+async def _run_extraction(
+    conversation_id: str,
+    transcript: list[dict],
+    *,
+    user_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict:
     """Send transcript through LLM, return coerced JSON or empty fallback."""
     fallback = {"tasks": [], "decisions": [], "follow_ups": [], "summary": "", "unresolved_questions": []}
     if not EMERGENT_LLM_KEY or not transcript:
@@ -180,6 +186,18 @@ async def _run_extraction(conversation_id: str, transcript: list[dict]) -> dict:
             system_message=EXTRACTION_SYSTEM_PROMPT,
         ).with_model("anthropic", "claude-sonnet-4-5-20250929")
         raw = await chat.send_message(UserMessage(text=f"Conversation transcript:\n\n{transcript_text}"))
+        # Provider-metered cost ingestion (best-effort)
+        try:
+            from provider_cost_recorder import record_llm_call
+            await record_llm_call(
+                user_id=user_id, request_id=request_id,
+                feature="ai_clone", surface="conversation_memory",
+                provider="anthropic", model="claude-sonnet-4-5-20250929",
+                input_text=(EXTRACTION_SYSTEM_PROMPT or "") + "\n" + (transcript_text or ""),
+                output_text=(raw or ""),
+            )
+        except Exception:
+            pass
         if not raw:
             return fallback
         # Strip code fences if model added them despite instructions
@@ -284,7 +302,11 @@ async def extract_artifacts(
     if not transcript:
         raise HTTPException(400, "No conversation messages to extract from.")
 
-    extracted = await _run_extraction(payload.conversation_id, transcript)
+    extracted = await _run_extraction(
+        payload.conversation_id, transcript,
+        user_id=owner_value if owner_kind == "user" else None,
+        request_id=f"clone_artifact_{payload.conversation_id}",
+    )
     artifact_id = f"art_{uuid.uuid4().hex[:14]}"
     artifact_doc = {
         "artifact_id": artifact_id,

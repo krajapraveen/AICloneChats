@@ -333,7 +333,11 @@ async def submit_argument(slug: str, payload: SubmitArgumentRequest, user: dict 
     # Score with AI (always returns a stable dict — never raises)
     side_label = d["side_a_label"] if side == "A" else d["side_b_label"]
     try:
-        score = await scoring_svc.score_argument(payload.content, d["title"], side, side_label)
+        score = await scoring_svc.score_argument(
+            payload.content, d["title"], side, side_label,
+            user_id=user["user_id"],
+            request_id=getattr(credit_handle, "request_id", None),
+        )
     except Exception:
         await credit_handle.refund(reason="scoring_failure")
         raise HTTPException(502, "Scoring service unavailable, try again.")
