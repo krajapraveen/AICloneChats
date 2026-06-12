@@ -39,6 +39,12 @@ const SECTIONS = [
         blurb: "Centralized safety-filter event log: blocks, rewrites, by-category and by-route breakdown.",
         testId: "admin-card-safety",
       },
+      {
+        to: "/admin/anti-abuse",
+        name: "Anti-Abuse Control",
+        blurb: "Rate-limit hits, suspicious users, currently-restricted accounts. One-click limit / block / reset.",
+        testId: "admin-card-anti-abuse",
+      },
     ],
   },
   {
@@ -114,6 +120,12 @@ const SECTIONS = [
         name: "Revenue Mirror",
         blurb: "Funnel · Revenue · Credit Economy · Emotional Gravity · Cohorts · Operational Health. Read-only. No interpretation.",
         testId: "admin-card-revenue",
+      },
+      {
+        to: "/admin/users",
+        name: "Users · Subscription History",
+        blurb: "Per-user drill-down: derived lifecycle state, lifetime revenue, credits purchased/consumed, order ledger, credit events.",
+        testId: "admin-card-users",
       },
       {
         to: "/admin/email-health",

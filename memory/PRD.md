@@ -23,6 +23,29 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (P1 #3 + P1 #4 — Anti-Abuse Dashboard + Subscription State Machine + Admin Users)** — Two production-ready operator surfaces and one user-facing lifecycle upgrade.
+  - **P1 #3 — Admin Anti-Abuse Dashboard UI** (`/admin/anti-abuse`, `/app/frontend/src/pages/AdminAntiAbuse.jsx`)
+    - One-screen operator console over the existing `admin_anti_abuse.py` backend endpoints.
+    - 6-tile metric grid (24h-window selector: 1/6/24/72/168h): users blocked, users limited, rate-limit hits, block attempts, limits applied, blocks applied.
+    - "Currently restricted" table with per-user status dropdown (normal/limited/blocked) + reason input + Apply / Reset Counters actions.
+    - "Suspicious activity" table (configurable window 1–24h + min events threshold 5–100): one-click Limit / Block from the row.
+    - "Recent events" feed (last 80) colour-coded by event type.
+    - Tone palette wired through existing `tag-*` CSS classes; added `tag-muted` to `index.css`.
+    - Wired into AdminIndex under Moderation section.
+  - **P1 #4 — Subscription Lifecycle State Machine** (`/app/backend/subscription_state.py`)
+    - Read-side derivation from `payment_orders` + `payment_refunds` + `users.cancel_at_period_end` + `users.is_deleted`. Zero new persisted state — every call recomputes from source-of-truth rows so manual Mongo edits can't drift.
+    - States: `free`, `pending_verification`, `active`, `pending_cancellation`, `grace_period` (3 days post-expiry), `expired`, `cancelled`, `payment_failed`, `refunded`, `deleted`.
+    - User endpoints: `GET /api/profile/subscription/state`, `POST /api/profile/subscription/cancel` (`{confirm:true, reason?:str}`, rate-limited 1/min), `POST /api/profile/subscription/resume` (reverses a pending cancellation).
+    - `Subscriptions.jsx` rewritten to pull from the new endpoint. Shows derived state label, state reason, "Renews / Expires" vs "Grace until" depending on state, plus contextual Cancel / Resume buttons (only visible in valid states).
+  - **P1 #4 (cont.) — Admin → Users → Subscription History** (`/admin/users`, `/app/frontend/src/pages/AdminUsers.jsx`)
+    - Two-pane operator console. Search pane (`GET /api/admin/billing/users/search?q=`) hits email-substring or user_id-exact match; debounced 350ms.
+    - Detail pane (`GET /api/admin/billing/users/{user_id}/subscription-summary`) renders: profile + derived state badge + state reason; lifetime tiles (revenue INR, paid orders, credits purchased, credits consumed, current balance); full order ledger with paid/failed/refunded tags; credit-event ledger (last 200) with positive/negative delta colouring.
+    - Wired into AdminIndex under Operations section.
+  - **Files added**: `backend/subscription_state.py`, `backend/tests/test_subscription_state.py`, `frontend/src/pages/AdminAntiAbuse.jsx`, `frontend/src/pages/AdminUsers.jsx`.
+  - **Files modified**: `backend/server.py` (router registration for `subscription_state`), `frontend/src/App.js` (routes `/admin/anti-abuse`, `/admin/users`), `frontend/src/pages/AdminIndex.jsx` (cards under Moderation + Operations), `frontend/src/pages/account/Subscriptions.jsx` (rewritten for state machine), `frontend/src/index.css` (added `.tag-muted`).
+  - **Test suite delta**: +10 new tests in `test_subscription_state.py`, all passing. Cumulative session-new tests: **20/20** (2 email-notify + 4 deletion + 4 export + 10 lifecycle).
+  - **Note on state philosophy**: The cancellation flag (`cancel_at_period_end`) is the ONLY new persisted field. Everything else is derived. Refunds are recognized by the existence of a `payment_refunds` row tied to the most recent paid order. This keeps the model honest: there's no way to be "Active" in the DB but expired in reality.
+
 - **2026-06-12 (Privacy & Compliance Suite — P0 + P1 #1 + P1 #2)** — Three production-ready additions covering admin awareness, Apple/Google account-deletion compliance, and GDPR/DPDP data portability.
   - **P0 — Email Notifications for Concerns**: Verified end-to-end. `support_inbox.create_thread` already calls `_notify_admins_new_thread` which loops over `ADMIN_EMAILS` (CSV) and sends an HTML+text email via the multi-provider `email_sender`. PREVIEW Resend key is sending-only with no verified domain, so admin recipients return `http_403` — but a controlled monkey-patch using `onboarding@resend.dev` proved the full pipeline (`create_thread → _notify_admins_new_thread → send_email → Resend HTTP 200 → email_send_events ok=True latency_ms=253`). In production (verified `send.aiclonechats.com` domain) all recipients receive mail. Regression covered by `/app/backend/tests/test_support_email_notify.py` (2/2 passing).
   - **P1 #1 — Account Deletion** (`/app/backend/account_lifecycle.py`, `/app/frontend/src/pages/account/DeleteAccount.jsx`)

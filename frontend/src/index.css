@@ -262,6 +262,7 @@ nav a, .tag, button { word-break: normal; overflow-wrap: normal; }
 .tag-emerald { background: rgba(16,185,129,0.14); color: #6EE7B7; border-color: rgba(16,185,129,0.35); }
 .tag-rose { background: rgba(244,63,94,0.14); color: #FDA4AF; border-color: rgba(244,63,94,0.35); }
 .tag-sky { background: rgba(56,189,248,0.14); color: #7DD3FC; border-color: rgba(56,189,248,0.35); }
+.tag-muted { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.10); }
 
 /* ============ MARQUEE ============ */
 .marquee-track {

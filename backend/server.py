@@ -121,6 +121,11 @@ app.include_router(account_lifecycle.router)
 import data_export  # noqa: E402
 app.include_router(data_export.router)
 
+# Subscription lifecycle state machine + admin user history
+import subscription_state  # noqa: E402
+app.include_router(subscription_state.router)
+app.include_router(subscription_state.admin_router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
