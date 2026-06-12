@@ -96,6 +96,36 @@ export default function AdminRenewalReminders() {
   const today = data?.today;
   const upcoming = data?.next_expiring || [];
   const recent = data?.recent_runs || [];
+  const hb = data?.heartbeat;
+
+  const hbTone =
+    hb?.status === "green" ? { dot: "bg-emerald-300", border: "border-emerald-500/40 bg-emerald-500/5", text: "text-emerald-300" } :
+    hb?.status === "yellow" ? { dot: "bg-amber", border: "border-amber/50 bg-amber/10", text: "text-amber" } :
+    { dot: "bg-rose-soft", border: "border-rose/40 bg-rose-500/10", text: "text-rose-soft" };
+
+  const formatHoursAgo = (iso) => {
+    if (!iso) return "—";
+    try {
+      const ms = Date.now() - new Date(iso).getTime();
+      const hours = ms / 3600000;
+      if (hours < 1) return `${Math.round(hours * 60)}m ago`;
+      if (hours < 48) return `${Math.round(hours)}h ago`;
+      return `${Math.round(hours / 24)}d ago`;
+    } catch { return iso; }
+  };
+
+  const SOURCE_LABELS = {
+    cloudflare_cron: "Cloudflare Cron",
+    github_actions: "GitHub Actions",
+    systemd_timer: "Systemd Timer",
+    manual_admin: "Manual (admin click)",
+    manual_browser: "Manual (browser)",
+    manual_cli: "Manual (curl/wget)",
+    startup_hook: "Backend startup hook",
+    internal: "Internal call",
+    unknown: "Unknown UA",
+    none: "No runs yet",
+  };
 
   const curlSnippet = `curl -X POST \\
   -H "Authorization: Bearer <ADMIN_TOKEN>" \\
@@ -131,6 +161,63 @@ export default function AdminRenewalReminders() {
 
         {data && (
           <>
+            {/* ── Scheduler heartbeat ───────────────────────── */}
+            <section className="space-y-3" data-testid="rr-heartbeat-section">
+              <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Scheduler heartbeat</h2>
+              <div className={`brutal-card p-5 border ${hbTone.border}`} data-testid="rr-heartbeat-card">
+                <div className="flex items-start justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className={`relative inline-block w-3 h-3 rounded-full ${hbTone.dot}`}>
+                      <span className={`absolute inset-0 rounded-full ${hbTone.dot} animate-ping opacity-50`} />
+                    </span>
+                    <div>
+                      <div className={`font-display text-xl font-bold ${hbTone.text}`} data-testid="rr-heartbeat-label">
+                        {hb?.label || "—"}
+                      </div>
+                      <div className="text-[11px] font-mono text-muted mt-0.5">
+                        {hb?.hours_since_last_scheduler_run != null
+                          ? `Last scheduler run ${hb.hours_since_last_scheduler_run}h ago`
+                          : "No scheduler-triggered run on record yet"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Source</div>
+                    <div className="text-sm font-mono" data-testid="rr-heartbeat-source">
+                      {SOURCE_LABELS[hb?.scheduler_source] || hb?.scheduler_source || "—"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-white/5">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Last scheduler run</div>
+                    <div className="text-sm mt-0.5" data-testid="rr-hb-last-run">{formatHoursAgo(hb?.last_scheduler_run_at)}</div>
+                    <div className="text-[10px] font-mono text-muted">{hb?.last_scheduler_run_at ? formatDateTime(hb.last_scheduler_run_at) : ""}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Last successful</div>
+                    <div className="text-sm mt-0.5 text-emerald-300" data-testid="rr-hb-last-success">{formatHoursAgo(hb?.last_successful_run_at)}</div>
+                    <div className="text-[10px] font-mono text-muted">{hb?.last_successful_run_at ? formatDateTime(hb.last_successful_run_at) : ""}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Last failed</div>
+                    <div className="text-sm mt-0.5 text-rose-soft" data-testid="rr-hb-last-failed">{formatHoursAgo(hb?.last_failed_run_at)}</div>
+                    <div className="text-[10px] font-mono text-muted">{hb?.last_failed_run_at ? formatDateTime(hb.last_failed_run_at) : "no failures recorded"}</div>
+                  </div>
+                </div>
+
+                {hb?.status === "red" && (
+                  <div className="mt-4 pt-4 border-t border-rose/30 text-xs text-rose-soft" data-testid="rr-heartbeat-action">
+                    Check your external scheduler. See <code className="font-mono">/app/docs/RENEWAL_SCHEDULER.md</code> for setup recipes.
+                  </div>
+                )}
+              </div>
+              <p className="text-[10px] font-mono text-muted">
+                Green ≤ {hb?.thresholds?.green_max_hours}h · Yellow ≤ {hb?.thresholds?.yellow_max_hours}h · Red {">"} {hb?.thresholds?.yellow_max_hours}h. Startup-hook / manual / browser runs don't count toward the heartbeat.
+              </p>
+            </section>
+
             {/* Today's tiles */}
             <section className="space-y-3" data-testid="rr-today-section">
               <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Today</h2>
@@ -213,6 +300,7 @@ export default function AdminRenewalReminders() {
                     <thead>
                       <tr className="text-[10px] font-mono uppercase tracking-widest text-muted text-left">
                         <th className="p-3">When</th>
+                        <th className="p-3">Source</th>
                         <th className="p-3">Triggered by</th>
                         <th className="p-3">Examined</th>
                         <th className="p-3">Sent</th>
@@ -225,6 +313,7 @@ export default function AdminRenewalReminders() {
                       {recent.map((r) => (
                         <tr key={r.run_id} className="border-t border-white/5" data-testid={`rr-run-${r.run_id}`}>
                           <td className="p-3 font-mono text-xs text-muted whitespace-nowrap">{formatDateTime(r.ran_at)}</td>
+                          <td className="p-3 font-mono text-xs">{SOURCE_LABELS[r.trigger_source] || r.trigger_source || "—"}</td>
                           <td className="p-3 font-mono text-xs">{r.triggered_by || "—"}</td>
                           <td className="p-3 font-mono">{r.examined}</td>
                           <td className="p-3 font-mono text-emerald-300">{r.sent}</td>

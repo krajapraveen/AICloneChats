@@ -34,7 +34,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from db import db
 from admin import get_admin_user
@@ -47,6 +47,34 @@ logger = logging.getLogger(__name__)
 
 REMINDER_WINDOW_DAYS = 3
 PLAN_LENGTH_DAYS = 30
+
+# Heartbeat thresholds (in hours)
+HEARTBEAT_GREEN_MAX_H = 26   # ≤ 26h since last scheduler run = healthy
+HEARTBEAT_YELLOW_MAX_H = 48  # 26–48h = delayed
+                              # > 48h = offline
+
+
+def _detect_trigger_source(request: Optional[Request]) -> str:
+    """Best-effort scheduler identification from the User-Agent header.
+
+    Each external scheduler ships a distinctive UA so we can distinguish
+    a real cron from a manual curl/browser hit without requiring the
+    operator to pass an explicit `?source=...` query.
+    """
+    if request is None:
+        return "internal"
+    ua = (request.headers.get("user-agent") or "").lower()
+    if "cloudflare" in ua or "cf-worker" in ua:
+        return "cloudflare_cron"
+    if "github-actions" in ua or "actions/runner" in ua:
+        return "github_actions"
+    if "systemd" in ua:
+        return "systemd_timer"
+    if ua.startswith("mozilla") or "chrome" in ua or "safari" in ua or "firefox" in ua:
+        return "manual_browser"
+    if ua.startswith("curl/") or ua.startswith("wget/"):
+        return "manual_cli"
+    return "unknown"
 
 
 async def _send_one(user_doc: dict, order: dict, expires: datetime) -> tuple[bool, Optional[str]]:
@@ -86,13 +114,13 @@ async def _send_one(user_doc: dict, order: dict, expires: datetime) -> tuple[boo
     return bool(ok), provider
 
 
-async def run_due_reminders(*, dry_run: bool = False, triggered_by: str = "internal") -> dict:
+async def run_due_reminders(*, dry_run: bool = False, triggered_by: str = "internal", trigger_source: str = "internal") -> dict:
     """Scan paid orders whose +30-day expiry falls within the next 3 days
     and the user hasn't yet been reminded for that order_id."""
-    now = datetime.now(timezone.utc)
+    started_at = datetime.now(timezone.utc)
     run_id = "run_" + uuid.uuid4().hex[:18]
-    window_start = now + timedelta(days=0)
-    window_end = now + timedelta(days=REMINDER_WINDOW_DAYS)
+    window_start = started_at + timedelta(days=0)
+    window_end = started_at + timedelta(days=REMINDER_WINDOW_DAYS)
 
     paid_at_lo = (window_start - timedelta(days=PLAN_LENGTH_DAYS)).isoformat()
     paid_at_hi = (window_end - timedelta(days=PLAN_LENGTH_DAYS)).isoformat()
@@ -144,7 +172,7 @@ async def run_due_reminders(*, dry_run: bool = False, triggered_by: str = "inter
                     {"user_id": user["user_id"]},
                     {"$set": {
                         "renewal_reminder_sent_for": cycle_id,
-                        "renewal_reminder_sent_at": now.isoformat(),
+                        "renewal_reminder_sent_at": started_at.isoformat(),
                         "renewal_reminder_cycle_identifier": cycle_id,
                         "renewal_reminder_last_provider": provider,
                     }},
@@ -158,12 +186,21 @@ async def run_due_reminders(*, dry_run: bool = False, triggered_by: str = "inter
                         "email_domain": (user["email"].split("@", 1)[1] if "@" in user["email"] else ""),
                     })
 
+    completed_at = datetime.now(timezone.utc)
+    duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+    success = (failures == 0)
     summary = {
         "run_id": run_id,
-        "ran_at": now.isoformat(),
+        "ran_at": started_at.isoformat(),
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "duration_ms": duration_ms,
         "triggered_by": triggered_by,
+        "trigger_source": trigger_source,
+        "success": success,
         "examined": examined,
         "sent": sent,
+        "reminders_sent": sent,  # explicit alias per spec
         "skipped_admin": skipped_admin,
         "skipped_already": skipped_already,
         "failures": failures,
@@ -246,8 +283,57 @@ async def get_dashboard_summary(now: Optional[datetime] = None) -> dict:
         {}, {"_id": 0},
     ).sort("ran_at", -1).to_list(length=10)
 
+    # ── Heartbeat: scheduler-source runs only (NOT admin/startup/internal)
+    SCHEDULER_SOURCES = ["cloudflare_cron", "github_actions", "systemd_timer", "unknown"]
+    last_scheduler_run = await db.renewal_reminder_run_logs.find_one(
+        {"trigger_source": {"$in": SCHEDULER_SOURCES}, "dry_run": {"$ne": True}},
+        {"_id": 0}, sort=[("ran_at", -1)],
+    )
+    last_successful_run = await db.renewal_reminder_run_logs.find_one(
+        {"trigger_source": {"$in": SCHEDULER_SOURCES}, "dry_run": {"$ne": True}, "success": True},
+        {"_id": 0}, sort=[("ran_at", -1)],
+    )
+    last_failed_run = await db.renewal_reminder_run_logs.find_one(
+        {"trigger_source": {"$in": SCHEDULER_SOURCES}, "dry_run": {"$ne": True}, "success": False},
+        {"_id": 0}, sort=[("ran_at", -1)],
+    )
+
+    if last_scheduler_run:
+        last_run_at = datetime.fromisoformat(last_scheduler_run["ran_at"].replace("Z", "+00:00"))
+        hours_since = (now - last_run_at).total_seconds() / 3600.0
+        if hours_since <= HEARTBEAT_GREEN_MAX_H:
+            status = "green"
+            label = "Scheduler healthy"
+        elif hours_since <= HEARTBEAT_YELLOW_MAX_H:
+            status = "yellow"
+            label = "Scheduler may be delayed"
+        else:
+            status = "red"
+            label = "Scheduler appears offline"
+        scheduler_source = last_scheduler_run.get("trigger_source") or "unknown"
+    else:
+        status = "red"
+        label = "No scheduler run ever recorded"
+        hours_since = None
+        scheduler_source = "none"
+
+    heartbeat = {
+        "status": status,
+        "label": label,
+        "hours_since_last_scheduler_run": round(hours_since, 2) if hours_since is not None else None,
+        "last_scheduler_run_at": (last_scheduler_run or {}).get("ran_at"),
+        "last_successful_run_at": (last_successful_run or {}).get("ran_at"),
+        "last_failed_run_at": (last_failed_run or {}).get("ran_at"),
+        "scheduler_source": scheduler_source,
+        "thresholds": {
+            "green_max_hours": HEARTBEAT_GREEN_MAX_H,
+            "yellow_max_hours": HEARTBEAT_YELLOW_MAX_H,
+        },
+    }
+
     return {
         "computed_at": now.isoformat(),
+        "heartbeat": heartbeat,
         "today": {
             "due": due_today,
             "sent": sent_today,
@@ -270,13 +356,18 @@ async def get_dashboard_summary(now: Optional[datetime] = None) -> dict:
 # ─────────────── Endpoints ───────────────
 
 @router.post("/run")
-async def trigger_run_legacy(admin: dict = Depends(get_admin_user), dry_run: bool = False):
+async def trigger_run_legacy(request: Request, admin: dict = Depends(get_admin_user), dry_run: bool = False):
     """Legacy path — kept for backwards compatibility."""
-    return await run_due_reminders(dry_run=dry_run, triggered_by=f"admin:{admin.get('email', 'unknown')}")
+    return await run_due_reminders(
+        dry_run=dry_run,
+        triggered_by=f"admin:{admin.get('email', 'unknown')}",
+        trigger_source="manual_admin",
+    )
 
 
 @billing_alias_router.post("/run-renewal-reminders")
 async def run_renewal_reminders(
+    request: Request,
     admin: dict = Depends(get_admin_user),
     dry_run: bool = Query(default=False, description="Evaluate candidates without sending or persisting state."),
 ):
@@ -285,7 +376,11 @@ async def run_renewal_reminders(
     Authenticate as the admin (Bearer token) and POST with no body. Returns
     a JSON summary so the scheduler can log the response.
     """
-    return await run_due_reminders(dry_run=dry_run, triggered_by=f"scheduler:{admin.get('email', 'unknown')}")
+    return await run_due_reminders(
+        dry_run=dry_run,
+        triggered_by=f"scheduler:{admin.get('email', 'unknown')}",
+        trigger_source=_detect_trigger_source(request),
+    )
 
 
 @billing_alias_router.get("/renewal-reminders/summary")
@@ -297,6 +392,7 @@ async def ensure_indexes() -> None:
     try:
         await db.renewal_reminder_run_logs.create_index("run_id", unique=True)
         await db.renewal_reminder_run_logs.create_index([("ran_at", -1)])
+        await db.renewal_reminder_run_logs.create_index([("trigger_source", 1), ("ran_at", -1)])
         logger.info("renewal_reminders: indexes ensured")
     except Exception as e:
         logger.warning("renewal_reminders: index creation failed: %s", e)

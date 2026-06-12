@@ -326,7 +326,7 @@ async def on_startup():
     # renewal_reminder_sent_for=order_id, so re-runs are safe). Skips admins.
     try:
         from renewal_reminders import run_due_reminders as _renewal_run
-        summary = await _renewal_run(dry_run=False, triggered_by="startup_hook")
+        summary = await _renewal_run(dry_run=False, triggered_by="startup_hook", trigger_source="startup_hook")
         logger.info("renewal_reminders boot scan: %s", summary)
     except Exception as e:
         logger.warning("renewal_reminders boot scan failed: %s", e)

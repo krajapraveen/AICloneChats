@@ -23,6 +23,23 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (Scheduler Heartbeat — silent-failure protection)** — Operator-visible health badge for the renewal reminder scheduler.
+  - **Backend**: `renewal_reminders.py` now:
+    - Detects scheduler source from the request User-Agent (`cloudflare_cron`, `github_actions`, `systemd_timer`, `manual_admin`, `manual_browser`, `manual_cli`, `startup_hook`, `unknown`).
+    - Persists `started_at`, `completed_at`, `duration_ms`, `success`, `reminders_sent` (alias of `sent`), `trigger_source` to every run log row.
+    - Compound index `(trigger_source, ran_at DESC)` added.
+  - **Dashboard endpoint** `GET /api/admin/billing/renewal-reminders/summary` now includes a `heartbeat` block:
+    - `status`: `green` (≤ 26h since last scheduler-triggered run) / `yellow` (26–48h) / `red` (> 48h or never).
+    - `label`: human-readable "Scheduler healthy" / "Scheduler may be delayed" / "Scheduler appears offline".
+    - `last_scheduler_run_at`, `last_successful_run_at`, `last_failed_run_at` (scheduler-source only, not startup/manual).
+    - `scheduler_source`: which scheduler the heartbeat is reading from.
+    - `hours_since_last_scheduler_run`: numeric for the UI to render "x.xh ago" without re-parsing dates.
+  - **Frontend**: New "Scheduler heartbeat" section at the top of `/admin/renewal-reminders`. Border + pulsing dot colour-coded green/amber/red. Shows source label (`GitHub Actions` / `Cloudflare Cron` / `Systemd Timer` / `Unknown UA`), three side-by-side "last X ago" tiles, and a red-state remediation pointer to the deployment guide. The recent-runs table gained a "Source" column so historical runs are similarly visible at a glance.
+  - **Heartbeat scope decision**: startup-hook + manual-admin + browser runs are deliberately EXCLUDED from heartbeat math — they would mask a broken external scheduler.
+  - **Tests** (+4 in `test_renewal_reminders.py`, total 11/11 passing): heartbeat block shape, UA → scheduler_source classification for Cloudflare + GitHub Actions, heartbeat flips green immediately after a scheduler-UA run, audit columns (`started_at` / `completed_at` / `duration_ms` / `success` / `reminders_sent`) present on every run.
+  - **Files modified**: `backend/renewal_reminders.py`, `backend/server.py` (startup-hook now passes `trigger_source=startup_hook`), `frontend/src/pages/AdminRenewalReminders.jsx`.
+  - **Cumulative session tests**: 43/43 passing.
+
 - **2026-06-12 (P1.5 + Target Overlay — Renewal Reliability + Configurable Growth Targets)** — Final operational-foundation pieces before user-facing feature work resumes.
   - **P1.5 — Production Renewal Reminder Scheduler**
     - **Endpoint** (spec URL): `POST /api/admin/billing/run-renewal-reminders?dry_run=false`. Admin-only, returns full summary `{run_id, ran_at, triggered_by, examined, sent, skipped_admin, skipped_already, failures, dry_run, failure_samples}`. Legacy `/api/admin/renewal-reminders/run` kept for backwards compatibility.

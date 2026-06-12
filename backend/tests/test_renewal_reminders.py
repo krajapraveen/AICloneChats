@@ -212,3 +212,91 @@ def test_unauthenticated_blocked():
     assert r.status_code in (401, 403)
     r2 = requests.get(f"{BASE_URL}/api/admin/billing/renewal-reminders/summary", timeout=15)
     assert r2.status_code in (401, 403)
+
+
+def test_heartbeat_block_present(admin_token: str):
+    r = requests.get(
+        f"{BASE_URL}/api/admin/billing/renewal-reminders/summary",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "heartbeat" in body, body
+    hb = body["heartbeat"]
+    for k in ("status", "label", "scheduler_source", "thresholds",
+              "last_scheduler_run_at", "last_successful_run_at", "last_failed_run_at"):
+        assert k in hb, k
+    assert hb["status"] in ("green", "yellow", "red")
+    assert hb["thresholds"]["green_max_hours"] == 26
+    assert hb["thresholds"]["yellow_max_hours"] == 48
+
+
+def test_user_agent_classification(admin_token: str):
+    """A request with a Cloudflare UA should produce a 'cloudflare_cron'
+    trigger_source in the persisted run log."""
+    r = requests.post(
+        f"{BASE_URL}/api/admin/billing/run-renewal-reminders",
+        headers={
+            "Authorization": f"Bearer {admin_token}",
+            "User-Agent": "Cloudflare-Workers/2026 (cf-worker)",
+        },
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["trigger_source"] == "cloudflare_cron"
+
+    # GitHub Actions UA
+    r2 = requests.post(
+        f"{BASE_URL}/api/admin/billing/run-renewal-reminders",
+        headers={
+            "Authorization": f"Bearer {admin_token}",
+            "User-Agent": "github-actions/runner-v2.x",
+        },
+        timeout=20,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["trigger_source"] == "github_actions"
+
+
+def test_heartbeat_turns_green_after_scheduler_run(admin_token: str):
+    # Force a "scheduler" run with a known UA
+    requests.post(
+        f"{BASE_URL}/api/admin/billing/run-renewal-reminders",
+        headers={
+            "Authorization": f"Bearer {admin_token}",
+            "User-Agent": "Cloudflare-Workers/2026",
+        },
+        timeout=20,
+    )
+    s = requests.get(
+        f"{BASE_URL}/api/admin/billing/renewal-reminders/summary",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=20,
+    )
+    body = s.json()
+    hb = body["heartbeat"]
+    # Must be green because we just ran one second ago
+    assert hb["status"] == "green", hb
+    assert hb["scheduler_source"] == "cloudflare_cron"
+    assert hb["hours_since_last_scheduler_run"] is not None
+    assert hb["hours_since_last_scheduler_run"] < 1
+
+
+def test_run_log_has_audit_columns(admin_token: str):
+    """started_at, completed_at, duration_ms, success, reminders_sent, trigger_source."""
+    r = requests.post(
+        f"{BASE_URL}/api/admin/billing/run-renewal-reminders",
+        headers={
+            "Authorization": f"Bearer {admin_token}",
+            "User-Agent": "github-actions/runner",
+        },
+        timeout=20,
+    )
+    body = r.json()
+    for k in ("started_at", "completed_at", "duration_ms", "success",
+              "reminders_sent", "trigger_source", "triggered_by"):
+        assert k in body, k
+    assert body["reminders_sent"] == body["sent"]
+    assert isinstance(body["success"], bool)
