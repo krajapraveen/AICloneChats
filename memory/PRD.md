@@ -807,3 +807,36 @@ Built full legal/compliance surface for aiclonechats.com (5 pages + reusable lay
 
 **Production rollout:** code change only — no new env vars required (reuses existing `ADMIN_EMAILS` / `ADMIN_UNLIMITED_EMAIL`). Once production env vars are unblocked (Emergent Support has been emailed re: PAYMENT_PROVIDER, public URLs), this rolls out with the next redeploy automatically.
 
+
+---
+
+## Explore Page — Demo Clones + Daily Rotation — Feb 11, 2026
+
+**Goal:** Fill the public Explore feed with copyright-free demo clones across all 7 categories so visitors never see the empty "Nothing here yet" state. Rotate which clones surface each day without DB writes.
+
+**Files added:**
+- `/app/backend/seed_demo_clones.py` — idempotent seeder. 28 original personas (4 per category × 7 categories), all generic archetypes (no celebrities/brands/franchises). Creates synthetic `__demo_owner__` user; pre-seeds `clone_analytics` (share + mood events), `clone_messages`, `clone_conversations` so natural Explore scoring lands each clone in its intended category. Supports `--reseed` for wipe-and-recreate.
+
+**Files modified:**
+- `/app/backend/analytics.py` — added `_daily_rotation_boost(clone_id)` helper (SHA-256 of `date.today() + clone_id`, normalised to [0,1]). Applied in `/api/explore` aggregation: `score *= 1.0 + boost * 0.15` for demo clones only; organic clones untouched. Same day → same order; next day → different order. No scheduler, no DB writes daily.
+- `/app/backend/server.py` — startup hook calls `seed_demo_clones.seed(reseed=False)` (gated by `SEED_DEMO_CLONES` env var, on by default). Idempotent so safe on every restart.
+
+**Categories populated:**
+- **Most Shared (trending):** Mic-Drop Specialist, Wholesome Wholesome, Plot Twist Engine, Karaoke Sidekick
+- **Funniest:** Deadpan Office Worker, Dad Joke Generator, Sarcastic Cat, Improv Coach
+- **Deep:** Late-Night Philosopher, Stoic Mountain Hermit, Ocean-Floor Poet, Library Ghost
+- **Savage:** No-Filter Aunt, Reality Check Robot, Toxic Personal Trainer, Brutal Critic
+- **Quotable:** Pocket Mentor, Greeting Card Mystic, Bookmark-Worthy Sage, Hype Coach
+- **Most Active:** Talkative Barista, Town Square Storyteller, Open-Mic Host, Endless Dungeon Master
+- **New:** Newborn Penguin, Reset-Mode Therapist, Time-Traveler from Yesterday, Welcome-Mat Greeter
+
+**Volume profiles (per category):**
+- most_shared: shares 40-120, msgs 50-200, visitors 20-80
+- funny/deep/savage/quote: shares 10-35, msgs 30-140, visitors 15-50, + 30-80 mood events
+- most_active: shares 5-20, msgs 200-600, visitors 60-180
+- new: shares 0-4, msgs 1-12, visitors 1-8, created_at within last 4 days
+
+**Testing:** iteration_22 — 15/15 PASS (backend pytest covering all 7 categories + copyright-safety check + daily-rotation determinism + idempotent re-seed yielding exactly 28 demo clones; Playwright UI verified /explore loads with cards visible and never shows empty state).
+
+**Production rollout:** code change only — runs idempotently on next redeploy via startup hook. Set `SEED_DEMO_CLONES=0` in production env vars if you want to disable seeding.
+
