@@ -112,7 +112,7 @@ export default function MySpace() {
                   <Link to={`/${c.slug}`} className="btn-ghost text-[11px] flex-1 text-center min-w-[60px]" data-testid={`my-clone-${c.slug}-open`}>
                     Open
                   </Link>
-                  <Link to={`/clone/${c.clone_id}/edit`} className="btn-brutal text-[11px] flex-1 text-center min-w-[60px]" data-testid={`my-clone-${c.slug}-edit`}>
+                  <Link to={`/clones/${c.clone_id}/edit`} className="btn-brutal text-[11px] flex-1 text-center min-w-[60px]" data-testid={`my-clone-${c.slug}-edit`}>
                     Edit
                   </Link>
                   <button
