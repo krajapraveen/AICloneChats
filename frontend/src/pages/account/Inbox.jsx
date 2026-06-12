@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../../lib/api";
+import { useAuth } from "../../contexts/AuthContext";
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -186,9 +187,12 @@ function ThreadView({ threadId, onBack, onChanged }) {
 
 export default function Inbox() {
   const ctx = useOutletContext();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [threads, setThreads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
+  const [adminUnread, setAdminUnread] = useState(0);
 
   const reload = () => {
     setLoading(true);
@@ -198,7 +202,20 @@ export default function Inbox() {
     ctx?.refreshUnread?.();
   };
 
+  // Admins-only: pull the count of unread user-submitted threads from the
+  // admin support endpoint so they can see at a glance that there are
+  // messages waiting for them in a *different* inbox (`/admin/support`).
+  // Without this, an admin who lands on their own /account/inbox sees
+  // their personal threads (empty) and thinks no user has reached out.
+  const loadAdminUnread = () => {
+    if (!isAdmin) return;
+    api.get("/admin/support/threads?unread_only=true&limit=1")
+      .then((r) => setAdminUnread(r.data?.unread_total || 0))
+      .catch(() => setAdminUnread(0));
+  };
+
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadAdminUnread(); /* eslint-disable-next-line */ }, [isAdmin]);
 
   if (selectedId) {
     return (
@@ -210,6 +227,38 @@ export default function Inbox() {
 
   return (
     <Inbox.Wrap>
+      {isAdmin && (
+        <Link
+          to="/admin/support"
+          className="block brutal-card p-4 mb-5 border-amber/40 bg-amber/[0.08] hover:bg-amber/[0.14] transition group"
+          data-testid="inbox-admin-shortcut"
+        >
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-amber mb-0.5">
+                Admin · concerns & recommendations
+              </div>
+              <div className="text-sm">
+                {adminUnread > 0 ? (
+                  <>
+                    <span className="font-display text-base font-semibold" data-testid="inbox-admin-shortcut-count">{adminUnread}</span>
+                    <span className="text-muted"> unread user thread{adminUnread === 1 ? "" : "s"} waiting in <span className="text-amber">Admin Support</span>.</span>
+                  </>
+                ) : (
+                  <span className="text-muted">No unread user threads. Open <span className="text-amber">Admin Support</span> to view history.</span>
+                )}
+              </div>
+              <div className="text-[11px] text-muted/70 mt-1">
+                This panel below is YOUR personal inbox (messages you send). User-submitted concerns live in the admin panel.
+              </div>
+            </div>
+            <span className="font-mono text-[11px] uppercase tracking-widest text-amber group-hover:translate-x-0.5 transition shrink-0">
+              Open →
+            </span>
+          </div>
+        </Link>
+      )}
+
       <NewThreadForm onCreated={() => reload()} />
 
       <h3 className="heading-display text-lg mt-8 mb-3">Your messages</h3>
