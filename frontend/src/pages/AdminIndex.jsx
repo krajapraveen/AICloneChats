@@ -95,6 +95,12 @@ const SECTIONS = [
         blurb: "Auth events, browser/OS breakdown, country distribution, failed-login concentration.",
         testId: "admin-card-login",
       },
+      {
+        to: "/admin/subscriber-motion",
+        name: "Subscriber Motion · Churn Velocity",
+        blurb: "Net subscriber growth, churn/renewal/won-back ratios, MRR + ARPPU. Derived from payment rows — reproducible, never snapshot-based.",
+        testId: "admin-card-subscriber-motion",
+      },
     ],
   },
   {

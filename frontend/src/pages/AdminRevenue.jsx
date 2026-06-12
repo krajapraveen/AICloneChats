@@ -435,6 +435,10 @@ export default function AdminRevenue() {
 
         <footer className="text-[10px] font-mono uppercase tracking-widest text-muted pt-4 border-t border-white/5">
           Source: live aggregations against existing collections · No daily materialization yet · Avg response latency not instrumented at request layer
+          {" · "}
+          <a href="/admin/subscriber-motion" className="text-amber underline" data-testid="link-subscriber-motion">
+            Open Subscriber Motion → Churn Velocity dashboard
+          </a>
         </footer>
       </div>
     </div>

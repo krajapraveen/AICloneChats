@@ -23,6 +23,25 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (Subscriber Motion + Churn Velocity — business intelligence layer)** — Headline subscription-business read built on transition-event reproducibility.
+  - **Backend** (`/app/backend/subscription_motion.py`)
+    - `GET /api/admin/revenue/subscriber-motion?days=7|30|90` — returns:
+      - `motion`: new_subscribers, renewals, won_back, cancel_churn, expire_churn, refund_churn, total_churn, net_subscriber_change
+      - `velocity`: churn_rate_pct, renewal_rate_pct, wonback_rate_pct, net_growth_pct (all denominator = active subs at window start, zero-floor)
+      - `executive_summary`: active_subscribers_start / _end, window_revenue_inr, mrr_estimate_inr (= window_revenue × 30 / days), arppu_inr (= MRR / active_end), net_growth_pct
+      - `definitions`: inline glossary so the surface explains itself
+    - `GET /api/admin/revenue/subscriber-trend?days=7..365` — auto-bucketed time series (24h/72h/168h) with per-bucket active count, additions, churn, revenue.
+    - **Reproducibility contract**: every number is derived from `payment_orders` (paid_at) + `payment_refunds` (created_at) + `users.cancel_at_period_end`. No reads of `users.plan_status` or current-state snapshots. Two consecutive calls return identical counts (covered by `test_motion_deterministic_across_calls`).
+    - Classification rules: first-ever paid order = `new_subscriber`; paid after refund = `won_back`; paid after grace passed = `renewal`; paid inside active window = `in_place_renew` (counted with renewals); refund row = `refund_churn`; expired+cancel_flag = `cancel_churn`; expired+no_cancel = `expire_churn`.
+  - **Frontend** (`/app/frontend/src/pages/AdminSubscriberMotion.jsx`, route `/admin/subscriber-motion`)
+    - 7/30/90-day window toggle + refresh.
+    - 4-section layout: Executive Summary (6 tiles), Subscriber Motion (6 + 2 tiles), Churn Velocity (4 tiles), Trend Charts (Active subscribers AreaChart, Churn-vs-additions stacked BarChart, Revenue LineChart) using existing `recharts` dependency.
+    - Inline Definitions panel at the bottom so any analyst opening the page knows exactly what each metric means.
+    - Wired into AdminIndex under Analytics + linked from Revenue Mirror footer.
+  - **Tests** (`/app/backend/tests/test_subscription_motion.py`, 9/9 passing):
+    - Determinism (two consecutive reads identical), `new_subscriber` classification, renewal after expiry, won_back after refund, expire_churn, velocity ratios never NaN/None, executive summary shape, trend endpoint shape, admin gate.
+  - **Live preview verification**: 30d window shows 17 new · 2 renewals · 1 won-back · 10 total churn · +16 net change · Revenue ₹29,980 · MRR ₹29,980 · ARPPU ₹1,874.
+
 - **2026-06-12 (P1 #3 + P1 #4 — Anti-Abuse Dashboard + Subscription State Machine + Admin Users)** — Two production-ready operator surfaces and one user-facing lifecycle upgrade.
   - **P1 #3 — Admin Anti-Abuse Dashboard UI** (`/admin/anti-abuse`, `/app/frontend/src/pages/AdminAntiAbuse.jsx`)
     - One-screen operator console over the existing `admin_anti_abuse.py` backend endpoints.

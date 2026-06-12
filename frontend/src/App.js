@@ -65,6 +65,7 @@ import AdminRevenue from "./pages/AdminRevenue";
 import AdminEmailHealth from "./pages/AdminEmailHealth";
 import AdminAntiAbuse from "./pages/AdminAntiAbuse";
 import AdminUsers from "./pages/AdminUsers";
+import AdminSubscriberMotion from "./pages/AdminSubscriberMotion";
 import Pricing from "./pages/Pricing";
 import VerifyEmail from "./pages/VerifyEmail";
 import PaymentReturn from "./pages/PaymentReturn";
@@ -120,6 +121,7 @@ function AppRouter() {
       <Route path="/admin/email-health" element={<AdminEmailHealth />} />
       <Route path="/admin/anti-abuse" element={<AdminAntiAbuse />} />
       <Route path="/admin/users" element={<AdminUsers />} />
+      <Route path="/admin/subscriber-motion" element={<AdminSubscriberMotion />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
       <Route path="/admin/anonymous-metrics" element={<AdminAnonymousMetrics />} />

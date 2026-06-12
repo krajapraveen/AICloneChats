@@ -126,6 +126,10 @@ import subscription_state  # noqa: E402
 app.include_router(subscription_state.router)
 app.include_router(subscription_state.admin_router)
 
+# Subscriber motion + churn velocity analytics
+import subscription_motion  # noqa: E402
+app.include_router(subscription_motion.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
