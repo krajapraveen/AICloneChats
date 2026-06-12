@@ -1,13 +1,40 @@
 """Admin chat monitoring + redaction tests."""
 import os
 import uuid
+import asyncio
+from datetime import datetime, timezone, timedelta
 
 import pytest
 import requests
+from motor.motor_asyncio import AsyncIOMotorClient
+from dotenv import load_dotenv
 
+load_dotenv("/app/backend/.env")
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://digital-twin-119.preview.emergentagent.com").rstrip("/")
-ADMIN_EMAIL = "sr-tester@example.com"
-ADMIN_PASSWORD = "TestPass123!"
+REAL_ADMIN_EMAIL = "krajapraveen@gmail.com"
+
+
+def _mint_admin_token():
+    """Mint a session token for the canonical admin user directly in Mongo.
+    sr-tester is the canonical FREE non-admin (per test_credentials.md), so
+    we can no longer log in as it for admin tests. Instead we look up the
+    admin user_id and seed a `user_sessions` row pointing at it.
+    """
+    async def _go():
+        client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = client[os.environ["DB_NAME"]]
+        admin = await db.users.find_one({"email": REAL_ADMIN_EMAIL}, {"user_id": 1})
+        if not admin:
+            return None
+        token = f"st_{uuid.uuid4().hex}{uuid.uuid4().hex}"
+        await db.user_sessions.insert_one({
+            "session_token": token, "user_id": admin["user_id"],
+            "source": "test-mint-admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        })
+        return token
+    return asyncio.new_event_loop().run_until_complete(_go())
 
 
 def _login_or_register(email, password, name="Tester"):
@@ -22,7 +49,10 @@ def _login_or_register(email, password, name="Tester"):
 
 @pytest.fixture(scope="module")
 def admin_token():
-    return _login_or_register(ADMIN_EMAIL, ADMIN_PASSWORD, "SR Tester")
+    tok = _mint_admin_token()
+    if not tok:
+        pytest.skip("admin not seeded")
+    return tok
 
 
 @pytest.fixture(scope="module")

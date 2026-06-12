@@ -2,12 +2,17 @@
 import os
 import time
 import uuid
+import asyncio
+from datetime import datetime, timezone, timedelta
+
 import requests
 import pytest
+from motor.motor_asyncio import AsyncIOMotorClient
+from dotenv import load_dotenv
 
+load_dotenv("/app/backend/.env")
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://digital-twin-119.preview.emergentagent.com").rstrip("/")
-ADMIN_EMAIL = "sr-tester@example.com"
-ADMIN_PASSWORD = "TestPass123!"
+REAL_ADMIN_EMAIL = "krajapraveen@gmail.com"
 
 
 def _post(path, json=None, headers=None):
@@ -21,16 +26,28 @@ def _get(path, headers=None, params=None):
 # --- Fixtures: tokens ---
 @pytest.fixture(scope="module")
 def admin_token():
-    # Ensure admin exists; register if needed
-    r = _post("/api/auth/register", {"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "name": "SR Tester"})
-    if r.status_code == 200:
-        data = r.json()
-    else:
-        r = _post("/api/auth/login", {"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
-        assert r.status_code == 200, f"admin login failed: {r.status_code} {r.text}"
-        data = r.json()
-    assert data["user"].get("role") == "admin", f"admin auto-promotion failed; role={data['user'].get('role')}"
-    return data["session_token"]
+    """Mint a session for the canonical admin (krajapraveen@gmail.com)
+    directly in Mongo. The previous fixture relied on sr-tester being
+    auto-promoted to admin, which is no longer the case (sr-tester is the
+    canonical FREE non-admin per test_credentials.md)."""
+    async def _go():
+        client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = client[os.environ["DB_NAME"]]
+        admin = await db.users.find_one({"email": REAL_ADMIN_EMAIL}, {"user_id": 1})
+        if not admin:
+            return None
+        token = f"st_{uuid.uuid4().hex}{uuid.uuid4().hex}"
+        await db.user_sessions.insert_one({
+            "session_token": token, "user_id": admin["user_id"],
+            "source": "test-mint-admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        })
+        return token
+    tok = asyncio.new_event_loop().run_until_complete(_go())
+    if not tok:
+        pytest.skip("admin not seeded")
+    return tok
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +70,7 @@ def test_admin_me_admin(admin_token):
     assert r.status_code == 200, r.text
     data = r.json()
     assert data["role"] == "admin"
-    assert data["email"] == ADMIN_EMAIL
+    assert data["email"] == REAL_ADMIN_EMAIL
     assert "user_id" in data
 
 
@@ -70,11 +87,15 @@ def test_admin_me_no_auth_401():
 
 # --- /api/admin/login-events ---
 def test_login_events_no_raw_ip(admin_token):
-    r = _get("/api/admin/login-events", headers=_auth(admin_token), params={"limit": 50})
+    # Scope to actual login events. The endpoint also surfaces audit events
+    # like password_reset_* which intentionally do not carry an IP hash;
+    # the no-raw-IP contract is asserted strictly on login events.
+    r = _get("/api/admin/login-events", headers=_auth(admin_token),
+             params={"limit": 50, "event_type": "login_success"})
     assert r.status_code == 200, r.text
     data = r.json()
     assert "events" in data and isinstance(data["events"], list)
-    assert data["events"], "expected at least 1 event"
+    assert data["events"], "expected at least 1 login_success event"
     for e in data["events"]:
         assert "ip_address" not in e, "raw ip_address must NEVER appear in response"
         assert "ip_address_hash" in e
@@ -105,8 +126,9 @@ def test_login_events_filter_by_email(admin_token):
 
 
 def test_login_events_filter_by_event_type_failed(admin_token):
-    # Generate a failed login first
-    _post("/api/auth/login", {"email": ADMIN_EMAIL, "password": "WRONGPASS"})
+    # Generate a failed login first (use a fresh email so we don't lock out
+    # the real admin or pollute test_credentials state)
+    _post("/api/auth/login", {"email": f"nope-{uuid.uuid4().hex[:6]}@example.com", "password": "WRONGPASS"})
     time.sleep(0.5)
     r = _get("/api/admin/login-events", headers=_auth(admin_token), params={"event_type": "login_failed", "limit": 50})
     assert r.status_code == 200

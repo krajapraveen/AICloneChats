@@ -107,6 +107,12 @@ const SECTIONS = [
         blurb: "Credits consumed × cost per credit per feature. Revenue attribution by entry point. Configurable cost table — no silent guessing.",
         testId: "admin-card-cost-telemetry",
       },
+      {
+        to: "/admin/exit-insights",
+        name: "Exit Insights · Why Users Leave",
+        blurb: "Deletions + pending cancellations bucketed by free-form reason. Pure observation — the system remembers, it does not chase.",
+        testId: "admin-card-exit-insights",
+      },
     ],
   },
   {

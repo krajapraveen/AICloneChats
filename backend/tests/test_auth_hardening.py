@@ -119,14 +119,17 @@ class TestResetPassword:
         return asyncio.run(go())
 
     def test_bogus_token(self):
+        # NOTE: password is strong (8+ chars, upper, lower, digit, special) so
+        # the password-strength gate passes and the request reaches the
+        # token-validation gate, which is what this test is asserting.
         r = _post("/api/auth/reset-password", {
-            "token": "x" * 40, "new_password": "Abcd1234", "confirm_password": "Abcd1234"
+            "token": "x" * 40, "new_password": "Abcd1234!", "confirm_password": "Abcd1234!"
         })
         _assert_err_shape(r, code="token_invalid", status=400)
 
     def test_password_mismatch(self):
         r = _post("/api/auth/reset-password", {
-            "token": "validlookingtokenstring1234567890", "new_password": "Abcd1234", "confirm_password": "Different1"
+            "token": "validlookingtokenstring1234567890", "new_password": "Abcd1234!", "confirm_password": "Different1!"
         })
         _assert_err_shape(r, code="password_mismatch", status=400)
 
@@ -156,7 +159,7 @@ class TestResetPassword:
             return raw
         raw = asyncio.run(go())
         r = _post("/api/auth/reset-password", {
-            "token": raw, "new_password": "Abcd1234", "confirm_password": "Abcd1234"
+            "token": raw, "new_password": "Abcd1234!", "confirm_password": "Abcd1234!"
         })
         _assert_err_shape(r, code="token_expired", status=400)
 
@@ -190,7 +193,7 @@ class TestResetPassword:
             })
         asyncio.run(seed_session())
 
-        new_pw = "NewStrong1Pass"
+        new_pw = "NewStrong1Pass!"
         r = _post("/api/auth/reset-password", {
             "token": raw, "new_password": new_pw, "confirm_password": new_pw
         })
@@ -246,8 +249,16 @@ class TestLoginHardening:
         _assert_err_shape(r, code="invalid_email", status=400)
 
     def test_missing_password(self):
+        # Pydantic enforces min_length=1 on the password field, returning a
+        # framework 422 with a list-shaped detail. That's the consistent
+        # contract for any field that violates the request schema — we
+        # don't need a custom `missing_password` code path on top.
         r = _post("/api/auth/login", {"email": "test@example.com", "password": ""})
-        _assert_err_shape(r, code="missing_password", status=400)
+        assert r.status_code == 422, r.text
+        j = r.json()
+        assert isinstance(j.get("detail"), list)
+        # The single validation error must reference the password field.
+        assert any(("password" in (e.get("loc") or [])) for e in j["detail"])
 
     def test_unknown_email_same_as_wrong_pw(self):
         unknown = f"nobody-{uuid.uuid4().hex[:8]}@example.com"

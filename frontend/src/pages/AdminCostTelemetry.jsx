@@ -17,8 +17,17 @@ import { toast } from "sonner";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+} from "recharts";
 
 const WINDOW_OPTIONS = [7, 30, 90];
+
+const CHART_TOOLTIP_STYLE = {
+  contentStyle: { background: "rgba(13,13,16,0.95)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 12 },
+  itemStyle: { color: "#e5e7eb", fontSize: 12 },
+  labelStyle: { color: "rgba(255,255,255,0.5)", fontSize: 11, fontFamily: "monospace" },
+};
 
 const FEATURE_TONE = {
   ai_clone: "text-violet-soft",
@@ -117,6 +126,134 @@ function RequestTable({ rows, testIdPrefix }) {
   );
 }
 
+function shortDay(iso) {
+  if (!iso) return "";
+  // YYYY-MM-DD → MMM-DD (e.g., 2026-06-12 → Jun 12)
+  const [, m, d] = iso.split("-");
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[Number(m) - 1] || m} ${Number(d)}`;
+}
+
+function DailyTrend({ daily, onRecompute, recomputing, days }) {
+  const data = useMemo(() => (daily?.totals_series || []).map((r) => ({
+    ...r,
+    label: shortDay(r.date),
+  })), [daily]);
+
+  const hasData = data.length > 0;
+  const totalCost = data.reduce((s, r) => s + (Number(r.metered_cost_inr) || 0), 0);
+  const totalRev = data.reduce((s, r) => s + (Number(r.revenue_inr) || 0), 0);
+  const totalProfit = totalRev - totalCost;
+
+  return (
+    <section className="space-y-3" data-testid="ct-daily-trend-section">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">
+            Daily trend · {days}d · cost vs revenue vs margin
+          </h2>
+          <p className="text-[10px] font-mono text-muted/70 mt-0.5">
+            Pre-aggregated from <code className="text-amber/80">cost_telemetry_daily</code>.
+            Boot scan refreshes today + yesterday on every backend start.
+          </p>
+        </div>
+        <button
+          onClick={onRecompute}
+          className="btn-ghost text-xs"
+          disabled={recomputing}
+          data-testid="ct-rollup-recompute-btn"
+        >
+          {recomputing ? "Recomputing…" : "Recompute now"}
+        </button>
+      </div>
+
+      {!hasData ? (
+        <div className="brutal-card p-6 text-sm text-muted" data-testid="ct-daily-trend-empty">
+          No daily rollups yet for this window. Click <span className="text-amber font-mono">Recompute now</span> to seed.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3" data-testid="ct-daily-trend-summary">
+            <Tile label={`Cost · ${days}d`} value={inr(totalCost)} tone="text-rose-soft" testId="ct-daily-cost-total" />
+            <Tile label={`Revenue · ${days}d`} value={inr(totalRev)} tone="text-emerald-300" testId="ct-daily-rev-total" />
+            <Tile
+              label="Profit"
+              value={inr(totalProfit)}
+              tone={totalProfit >= 0 ? "text-emerald-300" : "text-rose-soft"}
+              testId="ct-daily-profit-total"
+            />
+          </div>
+
+          <div className="brutal-card p-3" data-testid="ct-daily-chart-cost-revenue">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">Cost · revenue (INR)</div>
+            <div style={{ width: "100%", height: 260 }}>
+              <ResponsiveContainer>
+                <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="label" stroke="rgba(255,255,255,0.5)" fontSize={11} tickLine={false} />
+                  <YAxis stroke="rgba(255,255,255,0.5)" fontSize={11} tickLine={false} width={60} />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 11, fontFamily: "monospace" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="metered_cost_inr"
+                    name="Metered cost"
+                    stroke="#fb7185"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="revenue_inr"
+                    name="Revenue"
+                    stroke="#34d399"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="estimated_cost_inr"
+                    name="Estimated cost"
+                    stroke="#fbbf24"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 4"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="brutal-card p-3" data-testid="ct-daily-chart-margin">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">Margin % · daily</div>
+            <div style={{ width: "100%", height: 220 }}>
+              <ResponsiveContainer>
+                <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="label" stroke="rgba(255,255,255,0.5)" fontSize={11} tickLine={false} />
+                  <YAxis stroke="rgba(255,255,255,0.5)" fontSize={11} tickLine={false} width={60}
+                    tickFormatter={(v) => `${v}%`} />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => (v == null ? "—" : `${v}%`)} />
+                  <Line
+                    type="monotone"
+                    dataKey="margin_pct"
+                    name="Margin %"
+                    stroke="#a78bfa"
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+
 function FeatureCostEditor({ values, onSave, saving }) {
   const [draft, setDraft] = useState(() => Object.fromEntries(
     ["ai_clone", "voice", "video", "chat", "image", "avatar", "unknown"].map((f) => [f, values[f] ?? ""])
@@ -183,26 +320,30 @@ export default function AdminCostTelemetry() {
   const [profit, setProfit] = useState(null);
   const [contribution, setContribution] = useState(null);
   const [lossMaking, setLossMaking] = useState(null);
+  const [daily, setDaily] = useState(null);
   const [costConfig, setCostConfig] = useState({ values: {} });
   const [loading, setLoading] = useState(true);
   const [savingCosts, setSavingCosts] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [recomputingRollup, setRecomputingRollup] = useState(false);
   const [error, setError] = useState(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [p, c, lm, cfg] = await Promise.all([
+      const [p, c, lm, cfg, d] = await Promise.all([
         api.get(`/admin/cost-telemetry/profit-per-feature?days=${days}`),
         api.get(`/admin/cost-telemetry/contribution-by-source?days=${days}`),
         api.get(`/admin/cost-telemetry/loss-making?days=${days}&top_n=10`),
         api.get("/admin/cost-telemetry/cost-config"),
+        api.get(`/admin/cost-telemetry/daily?days=${days}`),
       ]);
       setProfit(p.data);
       setContribution(c.data);
       setLossMaking(lm.data);
       setCostConfig(cfg.data || { values: {} });
+      setDaily(d.data);
     } catch (e) {
       setError(e?.response?.data?.detail?.message || "Could not load cost telemetry.");
     } finally {
@@ -228,6 +369,19 @@ export default function AdminCostTelemetry() {
       toast.error(e?.response?.data?.detail?.message || "Could not save costs.");
     } finally {
       setSavingCosts(false);
+    }
+  };
+
+  const recomputeRollup = async () => {
+    setRecomputingRollup(true);
+    try {
+      const r = await api.post("/admin/cost-telemetry/rollup?days=2");
+      toast.success(`Refreshed ${r.data?.days_processed ?? 0} day(s) of rollups.`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail?.message || "Could not recompute rollups.");
+    } finally {
+      setRecomputingRollup(false);
     }
   };
 
@@ -316,6 +470,9 @@ export default function AdminCostTelemetry() {
               <Tile label="Gross profit" value={inr(t?.gross_profit_inr)} tone={t?.gross_profit_inr >= 0 ? "text-emerald-300" : "text-rose-soft"} testId="ct-tile-profit" />
               <Tile label="Overall margin" value={pct(t?.margin_pct)} tone={(t?.margin_pct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-soft"} testId="ct-tile-margin" />
             </section>
+
+            {/* Daily trend chart — uses /api/admin/cost-telemetry/daily */}
+            {daily && <DailyTrend daily={daily} onRecompute={recomputeRollup} recomputing={recomputingRollup} days={days} />}
 
             {/* Profit per feature table */}
             <section className="space-y-3" data-testid="ct-profit-section">

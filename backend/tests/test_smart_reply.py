@@ -35,7 +35,9 @@ class TestSetup:
     def test_register_user2(self, state):
         r = requests.post(f"{API}/auth/register", json={"email": EMAIL2, "password": PWD, "name": "Other"}, timeout=20)
         assert r.status_code == 200, r.text
-        state["token2"] = r.json()["session_token"]
+        d = r.json()
+        state["token2"] = d["session_token"]
+        state["user_id2"] = d["user"]["user_id"]
 
 
 # -------- Auth gating --------
@@ -71,6 +73,44 @@ class TestSubscriptionStatus:
         assert d["daily_limit"] == 5
         assert d["daily_used"] == 0
         assert d["daily_remaining"] == 5
+
+
+# -------- Promote both users to pro before exercising paid surfaces --------
+# Strict 0-credit policy: free users hit 402 on every generate. The smart-reply
+# generate / history / favorites / analytics tests below all need an active
+# subscription + non-zero credit balance.
+class TestPromoteForGenerate:
+    def test_promote_user1(self, state):
+        import asyncio
+        from motor.motor_asyncio import AsyncIOMotorClient
+
+        async def _promote(uid):
+            client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+            db = client[os.environ["DB_NAME"]]
+            await db.users.update_one(
+                {"user_id": uid},
+                {"$set": {
+                    "plan_id": "pro", "plan_status": "active",
+                    "email_verified": True, "credits_balance": 2500,
+                }},
+            )
+        asyncio.new_event_loop().run_until_complete(_promote(state["user_id"]))
+
+    def test_promote_user2(self, state):
+        import asyncio
+        from motor.motor_asyncio import AsyncIOMotorClient
+
+        async def _promote(uid):
+            client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+            db = client[os.environ["DB_NAME"]]
+            await db.users.update_one(
+                {"user_id": uid},
+                {"$set": {
+                    "plan_id": "pro", "plan_status": "active",
+                    "email_verified": True, "credits_balance": 2500,
+                }},
+            )
+        asyncio.new_event_loop().run_until_complete(_promote(state["user_id2"]))
 
 
 # -------- Generate contract --------
