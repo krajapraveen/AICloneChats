@@ -872,3 +872,29 @@ Built full legal/compliance surface for aiclonechats.com (5 pages + reusable lay
 
 **Production rollout:** code only — no env vars. Ready for next redeploy.
 
+
+---
+
+## My Profile — Spec Compliance Pass — Feb 11, 2026
+
+Closed the remaining gaps from the formal spec on top of the My Profile suite built earlier:
+
+**Backend additions:**
+- `/app/backend/profile_aliases.py` — new alias router exposing 10 spec-mandated endpoints under `/api/profile/*` and `/api/admin/concerns/*` that re-use the existing handlers. No new business logic — single source of truth preserved.
+  - `GET  /api/profile/my-space` → clones.list_my_clones
+  - `GET  /api/profile/subscriptions` → billing_api.my_orders
+  - `POST /api/profile/change-password` → password_reset.change_password
+  - `GET  /api/profile/inbox` → support_inbox.list_my_threads
+  - `GET  /api/profile/concerns` + `POST /api/profile/concerns`
+  - `GET  /api/admin/concerns` + `GET /:id` + `POST /:id/reply` + `PATCH /:id/status`
+- `/api/me/orders` now returns `plan_status` (Active/Expired/Free/Admin·Unlimited), `plan_started_at` (most recent paid order matching current plan_id), `plan_expires_at` (started + 30 days).
+
+**Frontend additions:**
+- **My Space** now shows: created_at date, status badge (Active/Processing/Failed), category pill, **Delete** button with confirmation (calls `DELETE /api/clones/{id}`).
+- **Subscriptions** now shows: plan status (color-coded: emerald=Active, rose=Expired, violet=Admin), plan started date, plan renews/expires date.
+- **Navigation restructured** to match spec exactly: My Space → Inbox → Concerns / Recommendations → Settings group (with Change Password + Manage Subscriptions nested). New route `/account/concerns` (re-uses Inbox component since same backend collection).
+
+**Smoke tests:** All 10 alias endpoints verified via curl as sr-tester (temporarily promoted to admin for the admin-side tests, then demoted; `ADMIN_EMAILS` restored to original 3-email value). Subscriptions returns plan_status + dates. Delete clone confirmed via existing `DELETE /api/clones/{id}`.
+
+**Production rollout:** code only — no env var changes. Ready for next redeploy.
+

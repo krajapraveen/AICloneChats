@@ -3,6 +3,12 @@ import { Link } from "react-router-dom";
 import api from "../../lib/api";
 
 function formatDate(iso) {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); }
+  catch { return iso; }
+}
+
+function formatDateTime(iso) {
   if (!iso) return "—";
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
@@ -64,6 +70,27 @@ export default function Subscriptions() {
             {data?.current_plan_id && data.current_plan_id !== "free" ? "Change plan" : "Choose a plan"}
           </Link>
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5 pt-5 border-t border-white/5">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Status</div>
+            <div className={`text-sm mt-1 font-medium ${
+              data?.plan_status === "Active" ? "text-emerald-300" :
+              data?.plan_status === "Expired" ? "text-rose-soft" :
+              data?.plan_status?.startsWith("Admin") ? "text-violet-soft" :
+              "text-ink/80"
+            }`} data-testid="plan-status">
+              {data?.plan_status || "Free"}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Started</div>
+            <div className="text-sm mt-1 text-ink/85" data-testid="plan-started">{formatDate(data?.plan_started_at) || "—"}</div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Renews / Expires</div>
+            <div className="text-sm mt-1 text-ink/85" data-testid="plan-expires">{formatDate(data?.plan_expires_at) || "—"}</div>
+          </div>
+        </div>
       </div>
 
       {/* Order history */}
@@ -92,7 +119,7 @@ export default function Subscriptions() {
               <tbody>
                 {orders.map((o) => (
                   <tr key={o.order_id} className="border-b border-white/5 last:border-0" data-testid={`order-row-${o.order_id}`}>
-                    <td className="py-2.5 pr-3 text-ink/85 whitespace-nowrap">{formatDate(o.paid_at || o.created_at)}</td>
+                    <td className="py-2.5 pr-3 text-ink/85 whitespace-nowrap">{formatDateTime(o.paid_at || o.created_at)}</td>
                     <td className="py-2.5 pr-3 text-ink/85">{o.plan_id || o.pack_id || "—"}</td>
                     <td className="py-2.5 pr-3 text-ink/85">{o.credits_to_grant ?? "—"}</td>
                     <td className="py-2.5 pr-3 text-ink/85 whitespace-nowrap">

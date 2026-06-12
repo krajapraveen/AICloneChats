@@ -104,6 +104,11 @@ import support_inbox  # noqa: E402
 app.include_router(support_inbox.router)
 app.include_router(support_inbox.admin_router)
 
+# Profile aliases — spec-mandated /api/profile/* paths re-using existing handlers
+import profile_aliases  # noqa: E402
+app.include_router(profile_aliases.router)
+app.include_router(profile_aliases.admin_router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [

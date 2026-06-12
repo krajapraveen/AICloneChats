@@ -94,6 +94,7 @@ function AppRouter() {
         <Route index element={<MySpace />} />
         <Route path="space" element={<MySpace />} />
         <Route path="inbox" element={<Inbox />} />
+        <Route path="concerns" element={<Inbox />} />
         <Route path="settings/change-password" element={<ChangePassword />} />
         <Route path="settings/subscriptions" element={<Subscriptions />} />
       </Route>

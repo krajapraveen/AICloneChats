@@ -130,11 +130,38 @@ async def my_orders(user: dict = Depends(get_current_user), limit: int = Query(d
          "created_at": 1, "paid_at": 1},
     ).sort("created_at", -1).limit(limit).to_list(limit)
     state = await get_user_credit_state(user)
+
+    # Derive plan dates + active/expired status from the most recent paid
+    # order matching the user's current plan_id. This is a pragmatic stand-in
+    # for a full subscription state machine until one is built.
+    current_plan_id = state.get("plan_id")
+    plan_started_at = None
+    plan_expires_at = None
+    plan_status = "Free"
+    if current_plan_id and current_plan_id != "free":
+        last_paid = next((o for o in rows if o.get("status") == "paid" and o.get("plan_id") == current_plan_id), None)
+        if last_paid and last_paid.get("paid_at"):
+            try:
+                from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                started = _dt.fromisoformat(last_paid["paid_at"].replace("Z", "+00:00"))
+                expires = started + _td(days=30)
+                now = _dt.now(_tz.utc)
+                plan_started_at = started.isoformat()
+                plan_expires_at = expires.isoformat()
+                plan_status = "Active" if now < expires else "Expired"
+            except Exception:
+                plan_status = "Active"
+    if state.get("admin_unlimited"):
+        plan_status = "Admin · Unlimited"
+
     return {
         "items": rows,
         "count": len(rows),
-        "current_plan_id": state.get("plan_id"),
+        "current_plan_id": current_plan_id,
         "current_plan_name": state.get("plan_name"),
+        "plan_status": plan_status,
+        "plan_started_at": plan_started_at,
+        "plan_expires_at": plan_expires_at,
         "credits_balance": state.get("credits_balance", 0),
         "admin_unlimited": bool(state.get("admin_unlimited")),
     }

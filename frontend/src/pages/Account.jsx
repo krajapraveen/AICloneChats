@@ -4,11 +4,14 @@ import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
 import api from "../lib/api";
 
-const TABS = [
-  { to: "/account/space", label: "My Space", testId: "tab-my-space" },
-  { to: "/account/inbox", label: "Inbox", testId: "tab-inbox", showBadge: true },
-  { to: "/account/settings/change-password", label: "Change Password", testId: "tab-change-password" },
-  { to: "/account/settings/subscriptions", label: "Manage Subscriptions", testId: "tab-subscriptions" },
+const NAV = [
+  { type: "link", to: "/account/space", label: "My Space", testId: "tab-my-space" },
+  { type: "link", to: "/account/inbox", label: "Inbox", testId: "tab-inbox", showBadge: true },
+  { type: "link", to: "/account/concerns", label: "Concerns / Recommendations", testId: "tab-concerns" },
+  { type: "group", label: "Settings", children: [
+    { to: "/account/settings/change-password", label: "Change Password", testId: "tab-change-password" },
+    { to: "/account/settings/subscriptions", label: "Manage Subscriptions", testId: "tab-subscriptions" },
+  ]},
 ];
 
 export default function Account() {
@@ -45,29 +48,54 @@ export default function Account() {
         <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6 lg:gap-10">
           {/* Sidebar */}
           <nav className="space-y-1.5" aria-label="Account sections" data-testid="account-sidebar">
-            {TABS.map((t) => (
-              <NavLink
-                key={t.to}
-                to={t.to}
-                className={({ isActive }) =>
-                  `block px-4 py-2.5 rounded-lg text-sm font-medium transition border ${
-                    isActive
-                      ? "bg-amber/15 border-amber/40 text-amber"
-                      : "bg-white/[0.02] border-white/5 text-ink/85 hover:bg-white/[0.06] hover:border-white/15"
-                  }`
-                }
-                data-testid={t.testId}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span>{t.label}</span>
-                  {t.showBadge && unread > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-amber text-black text-[10px] font-bold" data-testid="inbox-unread-badge">
-                      {unread}
-                    </span>
-                  )}
-                </span>
-              </NavLink>
-            ))}
+            {NAV.map((item, idx) =>
+              item.type === "link" ? (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/account/space"}
+                  className={({ isActive }) =>
+                    `block px-4 py-2.5 rounded-lg text-sm font-medium transition border ${
+                      isActive
+                        ? "bg-amber/15 border-amber/40 text-amber"
+                        : "bg-white/[0.02] border-white/5 text-ink/85 hover:bg-white/[0.06] hover:border-white/15"
+                    }`
+                  }
+                  data-testid={item.testId}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span>{item.label}</span>
+                    {item.showBadge && unread > 0 && (
+                      <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-amber text-black text-[10px] font-bold" data-testid="inbox-unread-badge">
+                        {unread}
+                      </span>
+                    )}
+                  </span>
+                </NavLink>
+              ) : (
+                <div key={`group-${idx}`} className="pt-3">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-muted px-4 mb-1.5" data-testid={`nav-group-${item.label.toLowerCase()}`}>
+                    {item.label}
+                  </div>
+                  {item.children.map((c) => (
+                    <NavLink
+                      key={c.to}
+                      to={c.to}
+                      className={({ isActive }) =>
+                        `block px-4 py-2 rounded-lg text-sm transition border ${
+                          isActive
+                            ? "bg-amber/15 border-amber/40 text-amber"
+                            : "bg-white/[0.02] border-white/5 text-ink/80 hover:bg-white/[0.06] hover:border-white/15"
+                        }`
+                      }
+                      data-testid={c.testId}
+                    >
+                      {c.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )
+            )}
           </nav>
 
           {/* Outlet content */}
