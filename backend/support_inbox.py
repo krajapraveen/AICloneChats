@@ -128,7 +128,75 @@ async def create_thread(payload: ThreadCreate, request: Request, user: dict = De
         "created_at": now,
     }
     await db.support_threads.insert_one(doc)
+
+    # Fire-and-forget admin email so admins see new concerns without checking
+    # the dashboard. Best-effort: never blocks the user response.
+    try:
+        await _notify_admins_new_thread(doc, user)
+    except Exception as e:
+        logger.warning("support_inbox: admin notification failed for %s: %s", thread_id, e)
+
     return _serialize_thread(doc)
+
+
+async def _notify_admins_new_thread(thread: dict, user: dict) -> None:
+    """Send an admin notification email when a new thread is created. Pulls
+    recipients from ADMIN_EMAILS env (CSV). Best-effort: every send is
+    independent so one bounce doesn't suppress the other."""
+    import os as _os
+    from email_sender import send_email as _send_email
+
+    raw_admins = _os.environ.get("ADMIN_EMAILS", "") or ""
+    recipients = sorted({e.lower().strip() for e in raw_admins.split(",") if e.strip()})
+    if not recipients:
+        recipients = ["admin@aiclonechats.com", "krajapraveen@aiclonechats.com"]
+
+    kind_label = "Concern" if thread.get("kind") == "concern" else "Recommendation"
+    subject = f"[AI Clone Chats] New {kind_label} Submitted"
+    user_name = user.get("display_name") or user.get("name") or (user.get("email", "").split("@")[0])
+    body_text = (
+        f"User: {user_name}\n"
+        f"Email: {user.get('email')}\n"
+        f"Type: {kind_label}\n"
+        f"Subject: {thread.get('subject')}\n\n"
+        f"Message:\n{thread.get('messages', [{}])[0].get('body', '')}\n\n"
+        f"---\n"
+        f"Open in admin dashboard:\n"
+        f"https://aiclonechats.com/admin/support\n"
+        f"Thread ID: {thread.get('thread_id')}\n"
+    )
+    body_html = f"""
+    <div style="font-family: -apple-system, sans-serif; max-width: 540px; margin: 0 auto; padding: 20px; color: #0d0d10;">
+      <div style="background:#f59e0b; color:#0d0d10; padding: 8px 12px; border-radius: 6px; display: inline-block;
+                  font-size: 10px; font-family: monospace; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">
+        NEW {kind_label.upper()}
+      </div>
+      <h2 style="margin: 12px 0 8px; font-size: 20px;">{thread.get('subject')}</h2>
+      <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
+        From <strong>{user_name}</strong> &lt;{user.get('email')}&gt;
+      </div>
+      <div style="background: #f8f8f8; border-left: 3px solid #f59e0b; padding: 12px 14px; border-radius: 4px;
+                  font-size: 14px; line-height: 1.6; white-space: pre-wrap;">{thread.get('messages', [{}])[0].get('body', '')}</div>
+      <p style="margin: 20px 0;">
+        <a href="https://aiclonechats.com/admin/support"
+           style="background:#f59e0b; color:#0d0d10; padding: 10px 18px; border-radius: 8px;
+                  text-decoration: none; font-weight: 700; font-size: 14px;">
+          Open in admin dashboard
+        </a>
+      </p>
+      <p style="font-size: 11px; color: #888; margin-top: 24px;">
+        Thread ID: <code>{thread.get('thread_id')}</code>
+      </p>
+    </div>
+    """
+    for to_email in recipients:
+        try:
+            await _send_email(
+                to_email=to_email, subject=subject, html=body_html, text=body_text,
+                purpose="support_thread_admin_notify",
+            )
+        except Exception as e:
+            logger.warning("support_inbox: admin notify send failed for %s: %s", to_email, e)
 
 
 @router.get("/threads")
