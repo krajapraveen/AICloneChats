@@ -262,6 +262,16 @@ async def on_startup():
         await _aa_indexes()
     except Exception as e:
         logger.warning("anti_abuse.ensure_indexes failed: %s", e)
+    # Demo clones for the Explore page — idempotent, safe to call on every
+    # startup. Only inserts what's missing; never duplicates or overwrites
+    # user-created clones.
+    if (os.environ.get("SEED_DEMO_CLONES") or "1").lower() in ("1", "true", "yes"):
+        try:
+            from seed_demo_clones import seed as _seed_demo
+            await _seed_demo(reseed=False, verbose=False)
+            logger.info("seed_demo_clones: complete")
+        except Exception as e:
+            logger.warning("seed_demo_clones failed: %s", e)
     # Seed billing plans on every boot — plans are code, not user data
     try:
         await ensure_plans_seeded()

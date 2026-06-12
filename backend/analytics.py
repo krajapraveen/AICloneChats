@@ -1,4 +1,6 @@
 import uuid
+import hashlib
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
@@ -11,6 +13,20 @@ router = APIRouter(prefix="/api", tags=["analytics"])
 
 SHARE_EVENTS = ["share_card_downloaded", "share_card_copied", "clone_shared", "share_link_clicked"]
 MOOD_CATEGORIES = {"funny", "deep", "savage", "quote"}
+
+
+def _daily_rotation_boost(clone_id: str) -> float:
+    """Deterministic per-day pseudo-random boost in [0, 1].
+
+    Same clone, same day → same value. Same clone, next day → different value.
+    Used to gently re-rank DEMO clones so a fresh set surfaces every day
+    without touching the DB. Real (non-demo) user clones get boost=0.0 so
+    their ranking is purely organic.
+    """
+    seed = f"{date.today().isoformat()}:{clone_id}"
+    h = hashlib.sha256(seed.encode()).hexdigest()
+    # Take 8 hex chars → int → normalize to [0, 1]
+    return int(h[:8], 16) / 0xFFFFFFFF
 
 
 class EventRequest(BaseModel):
@@ -91,6 +107,8 @@ async def explore(
         {"$project": {
             "_id": 0,
             "clone_id": 1, "slug": 1, "display_name": 1, "bio": 1, "avatar_url": 1, "created_at": 1, "personality": 1,
+            "is_demo": {"$ifNull": ["$is_demo", False]},
+            "demo_category": {"$ifNull": ["$demo_category", None]},
             "event_names": "$events.event_name",
             "moods": "$events.metadata.mood",
             "message_count": {"$size": "$msgs"},
@@ -108,6 +126,13 @@ async def explore(
         share_count = sum(1 for e in events if e in SHARE_EVENTS)
         unique_visitors = len(set(v for v in visitor_ids if v))
         score = share_count * 0.5 + (c.get("message_count") or 0) * 0.3 + unique_visitors * 0.2
+
+        # Daily rotation: demo clones get a small (0-15%) per-day boost so the
+        # set that surfaces varies day to day. Organic clones are untouched.
+        if c.get("is_demo"):
+            boost = _daily_rotation_boost(c["clone_id"])
+            score = score * (1.0 + boost * 0.15)
+
         mood_counts = {}
         for m in moods:
             if m:
