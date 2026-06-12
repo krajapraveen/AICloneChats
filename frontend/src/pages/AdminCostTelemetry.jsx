@@ -77,25 +77,41 @@ function RequestTable({ rows, testIdPrefix }) {
           <th className="p-3 text-right">Revenue</th>
           <th className="p-3 text-right">Margin</th>
           <th className="p-3">Severity</th>
+          <th className="p-3">Recovery action</th>
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
-          <tr key={r.cost_id} className="border-t border-white/5" data-testid={`${testIdPrefix}-${r.cost_id}`}>
-            <td className="p-3 font-mono text-[11px] text-muted whitespace-nowrap">{formatDateTime(r.created_at)}</td>
-            <td className="p-3 font-mono text-[11px]">{r.user_id || "—"}</td>
-            <td className={`p-3 font-mono ${FEATURE_TONE[r.feature] || ""}`}>{r.feature}</td>
-            <td className="p-3 font-mono text-[11px] text-muted">{r.provider}<br/>{r.model}</td>
-            <td className="p-3 text-right font-mono">{r.credits_deducted}</td>
-            <td className="p-3 text-right font-mono text-rose-soft">{inr(r.metered_cost_inr)}</td>
-            <td className="p-3 text-right font-mono">{inr(r.estimated_revenue_inr)}</td>
-            <td className={`p-3 text-right font-mono font-bold ${(r.margin_inr ?? 0) >= 0 ? "text-emerald-300" : "text-rose-soft"}`}>
-              {inr(r.margin_inr)}
-              {r.margin_pct != null && (<div className="text-[10px] text-muted">{r.margin_pct}%</div>)}
-            </td>
-            <td className="p-3"><span className={`tag ${SEVERITY_TAG[r.severity] || "tag-muted"}`}>{r.severity}</span></td>
-          </tr>
-        ))}
+        {rows.map((r) => {
+          const a = r.recovery_action || {};
+          const kindTone = a.kind === "data_validation" ? "text-amber" :
+            a.kind === "healthy" ? "text-emerald-300" :
+            a.kind === "abuse_review" ? "text-rose-soft" :
+            a.kind === "model_downgrade" ? "text-violet-soft" :
+            a.kind === "raise_credit_cost" ? "text-amber" : "text-muted";
+          return (
+            <tr key={r.cost_id} className="border-t border-white/5" data-testid={`${testIdPrefix}-${r.cost_id}`}>
+              <td className="p-3 font-mono text-[11px] text-muted whitespace-nowrap">{formatDateTime(r.created_at)}</td>
+              <td className="p-3 font-mono text-[11px]">{r.user_id || "—"}</td>
+              <td className={`p-3 font-mono ${FEATURE_TONE[r.feature] || ""}`}>{r.feature}</td>
+              <td className="p-3 font-mono text-[11px] text-muted">{r.provider}<br/>{r.model}</td>
+              <td className="p-3 text-right font-mono">{r.credits_deducted}</td>
+              <td className="p-3 text-right font-mono text-rose-soft">{inr(r.metered_cost_inr)}</td>
+              <td className="p-3 text-right font-mono">{inr(r.estimated_revenue_inr)}</td>
+              <td className={`p-3 text-right font-mono font-bold ${(r.margin_inr ?? 0) >= 0 ? "text-emerald-300" : "text-rose-soft"}`}>
+                {inr(r.margin_inr)}
+                {r.margin_pct != null && (<div className="text-[10px] text-muted">{r.margin_pct}%</div>)}
+              </td>
+              <td className="p-3"><span className={`tag ${SEVERITY_TAG[r.severity] || "tag-muted"}`}>{r.severity}</span></td>
+              <td className="p-3 max-w-[260px]" data-testid={`${testIdPrefix}-${r.cost_id}-recovery`}>
+                <div className={`font-mono text-[11px] font-bold ${kindTone}`}>{a.label || "—"}</div>
+                {a.reason && <div className="text-[10px] text-muted mt-0.5 line-clamp-3" title={a.reason}>{a.reason}</div>}
+                {a.estimated_margin_gain_inr != null && a.estimated_margin_gain_inr > 0 && (
+                  <div className="text-[10px] text-emerald-300 mt-0.5">Est. gain: +{inr(a.estimated_margin_gain_inr)}</div>
+                )}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -371,6 +387,24 @@ export default function AdminCostTelemetry() {
             {/* ── Loss-making summary ─────────────────────────── */}
             <section className="space-y-3" data-testid="lm-summary-section">
               <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Loss-making requests · {days}d</h2>
+              {lossMaking.validation?.has_suspect_data && (
+                <div className="brutal-card p-4 border-amber/50 bg-amber-500/10" data-testid="lm-validation-banner">
+                  <div className="text-amber font-mono text-[10px] uppercase tracking-widest mb-1">
+                    ⚠ TELEMETRY VALIDATION WARNING — {lossMaking.validation.suspect_rows_count} suspect row{lossMaking.validation.suspect_rows_count === 1 ? "" : "s"}
+                  </div>
+                  <p className="text-xs text-ink/90">{lossMaking.validation.warning}</p>
+                  <details className="mt-2 text-[11px]">
+                    <summary className="cursor-pointer text-amber/80 font-mono">Show sample suspect rows</summary>
+                    <ul className="mt-1.5 space-y-1 pl-4">
+                      {(lossMaking.validation.suspect_rows_sample || []).map((s) => (
+                        <li key={s.cost_id} className="font-mono text-muted">
+                          {s.feature} · cost {inr(s.metered_cost_inr)} · credits {s.credits_deducted} · margin {s.margin_pct}%
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <Tile label="Requests analyzed" value={lossMaking.summary.total_requests_analyzed} testId="lm-tile-analyzed" />
                 <Tile label="Flagged (warning + critical)" value={lossMaking.summary.total_flagged}

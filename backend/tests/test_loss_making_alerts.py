@@ -189,3 +189,49 @@ def test_by_feature_summary_sums(admin_token: str):
 def test_endpoint_admin_only():
     r = requests.get(f"{BASE_URL}/api/admin/cost-telemetry/loss-making", timeout=15)
     assert r.status_code in (401, 403)
+
+
+def test_recovery_action_present_on_every_row(admin_token: str):
+    r = requests.get(
+        f"{BASE_URL}/api/admin/cost-telemetry/loss-making?days=30&top_n=10",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=20,
+    )
+    body = r.json()
+    for r_ in body["top_expensive"] + body["top_losses"]:
+        a = r_.get("recovery_action") or {}
+        assert "kind" in a and "label" in a, r_
+        # Recommendation kind is one of the documented buckets
+        assert a["kind"] in (
+            "data_validation", "healthy", "abuse_review",
+            "model_downgrade", "raise_credit_cost", "investigate",
+        ), a
+
+
+def test_suspect_margin_flagged_as_data_validation(admin_token: str):
+    """Seed a deeply-negative row (-1000%+) and confirm:
+      - validation.has_suspect_data → True
+      - that row's recovery_action.kind == 'data_validation'
+
+    Uses the 30d window because the test DB has revenue history there;
+    margin_pct requires non-zero revenue_per_credit to be computable.
+    """
+    _seed_request_pair(feature="ai_clone", cost_inr=1_000_000.0, credits=1)
+    r = requests.get(
+        f"{BASE_URL}/api/admin/cost-telemetry/loss-making?days=30&top_n=10",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=30,
+    )
+    body = r.json()
+    # If the test DB has no paid orders at all, revenue_per_credit will be 0
+    # and margin_pct will be None for every row — skip this assertion path.
+    if (body.get("revenue_per_credit_inr") or 0) == 0:
+        pytest.skip("No paid orders in window; margin_pct cannot be computed")
+    assert body["validation"]["has_suspect_data"] is True
+    assert body["validation"]["suspect_rows_count"] >= 1
+    assert body["validation"]["suspect_margin_threshold_pct"] == -1000
+
+    # The biggest loss must be flagged as data_validation (not raise_credit_cost
+    # — recovery engine should NOT recommend pricing changes on suspect data).
+    worst = body["top_losses"][0]
+    assert worst["recovery_action"]["kind"] == "data_validation", worst

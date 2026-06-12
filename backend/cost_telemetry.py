@@ -355,6 +355,117 @@ def _severity_for_margin_pct(margin_pct: Optional[float]) -> str:
     return "ok"
 
 
+# Margins below this threshold are almost certainly a config/attribution
+# bug — real businesses don't lose 1000% on a single request. We flag and
+# the UI surfaces a validation banner.
+SUSPECT_MARGIN_PCT = -1000
+
+
+def _recovery_action(
+    row: dict,
+    feature_bucket: dict,
+    user_spend_share: float,
+    top_model_share: float,
+    top_model: Optional[str],
+) -> dict:
+    """Data-driven recommendation based on actual telemetry signals.
+
+    Precedence:
+      1. Suspect data: margin < -1000% → validate config first.
+      2. Healthy: margin ≥ 10% → no action.
+      3. Abuse pattern: one user > 40% of feature spend → review.
+      4. Model problem: one model > 70% of feature cost AND a cheaper
+         tier exists → switch.
+      5. Pricing problem: feature net margin < 0 AND ≥ 5 requests in
+         window → increase credit cost.
+      6. Fallback: investigate.
+    """
+    margin_pct = row.get("margin_pct")
+    margin_inr = row.get("margin_inr") or 0
+    cost_inr = row.get("metered_cost_inr") or 0
+    credits = row.get("credits_deducted") or 0
+    feature = row.get("feature") or "unknown"
+
+    if margin_pct is not None and margin_pct < SUSPECT_MARGIN_PCT:
+        return {
+            "kind": "data_validation",
+            "label": "Validate telemetry config",
+            "reason": (
+                f"Margin {margin_pct}% is suspiciously low. Likely cause: "
+                f"missing credit deduction, wrong USD→INR rate, or seeded test data. "
+                f"Verify before changing pricing."
+            ),
+            "estimated_margin_gain_inr": None,
+        }
+
+    if margin_pct is not None and margin_pct >= 10:
+        return {
+            "kind": "healthy",
+            "label": "Healthy margin",
+            "reason": f"Margin {margin_pct}% is comfortable. No action required.",
+            "estimated_margin_gain_inr": 0,
+        }
+
+    if user_spend_share > 0.40 and feature_bucket.get("requests", 0) >= 3:
+        return {
+            "kind": "abuse_review",
+            "label": "Review user activity",
+            "reason": (
+                f"This user accounts for {round(user_spend_share * 100)}% of "
+                f"{feature} spend in window. Investigate for abnormal usage."
+            ),
+            "estimated_margin_gain_inr": round(cost_inr * user_spend_share, 2),
+        }
+
+    if top_model and top_model_share > 0.70:
+        # Suggest the cheaper tier for known model families
+        downgrade_map = {
+            "claude-opus-4-5": "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-5-20250929": "claude-haiku-4-5",
+            "gpt-5.2": "gpt-4o",
+            "gpt-4o": "gpt-4o-mini",
+            "gemini-3-pro": "gemini-3-flash",
+        }
+        cheaper = downgrade_map.get(top_model)
+        if cheaper:
+            return {
+                "kind": "model_downgrade",
+                "label": f"Consider {cheaper} instead of {top_model}",
+                "reason": (
+                    f"{round(top_model_share * 100)}% of {feature} cost uses "
+                    f"{top_model}. The cheaper {cheaper} may keep quality "
+                    f"acceptable at a fraction of the price."
+                ),
+                # Heuristic: cheaper tier ≈ 70-90% cheaper for Sonnet→Haiku.
+                "estimated_margin_gain_inr": round(cost_inr * 0.75, 2),
+            }
+
+    if (feature_bucket.get("margin_inr") or 0) < 0 and feature_bucket.get("requests", 0) >= 5:
+        # Recommend a credit-cost bump. Target: 20% margin.
+        if credits > 0 and cost_inr > 0:
+            cost_per_credit = cost_inr / credits
+            # Need revenue_per_credit ≥ cost_per_credit × 1.25 for 20% margin
+            target_credits = max(credits + 1, int(round(cost_per_credit * 1.25 / (row.get("estimated_revenue_inr") or 1) * credits)))
+            if target_credits > credits:
+                return {
+                    "kind": "raise_credit_cost",
+                    "label": f"Raise credit charge {credits} → {target_credits}",
+                    "reason": (
+                        f"Feature {feature} has net negative margin across "
+                        f"{feature_bucket.get('requests')} requests this window. "
+                        f"Raising the per-call credit cost restores profitability."
+                    ),
+                    "estimated_margin_gain_inr": round((target_credits - credits) * (row.get("estimated_revenue_inr") or 0) / max(credits, 1), 2),
+                }
+
+    return {
+        "kind": "investigate",
+        "label": "Investigate",
+        "reason": "Below profitable margin but no single clear cause. Inspect surface, model, and user.",
+        "estimated_margin_gain_inr": None,
+    }
+
+
 @router.get("/loss-making")
 async def loss_making_requests(
     admin: dict = Depends(get_admin_user),
@@ -470,6 +581,50 @@ async def loss_making_requests(
         b["revenue_inr"] = round(b["revenue_inr"], 2)
         b["margin_inr"] = round(b["margin_inr"], 2)
 
+    # Build per-feature user-spend share map (for abuse-pattern detection) +
+    # per-feature model-share map (for model-downgrade recommendations).
+    user_spend_per_feature: dict[tuple[str, str], float] = {}
+    model_spend_per_feature: dict[tuple[str, str], float] = {}
+    for r in cost_rows:
+        feat = r.get("feature") or "unknown"
+        uid = r.get("user_id") or "anonymous"
+        model = r.get("model") or "unknown"
+        c = float(r.get("cost_inr") or 0)
+        user_spend_per_feature[(feat, uid)] = user_spend_per_feature.get((feat, uid), 0.0) + c
+        model_spend_per_feature[(feat, model)] = model_spend_per_feature.get((feat, model), 0.0) + c
+
+    # Suspect-data warnings (margin < -1000% — almost certainly a config bug)
+    suspect_rows = []
+
+    for row in enriched:
+        feat = row["feature"]
+        bucket = by_feature.get(feat, {})
+        total_feat_cost = bucket.get("cost_inr") or 0
+        # User share
+        user_cost = user_spend_per_feature.get((feat, row.get("user_id") or "anonymous"), 0)
+        user_share = (user_cost / total_feat_cost) if total_feat_cost > 0 else 0.0
+        # Top model share
+        model_buckets = [(m, c) for (f, m), c in model_spend_per_feature.items() if f == feat]
+        top_model = None
+        top_model_share = 0.0
+        if model_buckets:
+            top_model, top_cost = max(model_buckets, key=lambda x: x[1])
+            top_model_share = (top_cost / total_feat_cost) if total_feat_cost > 0 else 0.0
+        row["recovery_action"] = _recovery_action(
+            row=row, feature_bucket=bucket,
+            user_spend_share=user_share,
+            top_model_share=top_model_share,
+            top_model=top_model,
+        )
+        if row.get("margin_pct") is not None and row["margin_pct"] < SUSPECT_MARGIN_PCT:
+            suspect_rows.append({
+                "cost_id": row["cost_id"],
+                "feature": feat,
+                "margin_pct": row["margin_pct"],
+                "metered_cost_inr": row["metered_cost_inr"],
+                "credits_deducted": row["credits_deducted"],
+            })
+
     top_expensive = sorted(enriched, key=lambda r: r["metered_cost_inr"], reverse=True)[:top_n]
     top_losses = sorted(
         [r for r in enriched if r["severity"] in ("warning", "critical")],
@@ -489,6 +644,19 @@ async def loss_making_requests(
         },
         "top_expensive": top_expensive,
         "top_losses": top_losses,
+        "validation": {
+            "suspect_margin_threshold_pct": SUSPECT_MARGIN_PCT,
+            "suspect_rows_count": len(suspect_rows),
+            "suspect_rows_sample": suspect_rows[:5],
+            "has_suspect_data": len(suspect_rows) > 0,
+            "warning": (
+                f"{len(suspect_rows)} request(s) have margin worse than "
+                f"{SUSPECT_MARGIN_PCT}%. This is almost always a configuration "
+                f"problem (missing credit deduction, wrong USD→INR rate, or "
+                f"seeded test data) rather than a real loss. Validate before "
+                f"acting on the dashboard's recommendations."
+            ) if suspect_rows else None,
+        },
         "thresholds": {
             "critical_margin_pct": -20,
             "warning_margin_pct": 0,
