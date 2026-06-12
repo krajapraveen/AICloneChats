@@ -83,13 +83,20 @@ export default function GlobalPaywallModal() {
     } else if (code === "fraud_cooldown") {
       // dismiss only
     } else {
-      // Every other code (subscription_required, plan_upgrade_required,
-      // insufficient_balance, daily_cap_reached, email_not_verified,
-      // subscription_required_for_topup, and any future code) funnels to
-      // /pricing through the centralized helper. The verify-email route
-      // remains available for users who want it but is no longer the
-      // CTA target — verify-gate is off in the current revenue config.
-      navigate(buildUpgradeUrl({ source: detail.surface || "paywall_modal" }));
+      // Map paywall-error codes to the funnel source taxonomy. Whatever
+      // surface fired the paywall doesn't matter to the funnel — what matters
+      // is WHY the paywall fired.
+      const PAYWALL_CODE_TO_SOURCE = {
+        insufficient_balance: "credits_exhausted",
+        daily_cap_reached: "credits_exhausted",
+        subscription_required: "credits_exhausted",
+        subscription_required_for_topup: "profile_manage_subscription",
+        plan_upgrade_required: "dashboard_upgrade",
+        subscription_expired: "subscription_expired",
+        clone_limit_reached: "clone_limit_reached",
+      };
+      const source = PAYWALL_CODE_TO_SOURCE[code] || "credits_exhausted";
+      navigate(buildUpgradeUrl({ source }));
     }
   };
 

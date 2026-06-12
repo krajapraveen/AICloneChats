@@ -23,6 +23,33 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (Pricing-Visit Source Tracking + Plan Preselection UX)** — Funnel attribution + a smarter `/pricing` experience.
+  - **Backend** (`/app/backend/analytics_revenue.py`, `/app/backend/payments/router.py`)
+    - `POST /api/funnel/event` now accepts a `source` field. Whitelisted to 9 values: `landing_hero`, `landing_pricing`, `dashboard_upgrade`, `credits_exhausted`, `clone_limit_reached`, `subscription_expired`, `profile_manage_subscription`, `pay_return_retry`, `unknown`. Off-list / missing values coerce to `unknown`.
+    - `pricing_visit_source` field added to `funnel_events` rows (and `intent` if passed) so dashboards can group by acquisition origin.
+    - `POST /api/payments/create-order` now reads `pricing_visit_source` from the body and persists it onto the `payment_orders` row via a follow-up update — preserving the source through checkout for cohort-level conversion analytics.
+    - Event-name whitelist preserved (regression-pinned): `source` field doesn't loosen the `event_name` validation.
+  - **Frontend — Pricing.jsx**
+    - `useSearchParams()` reads `?source=` once, validates against the same 9-value whitelist, coerces unknown → `unknown`.
+    - Auto-fires the `pricing_view` funnel event with the source + intent.
+    - **Plan Preselection** map: `landing_*` → `starter`, `dashboard_upgrade` / `pay_return_retry` / `profile_manage_subscription` → `pro`, `credits_exhausted` → `pro` (push to next tier), `clone_limit_reached` → `ultimate`, `subscription_expired` → user's previous `plan_id` if known else `pro`, `unknown` → no preselection.
+    - Preselected card gets an amber ring + glow shadow + "RECOMMENDED FOR YOU" badge, and auto-scrolls into view smoothly.
+    - Context banner above the grid shows a one-sentence reason ("You ran out of credits — we're showing the plan that fits your usage.") for every source EXCEPT `landing_*` and `unknown`.
+    - Checkout body now carries `pricing_visit_source` so the order row is attributed correctly.
+  - **CTA rewiring** — every link to `/pricing` carries the right `?source=`:
+    - Navbar: desktop link + mobile link → `landing_pricing`. Credits pill → `credits_exhausted` if balance ≤ 0, else `dashboard_upgrade`.
+    - PlansShowcase (dashboard): "See full pricing" + per-plan CTAs + top-up CTAs → `dashboard_upgrade` (with `intent=<plan_id>`).
+    - Subscriptions page: "Change plan" / "Choose a plan" → `subscription_expired` if state is expired, else `profile_manage_subscription`.
+    - PaymentReturn: all retry links + automatic redirect → `pay_return_retry`.
+    - Landing footer: → `landing_pricing`.
+    - GlobalPaywallModal: paywall error codes map to sources (`insufficient_balance` / `daily_cap_reached` / `subscription_required` → `credits_exhausted`; `subscription_expired` → same; `clone_limit_reached` → same; etc.) instead of the previous fall-through `paywall_modal`.
+  - **Tests** (`/app/backend/tests/test_pricing_visit_source.py`, 15/15 passing):
+    - All 9 allowed sources accepted, off-list coerced to `unknown`, missing source defaults to `unknown`, event_name whitelist still enforced (regression pin), DB persistence end-to-end on `funnel_events`, persistence on `payment_orders`, off-list source on create-order coerced.
+  - **Live verification**: 8 of 9 source buckets now populated in `funnel_events`; legacy rows bucket as `unknown` via `$ifNull` (16 categories visible in the all-time `$group`).
+  - **Files added**: `backend/tests/test_pricing_visit_source.py`.
+  - **Files modified**: `backend/analytics_revenue.py`, `backend/payments/router.py`, `frontend/src/pages/Pricing.jsx`, `frontend/src/components/Navbar.jsx`, `frontend/src/components/PlansShowcase.jsx`, `frontend/src/components/GlobalPaywallModal.jsx`, `frontend/src/pages/account/Subscriptions.jsx`, `frontend/src/pages/PaymentReturn.jsx`, `frontend/src/pages/Landing.jsx`.
+  - **Cumulative session tests**: 76/76 passing.
+
 - **2026-06-12 (Per-Feature Cost Tagging — Cost Telemetry foundation)** — Single-line, zero-callsite-changes addition that makes the upcoming Cost Telemetry Dashboard a one-`$group`-query exercise.
   - **Backend** (`/app/backend/credits.py`)
     - New `ALLOWED_FEATURES` taxonomy: `ai_clone`, `voice`, `video`, `chat`, `image`, `avatar`, `subscription`, `admin_adjustment`, `unknown`.

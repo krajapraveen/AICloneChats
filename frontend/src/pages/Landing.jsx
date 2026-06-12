@@ -194,7 +194,7 @@ export default function Landing() {
               <ul className="space-y-1.5 text-sm">
                 <li><Link to="/privacy-settings" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-privacy-settings">Privacy Settings</Link></li>
                 <li><Link to="/security" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-security">Security</Link></li>
-                <li><Link to="/pricing" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-pricing">Pricing</Link></li>
+                <li><Link to="/pricing?source=landing_pricing" className="text-ink/80 hover:text-amber underline-offset-2 hover:underline" data-testid="footer-pricing">Pricing</Link></li>
               </ul>
             </div>
             <div>

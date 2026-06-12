@@ -9,8 +9,8 @@
  * and top-up CTAs then call `/api/payments/instamojo/create-order` and
  * redirect the browser to the returned Instamojo checkout URL.
  */
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
@@ -19,6 +19,40 @@ import { useCredits } from "../hooks/useCredits";
 import { launchCashfreeCheckout } from "../lib/cashfree";
 
 const PAYMENTS_UNAVAILABLE_MSG = "Payments are temporarily unavailable. New gateway coming soon.";
+
+// Must match the backend whitelist in analytics_revenue.py /
+// payments/router.py. Any new source must be added in BOTH places.
+const ALLOWED_PRICING_SOURCES = new Set([
+  "landing_hero", "landing_pricing", "dashboard_upgrade", "credits_exhausted",
+  "clone_limit_reached", "subscription_expired", "profile_manage_subscription",
+  "pay_return_retry", "unknown",
+]);
+
+// Plan preselection: which plan_id to highlight + scroll to based on
+// where the user came from. Each source is a deliberate product decision,
+// not an A/B-test guess.
+const SOURCE_TO_PRESELECTED_PLAN = {
+  // Top-of-funnel — most people convert to Starter first.
+  landing_hero: "starter",
+  landing_pricing: "starter",
+  // Mid-funnel — user already in the product, ready for the workhorse plan.
+  dashboard_upgrade: "pro",
+  // Friction signal — they exhausted credits, push the next-bigger tier so
+  // they don't bounce back in 30 days.
+  credits_exhausted: "pro",
+  // Power-user signal — clone limit hit means they're building a lot, send
+  // them straight to the creator tier.
+  clone_limit_reached: "ultimate",
+  // They had a plan and it ran out — preselect the SAME tier they were on
+  // (handled dynamically below by reading user.plan_id when known), default
+  // to Pro otherwise.
+  subscription_expired: "pro",
+  // From inside the Profile flow — they're managing, default to Pro.
+  profile_manage_subscription: "pro",
+  // From a failed checkout retry — keep them on Pro (the most common attempt).
+  pay_return_retry: "pro",
+  unknown: null,  // No preselection — show neutral pricing page
+};
 
 function planTone(tier) {
   return [
@@ -30,10 +64,25 @@ function planTone(tier) {
   ][tier] || { border: "border-white/10", accent: "text-muted", label: "" };
 }
 
+// Soft human label for the banner. Source names are machine-friendly; we
+// translate them to one short sentence so the user knows we noticed.
+const SOURCE_BANNER_COPY = {
+  credits_exhausted: "You ran out of credits — we're showing the plan that fits your usage.",
+  clone_limit_reached: "You hit your clone limit — Ultimate gives you the most room to build.",
+  subscription_expired: "Your previous plan expired. Pick up where you left off.",
+  dashboard_upgrade: "Upgrade your plan to unlock more credits and features.",
+  pay_return_retry: "Let's try that again. Same plan, fresh checkout.",
+  profile_manage_subscription: "Manage your plan below.",
+  landing_hero: null,
+  landing_pricing: null,
+  unknown: null,
+};
+
 export default function Pricing() {
   const { user } = useAuth();
   const credits = useCredits();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [plans, setPlans] = useState([]);
   const [costs, setCosts] = useState({});
@@ -41,10 +90,35 @@ export default function Pricing() {
   const [topups, setTopups] = useState({ packs: [], country_code: "", is_active_subscriber: false });
   const [gateway, setGateway] = useState({ configured: false, provider: "", env: "", display_name: "" });
   const [busyId, setBusyId] = useState(null);
+  const cardRefs = useRef({});
+
+  // Read pricing_visit_source from URL once; ignore non-whitelisted values.
+  const visitSource = useMemo(() => {
+    const raw = (searchParams.get("source") || "").toLowerCase();
+    return ALLOWED_PRICING_SOURCES.has(raw) ? raw : "unknown";
+  }, [searchParams]);
+
+  const visitIntent = useMemo(() => searchParams.get("intent") || null, [searchParams]);
+
+  // Plan preselection: prefer the user's previous plan when expired, otherwise
+  // use the static source→plan table. Never preselect on "unknown" — neutrally
+  // show the full catalogue.
+  const preselectedPlanId = useMemo(() => {
+    if (visitSource === "subscription_expired" && credits?.plan_id && credits.plan_id !== "free") {
+      return credits.plan_id;
+    }
+    return SOURCE_TO_PRESELECTED_PLAN[visitSource] || null;
+  }, [visitSource, credits?.plan_id]);
 
   useEffect(() => {
     let cancelled = false;
-    api.post("/funnel/event", { event_name: "pricing_view", referrer: document.referrer || null }).catch(() => {});
+    // Pass source + referrer through to funnel ingestion for attribution.
+    api.post("/funnel/event", {
+      event_name: "pricing_view",
+      referrer: document.referrer || null,
+      source: visitSource,
+      intent: visitIntent,
+    }).catch(() => {});
     (async () => {
       try {
         const [{ data: plansData }, { data: cat }, { data: tu }, { data: gw }] = await Promise.all([
@@ -64,7 +138,20 @@ export default function Pricing() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // After plans load, scroll the preselected card into view smoothly.
+  useEffect(() => {
+    if (!preselectedPlanId || plans.length === 0) return;
+    const el = cardRefs.current[preselectedPlanId];
+    if (!el) return;
+    // Defer one frame so layout is settled
+    const t = setTimeout(() => {
+      try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_e) { /* ignore */ }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [preselectedPlanId, plans.length]);
 
   const startCheckout = async ({ planId, packId }) => {
     if (!user) {
@@ -79,7 +166,7 @@ export default function Pricing() {
     const id = planId || packId;
     setBusyId(id);
     api.post("/funnel/event", { event_name: "checkout_clicked", referrer: id }).catch(() => {});
-    const body = {};
+    const body = { pricing_visit_source: visitSource };
     if (planId) body.plan_id = planId;
     if (packId) body.pack_id = packId;
     try {
@@ -175,6 +262,14 @@ export default function Pricing() {
               <div className="text-xs text-muted mt-1">Use sandbox test card / UPI details. No real money is charged.</div>
             </div>
           )}
+          {SOURCE_BANNER_COPY[visitSource] && (
+            <div className="brutal-card p-3 border-violet/40 bg-violet-500/5" data-testid="pricing-source-banner">
+              <div className="text-violet-soft font-mono text-[10px] uppercase tracking-widest mb-0.5">
+                {visitSource.replaceAll("_", " ")}
+              </div>
+              <div className="text-sm text-ink/90">{SOURCE_BANNER_COPY[visitSource]}</div>
+            </div>
+          )}
         </header>
 
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="pricing-plans-grid">
@@ -193,8 +288,20 @@ export default function Pricing() {
                     }).format(localPrice.display_amount)
                   : `₹${p.price_inr.toLocaleString("en-IN")}`);
             const isBusy = busyId === p.plan_id;
+            const isPreselected = preselectedPlanId === p.plan_id;
             return (
-              <article key={p.plan_id} className={`brutal-card p-5 flex flex-col gap-3 ${tone.border}`} data-testid={`pricing-card-${p.plan_id}`}>
+              <article
+                key={p.plan_id}
+                ref={(el) => { if (el) cardRefs.current[p.plan_id] = el; }}
+                className={`brutal-card p-5 flex flex-col gap-3 ${tone.border} ${isPreselected ? "ring-2 ring-amber/60 shadow-[0_0_24px_rgba(245,158,11,0.18)] relative" : ""}`}
+                data-testid={`pricing-card-${p.plan_id}`}
+                data-preselected={isPreselected ? "true" : "false"}
+              >
+                {isPreselected && (
+                  <div className="absolute -top-2 left-3 px-2 py-0.5 rounded-md bg-amber text-black text-[9px] font-mono uppercase tracking-widest font-bold" data-testid={`preselected-badge-${p.plan_id}`}>
+                    Recommended for you
+                  </div>
+                )}
                 <div>
                   <div className={`text-[10px] font-mono uppercase tracking-[0.18em] ${tone.accent}`}>{tone.label}</div>
                   <h3 className="font-display text-xl font-bold mt-1">{p.name}</h3>

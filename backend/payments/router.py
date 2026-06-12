@@ -182,6 +182,23 @@ async def create_order(payload: dict, request: Request, user: dict = Depends(get
     if not resp.ok:
         raise HTTPException(502, detail={"code": resp.error_code or "gateway_rejected", "message": resp.error or "Gateway rejected the request."})
 
+    # Preserve the pricing-visit source onto the order row for funnel attribution.
+    # Whitelisted set keeps the field clean for the upcoming Cost Telemetry dashboard.
+    ALLOWED_PRICING_SOURCES = {
+        "landing_hero", "landing_pricing", "dashboard_upgrade", "credits_exhausted",
+        "clone_limit_reached", "subscription_expired", "profile_manage_subscription",
+        "pay_return_retry", "unknown",
+    }
+    raw_src = ((payload or {}).get("pricing_visit_source") or "").strip().lower()
+    pricing_visit_source = raw_src if raw_src in ALLOWED_PRICING_SOURCES else "unknown"
+    try:
+        await db.payment_orders.update_one(
+            {"order_id": order_id},
+            {"$set": {"pricing_visit_source": pricing_visit_source}},
+        )
+    except Exception:
+        logger.warning("payments.create_order: could not persist pricing_visit_source for %s", order_id)
+
     return {
         "ok": True,
         "order_id": resp.order_id,

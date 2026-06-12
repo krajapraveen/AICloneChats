@@ -66,7 +66,7 @@ export default function PlansShowcase({ user, credits }) {
       <div>
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
           <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-amber">PLANS</div>
-          <Link to="/pricing" className="btn-ghost text-xs whitespace-nowrap" data-testid="plans-see-all">See full pricing →</Link>
+          <Link to="/pricing?source=dashboard_upgrade" className="btn-ghost text-xs whitespace-nowrap" data-testid="plans-see-all">See full pricing →</Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {loading ? (
@@ -101,7 +101,7 @@ export default function PlansShowcase({ user, credits }) {
                 {isCurrent ? (
                   <div className="btn-ghost text-xs text-center cursor-default" data-testid={`dashboard-plan-cta-${p.plan_id}`}>Your current plan</div>
                 ) : (
-                  <Link to="/pricing" className="btn-brutal text-xs" data-testid={`dashboard-plan-cta-${p.plan_id}`}>
+                  <Link to={`/pricing?source=dashboard_upgrade&intent=${p.plan_id}`} className="btn-brutal text-xs" data-testid={`dashboard-plan-cta-${p.plan_id}`}>
                     {currentPlan === "free" ? "Subscribe" : "Switch plan"}
                   </Link>
                 )}
@@ -143,7 +143,7 @@ export default function PlansShowcase({ user, credits }) {
                 <div className="text-sm font-display font-bold text-ink">{pack.credits.toLocaleString("en-IN")} credits</div>
                 <p className="text-[11px] text-muted flex-1">{pack.blurb}</p>
                 <Link
-                  to="/pricing"
+                  to="/pricing?source=dashboard_upgrade"
                   onClick={(e) => {
                     if (locked) {
                       e.preventDefault();

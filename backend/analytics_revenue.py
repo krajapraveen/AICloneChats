@@ -106,6 +106,23 @@ def _maybe_csv(data: dict, rows_key: str, format_q: Optional[str], filename: str
 # ============================================================================
 # Public — funnel event ingestion (the only write path)
 # ============================================================================
+# Pricing-visit source taxonomy — must match the frontend
+# `ALLOWED_PRICING_SOURCES` constant. Any new source must be added in BOTH
+# places. The dashboard groups by this field, so unknown / off-list values
+# get coerced to "unknown" to keep the funnel charts clean.
+ALLOWED_PRICING_SOURCES = {
+    "landing_hero",
+    "landing_pricing",
+    "dashboard_upgrade",
+    "credits_exhausted",
+    "clone_limit_reached",
+    "subscription_expired",
+    "profile_manage_subscription",
+    "pay_return_retry",
+    "unknown",
+}
+
+
 @public_router.post("/api/funnel/event")
 async def log_funnel_event(payload: dict, request: Request, user: Optional[dict] = Depends(get_optional_user)):
     """ONE write per call. Currently used for `pricing_view`. Admin caller events
@@ -115,6 +132,8 @@ async def log_funnel_event(payload: dict, request: Request, user: Optional[dict]
     if event_name not in {"pricing_view"}:
         # Whitelist-only — never accept arbitrary client-supplied event names.
         raise HTTPException(400, "Unsupported event_name")
+    raw_source = ((payload or {}).get("source") or "").strip().lower() or "unknown"
+    source = raw_source if raw_source in ALLOWED_PRICING_SOURCES else "unknown"
     await db.funnel_events.insert_one({
         "event_id": uuid.uuid4().hex,
         "event_name": event_name,
@@ -125,9 +144,11 @@ async def log_funnel_event(payload: dict, request: Request, user: Optional[dict]
         "plan_id": (user or {}).get("plan_id"),
         "plan_status": (user or {}).get("plan_status"),
         "referrer": (payload or {}).get("referrer"),
+        "pricing_visit_source": source,
+        "intent": (payload or {}).get("intent"),
         "created_at": now_iso(),
     })
-    return {"ok": True}
+    return {"ok": True, "pricing_visit_source": source}
 
 
 # ============================================================================

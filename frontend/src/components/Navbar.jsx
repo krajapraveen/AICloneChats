@@ -75,7 +75,7 @@ export default function Navbar() {
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-4 lg:gap-5 flex-shrink-0" data-testid="nav-desktop" aria-label="Primary">
           <NavLink to="/explore" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-explore">Explore</NavLink>
-          <NavLink to="/pricing" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-pricing">Pricing</NavLink>
+          <NavLink to="/pricing?source=landing_pricing" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-pricing">Pricing</NavLink>
           {user && (
             <NavLink to="/dashboard" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-dashboard">Dashboard</NavLink>
           )}
@@ -87,9 +87,13 @@ export default function Navbar() {
           )}
           {user && !credits.loading && (
             credits.admin_unlimited ? (
-              <Link to="/pricing" className="rounded-full border border-violet/40 bg-violet-500/10 px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-violet-soft" data-testid="nav-credits-pill">∞ admin</Link>
+              <Link to="/pricing?source=dashboard_upgrade" className="rounded-full border border-violet/40 bg-violet-500/10 px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-violet-soft" data-testid="nav-credits-pill">∞ admin</Link>
             ) : (
-              <Link to="/pricing" className="rounded-full border border-white/10 bg-bg/50 px-3 py-1 text-[11px] font-mono text-ink/85 hover:border-white/25 transition" data-testid="nav-credits-pill">
+              <Link
+                to={`/pricing?source=${(credits.credits_balance ?? 0) <= 0 ? "credits_exhausted" : "dashboard_upgrade"}`}
+                className="rounded-full border border-white/10 bg-bg/50 px-3 py-1 text-[11px] font-mono text-ink/85 hover:border-white/25 transition"
+                data-testid="nav-credits-pill"
+              >
                 <span className="text-amber">{credits.credits_balance ?? 0}</span> cr
               </Link>
             )
@@ -152,7 +156,7 @@ export default function Navbar() {
             <NavLink to="/account/space" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-my-profile">My Profile</NavLink>
               </>
             )}
-            <NavLink to="/pricing" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-pricing">Pricing</NavLink>
+            <NavLink to="/pricing?source=landing_pricing" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-pricing">Pricing</NavLink>
             {user?.role === "admin" && (
               <NavLink to="/admin" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-violet" : "text-violet-soft"}`} data-testid="nav-mobile-admin">Admin</NavLink>
             )}

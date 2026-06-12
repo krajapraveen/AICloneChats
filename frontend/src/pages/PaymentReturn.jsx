@@ -57,7 +57,7 @@ export default function PaymentReturn() {
       // eslint-disable-next-line no-console
       console.info("[payment-return] order finished without payment:", status);
       setTimeout(() => {
-        if (!cancelled) navigate("/pricing", { replace: true });
+        if (!cancelled) navigate("/pricing?source=pay_return_retry", { replace: true });
       }, 250);
     };
 
@@ -129,7 +129,7 @@ export default function PaymentReturn() {
             <p className="text-sm text-muted mb-4">Your plan is now <span className="text-ink font-mono">{order.plan_id}</span>. The credits are already in your balance.</p>
             <div className="flex gap-2 flex-wrap">
               <Link to="/dashboard" className="btn-brutal text-sm" data-testid="payment-return-continue">Continue to dashboard</Link>
-              <Link to="/pricing" className="btn-ghost text-sm" data-testid="payment-return-pricing">View plans</Link>
+              <Link to="/pricing?source=pay_return_retry" className="btn-ghost text-sm" data-testid="payment-return-pricing">View plans</Link>
             </div>
           </div>
         )}
@@ -141,7 +141,7 @@ export default function PaymentReturn() {
             <p className="text-sm text-muted">The payment gateway is taking longer than usual. If you completed payment, your credits will appear automatically once it confirms.</p>
             <div className="flex gap-2 flex-wrap mt-4">
               <Link to="/dashboard" className="btn-ghost text-sm">Back to dashboard</Link>
-              <Link to="/pricing" className="btn-ghost text-sm">Pricing</Link>
+              <Link to="/pricing?source=pay_return_retry" className="btn-ghost text-sm">Pricing</Link>
             </div>
           </div>
         )}
@@ -151,7 +151,7 @@ export default function PaymentReturn() {
             <div className="text-rose-300 font-mono text-[11px] uppercase tracking-widest mb-2">ERROR</div>
             <h1 className="font-display text-xl font-bold mb-1">Could not load the order</h1>
             <p className="text-sm text-muted">{error}</p>
-            <Link to="/pricing" className="btn-ghost text-sm mt-4 inline-block">Back to pricing</Link>
+            <Link to="/pricing?source=pay_return_retry" className="btn-ghost text-sm mt-4 inline-block">Back to pricing</Link>
           </div>
         )}
       </div>

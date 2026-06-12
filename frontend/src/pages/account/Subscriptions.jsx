@@ -124,7 +124,11 @@ export default function Subscriptions() {
             </div>
           </div>
           <div className="flex flex-col gap-2 items-end">
-            <Link to="/pricing" className="btn-brutal text-xs" data-testid="manage-plan-btn">
+            <Link
+              to={`/pricing?source=${state?.state === "expired" ? "subscription_expired" : "profile_manage_subscription"}`}
+              className="btn-brutal text-xs"
+              data-testid="manage-plan-btn"
+            >
               {state?.current_plan_id && state.current_plan_id !== "free" ? "Change plan" : "Choose a plan"}
             </Link>
             {state?.state === "active" && !isAdminUnlimited && (
@@ -188,7 +192,7 @@ export default function Subscriptions() {
 
         {orderList.length === 0 ? (
           <div className="text-sm text-muted py-4" data-testid="orders-empty">
-            No purchases yet. Pick a plan on <Link to="/pricing" className="text-amber underline">/pricing</Link> to get started.
+            No purchases yet. Pick a plan on <Link to="/pricing?source=profile_manage_subscription" className="text-amber underline">/pricing</Link> to get started.
           </div>
         ) : (
           <div className="overflow-x-auto">
