@@ -101,6 +101,12 @@ const SECTIONS = [
         blurb: "Net subscriber growth, churn/renewal/won-back ratios, MRR + ARPPU. Derived from payment rows — reproducible, never snapshot-based.",
         testId: "admin-card-subscriber-motion",
       },
+      {
+        to: "/admin/cost-telemetry",
+        name: "Cost Telemetry · Profit Per Feature",
+        blurb: "Credits consumed × cost per credit per feature. Revenue attribution by entry point. Configurable cost table — no silent guessing.",
+        testId: "admin-card-cost-telemetry",
+      },
     ],
   },
   {

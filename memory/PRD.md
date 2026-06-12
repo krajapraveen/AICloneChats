@@ -23,6 +23,28 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (Cost Telemetry Dashboard — Profit per Feature + Contribution by Source)** — The cost-side counterpart to the Subscriber Motion dashboard. Closes the "revenue without cost visibility" gap.
+  - **Backend** (`/app/backend/cost_telemetry.py`)
+    - `GET /api/admin/cost-telemetry/cost-config` + `POST` — admin-configurable estimated INR cost per credit, per feature. Whitelisted against the master `ALLOWED_FEATURES` taxonomy; negative / non-numeric values rejected with 400. Stored in `admin_settings.cost_telemetry_cost_per_credit_inr`.
+    - `GET /api/admin/cost-telemetry/profit-per-feature?days=7|30|90` — per-feature: `credits_consumed`, `usage_count`, `share_of_credits_pct`, `estimated_cost_inr`, `cost_source` (`configured` / `not_configured`), `revenue_attributed_inr`, `gross_profit_inr`, `margin_pct`. Plus a `totals` block + `config_status`.
+      - Revenue apportionment = `total_revenue × (feature_credits / total_credits)`. The dashboard labels this explicitly as an apportionment.
+      - Refunds + admin_adjusts excluded from consumption to keep the math honest.
+      - Legacy rows (no `feature`) bucket to `unknown` via `$ifNull` — pinned by test.
+    - `GET /api/admin/cost-telemetry/contribution-by-source?days=` — funnel by `pricing_visit_source`: `visits` (from funnel_events), `checkout_starts` (all payment_orders), `paid_orders`, `conversion_pct`, `revenue_inr`, `arppu_inr`. Sorted by revenue desc. Legacy rows bucket to `unknown`.
+  - **Frontend** (`/admin/cost-telemetry`, `/app/frontend/src/pages/AdminCostTelemetry.jsx`)
+    - 7/30/90 window selector, refresh, configure-costs inline editor with per-feature inputs.
+    - 5-tile top summary: Revenue, Credits consumed, Estimated cost, Gross profit, Overall margin.
+    - **Profit per feature table** with usage / credits / share / est-cost / revenue-attributed / gross-profit / margin. Features without configured cost render `—` and are excluded from margin math.
+    - **Contribution by source table** with visits / checkout starts / paid / conversion% / revenue / ARPPU per `pricing_visit_source`.
+    - Wired into AdminIndex under Analytics.
+  - **Operator-configurable costs by design**: defaults are EMPTY. The dashboard never invents numbers — features with no configured cost-per-credit render `—` until the operator sets one. Margin tile shows "Partial — some features uncosted" when costs are incomplete.
+  - **Tests** (`/app/backend/tests/test_cost_telemetry.py`, 9/9 passing):
+    - Cost config round-trip, unknown-feature key rejection, negative-cost rejection, profit endpoint shape, profit math consistency (`gross = revenue − cost`, apportionment sums to total), unknown-feature `$ifNull` bucketing, contribution endpoint shape, unknown-source `$ifNull` bucketing, admin-only gate.
+  - **Live verification**: 30d window shows Revenue ₹1,22,918 · 239 credits consumed · 7 features rendered (5 tagged + image/avatar = 0 + unknown = 151 legacy). Configurable cost table works end-to-end; total margin computes once every feature has a cost.
+  - **Files added**: `backend/cost_telemetry.py`, `backend/tests/test_cost_telemetry.py`, `frontend/src/pages/AdminCostTelemetry.jsx`.
+  - **Files modified**: `backend/server.py` (router registration), `frontend/src/App.js` (route `/admin/cost-telemetry`), `frontend/src/pages/AdminIndex.jsx` (Analytics card).
+  - **Cumulative session tests**: 85/85 passing.
+
 - **2026-06-12 (Pricing-Visit Source Tracking + Plan Preselection UX)** — Funnel attribution + a smarter `/pricing` experience.
   - **Backend** (`/app/backend/analytics_revenue.py`, `/app/backend/payments/router.py`)
     - `POST /api/funnel/event` now accepts a `source` field. Whitelisted to 9 values: `landing_hero`, `landing_pricing`, `dashboard_upgrade`, `credits_exhausted`, `clone_limit_reached`, `subscription_expired`, `profile_manage_subscription`, `pay_return_retry`, `unknown`. Off-list / missing values coerce to `unknown`.

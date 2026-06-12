@@ -131,6 +131,10 @@ app.include_router(subscription_state.admin_router)
 import subscription_motion  # noqa: E402
 app.include_router(subscription_motion.router)
 
+# Cost telemetry — profit-per-feature + revenue attribution by source
+import cost_telemetry  # noqa: E402
+app.include_router(cost_telemetry.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
