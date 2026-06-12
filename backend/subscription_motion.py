@@ -260,6 +260,14 @@ async def _compute_motion(days: int) -> dict:
     mrr_estimate = round((in_window_revenue / max(1, days)) * 30, 2)
     arppu = round(mrr_estimate / max(1, active_end), 2)
 
+    # ── Target overlay (admin-configurable monthly net growth %)
+    target_doc = await db.admin_settings.find_one({"key": "subscriber_motion_target"}, {"_id": 0})
+    monthly_target_pct = float((target_doc or {}).get("monthly_net_growth_pct", 15.0))
+    # Window-normalised target so a 7d window's target is proportionally smaller
+    target_for_window_pct = round(monthly_target_pct * (days / 30.0), 2)
+    gap_pct = round(net_growth - target_for_window_pct, 2)
+    on_track = gap_pct >= 0
+
     return {
         "window_days": days,
         "computed_at": now.isoformat(),
@@ -287,6 +295,13 @@ async def _compute_motion(days: int) -> dict:
             "mrr_estimate_inr": mrr_estimate,
             "arppu_inr": arppu,
         },
+        "target": {
+            "monthly_net_growth_pct": monthly_target_pct,
+            "target_for_window_pct": target_for_window_pct,
+            "actual_net_growth_pct": net_growth,
+            "gap_pct": gap_pct,
+            "on_track": on_track,
+        },
         "definitions": {
             "new_subscriber": "User's first-ever paid order.",
             "renewal": "Paid order after the previous period had ended (with or without grace).",
@@ -305,6 +320,40 @@ async def subscriber_motion(
     days: int = Query(default=30, ge=1, le=365),
 ):
     return await _compute_motion(days)
+
+
+@router.get("/subscriber-motion/target")
+async def get_target(admin: dict = Depends(get_admin_user)):
+    doc = await db.admin_settings.find_one({"key": "subscriber_motion_target"}, {"_id": 0})
+    return {"monthly_net_growth_pct": float((doc or {}).get("monthly_net_growth_pct", 15.0))}
+
+
+@router.post("/subscriber-motion/target")
+async def set_target(payload: dict, admin: dict = Depends(get_admin_user)):
+    """Admin sets the monthly net-growth target in %.
+
+    No validation beyond 'is a finite number'. Negative targets are valid —
+    a shrink-mode business may want "less than -3% monthly net loss" as the
+    goal during a wind-down period.
+    """
+    try:
+        pct = float(payload.get("monthly_net_growth_pct"))
+        if pct != pct or pct in (float("inf"), float("-inf")):
+            raise ValueError("not finite")
+    except Exception:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=400, detail={"code": "invalid_target", "message": "monthly_net_growth_pct must be a finite number."})
+    await db.admin_settings.update_one(
+        {"key": "subscriber_motion_target"},
+        {"$set": {
+            "key": "subscriber_motion_target",
+            "monthly_net_growth_pct": pct,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": admin.get("email"),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "monthly_net_growth_pct": pct}
 
 
 @router.get("/subscriber-trend")

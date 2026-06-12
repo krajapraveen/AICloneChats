@@ -17,6 +17,7 @@
  */
 import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
+import { toast } from "sonner";
 import api from "../lib/api";
 import Navbar from "../components/Navbar";
 import { useAuth } from "../contexts/AuthContext";
@@ -74,6 +75,9 @@ export default function AdminSubscriberMotion() {
   const [trend, setTrend] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [targetDraft, setTargetDraft] = useState("");
+  const [savingTarget, setSavingTarget] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -89,6 +93,25 @@ export default function AdminSubscriberMotion() {
       setError(e?.response?.data?.detail?.message || "Could not load subscriber motion.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveTarget = async () => {
+    const pct = Number(targetDraft);
+    if (!Number.isFinite(pct)) {
+      toast.error("Enter a finite number, e.g. 15");
+      return;
+    }
+    setSavingTarget(true);
+    try {
+      await api.post("/admin/revenue/subscriber-motion/target", { monthly_net_growth_pct: pct });
+      toast.success(`Target set to ${pct}% monthly net growth`);
+      setEditingTarget(false);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail?.message || "Could not save target.");
+    } finally {
+      setSavingTarget(false);
     }
   };
 
@@ -187,6 +210,85 @@ export default function AdminSubscriberMotion() {
               <p className="text-[10px] font-mono text-muted">
                 MRR = (window revenue / window days) × 30 · ARPPU = MRR / active subscribers at end
               </p>
+            </section>
+
+            {/* ── Target vs Actual overlay ──────────────────── */}
+            <section className="space-y-3" data-testid="motion-target">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Target vs actual · {days}d</h2>
+                {!editingTarget ? (
+                  <button
+                    type="button"
+                    onClick={() => { setEditingTarget(true); setTargetDraft(String(motion.target?.monthly_net_growth_pct ?? 15)); }}
+                    className="btn-ghost text-[11px]"
+                    data-testid="motion-target-edit-btn"
+                  >
+                    Edit monthly target
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={targetDraft}
+                      onChange={(e) => setTargetDraft(e.target.value)}
+                      className="input-brutal text-xs py-1.5 w-24"
+                      data-testid="motion-target-input"
+                    />
+                    <span className="text-[11px] font-mono text-muted">% / month</span>
+                    <button
+                      type="button"
+                      onClick={saveTarget}
+                      disabled={savingTarget}
+                      className="btn-brutal text-[11px] py-1.5 px-2.5 disabled:opacity-40"
+                      data-testid="motion-target-save-btn"
+                    >
+                      {savingTarget ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingTarget(false)}
+                      className="btn-ghost text-[11px] py-1.5 px-2.5"
+                      data-testid="motion-target-cancel-btn"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className={`brutal-card p-4 border ${motion.target?.on_track ? "border-emerald-500/40 bg-emerald-500/5" : "border-rose/40 bg-rose-500/5"}`}>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-baseline">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Monthly target</div>
+                    <div className="text-xl font-display font-bold mt-0.5" data-testid="target-monthly">
+                      {motion.target?.monthly_net_growth_pct >= 0 ? "+" : ""}{motion.target?.monthly_net_growth_pct}%
+                    </div>
+                    <div className="text-[10px] font-mono text-muted mt-0.5">configured</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Target · {days}d</div>
+                    <div className="text-xl font-display font-bold mt-0.5" data-testid="target-window">
+                      {motion.target?.target_for_window_pct >= 0 ? "+" : ""}{motion.target?.target_for_window_pct}%
+                    </div>
+                    <div className="text-[10px] font-mono text-muted mt-0.5">window-normalised</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Actual</div>
+                    <div className={`text-xl font-display font-bold mt-0.5 ${(motion.target?.actual_net_growth_pct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-soft"}`} data-testid="target-actual">
+                      {motion.target?.actual_net_growth_pct >= 0 ? "+" : ""}{motion.target?.actual_net_growth_pct}%
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted">Gap</div>
+                    <div className={`text-2xl font-display font-bold mt-0.5 ${motion.target?.on_track ? "text-emerald-300" : "text-rose-soft"}`} data-testid="target-gap">
+                      {motion.target?.gap_pct >= 0 ? "+" : ""}{motion.target?.gap_pct}%
+                    </div>
+                    <div className={`text-[10px] font-mono uppercase tracking-widest mt-0.5 ${motion.target?.on_track ? "text-emerald-300" : "text-rose-soft"}`} data-testid="target-status">
+                      {motion.target?.on_track ? "Ahead of target" : "Behind target"}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </section>
 
             {/* ── 2. Subscriber Motion ──────────────────────── */}

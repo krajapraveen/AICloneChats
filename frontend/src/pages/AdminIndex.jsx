@@ -140,6 +140,12 @@ const SECTIONS = [
         testId: "admin-card-email-health",
       },
       {
+        to: "/admin/renewal-reminders",
+        name: "Renewal Reminders",
+        blurb: "Idempotent expiry-nudge pipeline. Due today / sent / failed, upcoming expirations, run history. Manual run + scheduler recipe.",
+        testId: "admin-card-renewal-reminders",
+      },
+      {
         to: "/admin/support",
         name: "Concerns / Recommendations",
         blurb: "User-submitted concerns and recommendations. Reply inline, mark resolved or closed. All threads logged for audit.",

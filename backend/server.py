@@ -112,6 +112,7 @@ app.include_router(profile_aliases.admin_router)
 # Renewal reminders — admin-trigger endpoint + startup hook (best-effort, idempotent)
 import renewal_reminders  # noqa: E402
 app.include_router(renewal_reminders.router)
+app.include_router(renewal_reminders.billing_alias_router)
 
 # Account lifecycle — Apple/Google-compliant in-app account deletion
 import account_lifecycle  # noqa: E402
@@ -315,11 +316,17 @@ async def on_startup():
         await _al_indexes()
     except Exception as e:
         logger.warning("account_lifecycle.ensure_indexes failed: %s", e)
+    # Renewal reminder run-log indexes
+    try:
+        from renewal_reminders import ensure_indexes as _rr_indexes
+        await _rr_indexes()
+    except Exception as e:
+        logger.warning("renewal_reminders.ensure_indexes failed: %s", e)
     # Renewal reminders — fire any due reminders at boot. Idempotent (writes
     # renewal_reminder_sent_for=order_id, so re-runs are safe). Skips admins.
     try:
         from renewal_reminders import run_due_reminders as _renewal_run
-        summary = await _renewal_run(dry_run=False)
+        summary = await _renewal_run(dry_run=False, triggered_by="startup_hook")
         logger.info("renewal_reminders boot scan: %s", summary)
     except Exception as e:
         logger.warning("renewal_reminders boot scan failed: %s", e)

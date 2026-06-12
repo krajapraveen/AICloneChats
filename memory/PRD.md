@@ -23,6 +23,25 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (P1.5 + Target Overlay — Renewal Reliability + Configurable Growth Targets)** — Final operational-foundation pieces before user-facing feature work resumes.
+  - **P1.5 — Production Renewal Reminder Scheduler**
+    - **Endpoint** (spec URL): `POST /api/admin/billing/run-renewal-reminders?dry_run=false`. Admin-only, returns full summary `{run_id, ran_at, triggered_by, examined, sent, skipped_admin, skipped_already, failures, dry_run, failure_samples}`. Legacy `/api/admin/renewal-reminders/run` kept for backwards compatibility.
+    - **Persisted run log**: every NON-dry-run is recorded in `db.renewal_reminder_run_logs` (unique `run_id` index + `ran_at` sort index). Dry-runs deliberately don't pollute the log.
+    - **Idempotency**: dedup key = `renewal_reminder_cycle_identifier` = `order_id` of current paid order, stored on user doc as `renewal_reminder_sent_for`. Safe to run hundreds of times daily.
+    - **Dashboard endpoint**: `GET /api/admin/billing/renewal-reminders/summary` returns today's tiles (due / sent / failed / skipped_already / skipped_admin / runs) + next-50 expiring + last-10 runs + config block.
+    - **Admin UI**: `/admin/renewal-reminders` page with 6 today-tiles, next-expiring table with per-row "Reminded?" badge, recent-runs history, manual Run/Dry-run buttons, embedded curl snippet for schedulers. Wired into AdminIndex under Operations.
+    - **Deployment guide**: `/app/docs/RENEWAL_SCHEDULER.md` — three full recipes (Cloudflare Cron Trigger / GitHub Actions Workflow / systemd timer) + auth-token mint guide + rollback steps. Recommended schedule **09:00 UTC daily**.
+    - **Defensive fixes**: now skips `is_deleted` and `is_deactivated` users (was previously only Admin·Unlimited).
+    - **Tests** (`test_renewal_reminders.py`, 7/7 passing): spec-URL shape, dry-run doesn't flip state, dry-run not persisted, real run persisted, idempotency across repeat runs, dashboard endpoint shape, auth gate.
+  - **Target vs Actual Overlay on Subscriber Motion**
+    - **Backend**: `_compute_motion` now reads `db.admin_settings.subscriber_motion_target` and adds a `target` block to the response with `{monthly_net_growth_pct, target_for_window_pct, actual_net_growth_pct, gap_pct, on_track}`. Window-normalised so a 7d window's target is proportionally smaller than the 30d target.
+    - **Endpoints**: `GET /api/admin/revenue/subscriber-motion/target`, `POST /api/admin/revenue/subscriber-motion/target` (admin-only). Stored in `admin_settings` keyed by `subscriber_motion_target`.
+    - **Frontend**: New "Target vs actual" section between Executive Summary and Subscriber Motion. Border colour-coded green (ahead) / red (behind). Inline Edit/Save flow without leaving the page.
+    - **Tests** (3 new in `test_subscription_motion.py`): overlay shape, GET/POST round-trip (incl. window normalisation), invalid-target rejection.
+  - **Files added**: `backend/tests/test_renewal_reminders.py`, `frontend/src/pages/AdminRenewalReminders.jsx`, `docs/RENEWAL_SCHEDULER.md`.
+  - **Files modified**: `backend/renewal_reminders.py` (rewritten with billing alias router, run-log persistence, dashboard summary, deletion-flag skip), `backend/subscription_motion.py` (added target block + GET/POST target endpoints), `backend/server.py` (router registration + ensure_indexes), `frontend/src/pages/AdminSubscriberMotion.jsx` (added Target vs Actual section + inline editor), `frontend/src/App.js` (route), `frontend/src/pages/AdminIndex.jsx` (Renewal Reminders card).
+  - **Test suite delta**: +10 new tests (7 renewal + 3 target). Cumulative session total: **39/39 passing**.
+
 - **2026-06-12 (Subscriber Motion + Churn Velocity — business intelligence layer)** — Headline subscription-business read built on transition-event reproducibility.
   - **Backend** (`/app/backend/subscription_motion.py`)
     - `GET /api/admin/revenue/subscriber-motion?days=7|30|90` — returns:

@@ -219,3 +219,52 @@ def test_non_admin_blocked(admin_token: str):
     # Try without auth at all → 401
     r = requests.get(f"{BASE_URL}/api/admin/revenue/subscriber-motion?days=30", timeout=15)
     assert r.status_code in (401, 403), r.text
+
+
+def test_target_overlay_present(admin_token: str):
+    body = _motion(admin_token, 30)
+    assert "target" in body, body
+    t = body["target"]
+    for k in ("monthly_net_growth_pct", "target_for_window_pct", "actual_net_growth_pct", "gap_pct", "on_track"):
+        assert k in t, k
+
+
+def test_target_get_set_round_trip(admin_token: str):
+    # Set
+    r = requests.post(
+        f"{BASE_URL}/api/admin/revenue/subscriber-motion/target",
+        json={"monthly_net_growth_pct": 12.5},
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["monthly_net_growth_pct"] == 12.5
+    # Get
+    r2 = requests.get(
+        f"{BASE_URL}/api/admin/revenue/subscriber-motion/target",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=15,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["monthly_net_growth_pct"] == 12.5
+
+    # Window-normalised in 30d window equals the configured monthly target
+    motion = _motion(admin_token, 30)
+    assert motion["target"]["monthly_net_growth_pct"] == 12.5
+    assert motion["target"]["target_for_window_pct"] == 12.5
+
+    # In a 7d window the target is proportionally smaller
+    motion7 = _motion(admin_token, 7)
+    expected_7d = round(12.5 * (7 / 30.0), 2)
+    assert motion7["target"]["target_for_window_pct"] == expected_7d
+
+
+def test_target_rejects_non_finite(admin_token: str):
+    r = requests.post(
+        f"{BASE_URL}/api/admin/revenue/subscriber-motion/target",
+        json={"monthly_net_growth_pct": "not a number"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=15,
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "invalid_target"
