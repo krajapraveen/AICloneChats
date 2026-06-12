@@ -338,6 +338,7 @@ async def admin_credit_adjust(payload: dict, _admin: dict = Depends(_require_adm
         "balance_before": new_balance - delta,
         "balance_after": new_balance,
         "surface": f"admin:{reason}",
+        "feature": "admin_adjustment",
         "request_id": _admin.get("email"),
         "created_at": now_iso(),
     })

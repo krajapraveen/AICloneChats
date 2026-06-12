@@ -259,6 +259,58 @@ CREDIT_COST = {
 }
 
 
+# ----- Feature tagging for Cost Telemetry -----
+# Every credit_events row carries a `feature` field derived from `surface` so
+# the upcoming Cost Telemetry Dashboard can do a single $group aggregation
+# instead of string-matching across N surface labels. The taxonomy is the
+# user's product taxonomy, not the engineering one — `chat` covers many
+# message surfaces, `voice` covers TTS + voice-message in one bucket, etc.
+ALLOWED_FEATURES = (
+    "ai_clone", "voice", "video", "chat", "image",
+    "avatar", "subscription", "admin_adjustment", "unknown",
+)
+
+# surface label → feature bucket. Surfaces NOT in this map default to "unknown".
+SURFACE_FEATURE_MAP: dict[str, str] = {
+    # Clone-creation related (memory uploads counted toward clone authoring)
+    "clone_chat": "ai_clone",
+    "conversation_memory": "ai_clone",
+    # Text chat surfaces
+    "mood_chat": "chat",
+    "translation_chat": "chat",
+    "smart_reply": "chat",
+    "debate_chat": "chat",
+    "delayed_create": "chat",
+    "anonymous_chat": "chat",
+    # Voice generation surfaces
+    "voice_message": "voice",
+    # Video / avatar surfaces
+    "video_avatar": "video",
+    # NOTE: image and avatar feature buckets are reserved here for future
+    # surfaces (image_generation, avatar_generation). They're listed in
+    # ALLOWED_FEATURES so downstream code can switch on them without
+    # adding code in two places later.
+}
+
+
+def feature_for_surface(surface: Optional[str]) -> str:
+    """Derive the feature bucket from a surface label.
+
+    Subscription credit grants pass surface as 'payment:<plan>' and top-ups
+    as 'topup:<pack_id>' — both map to `subscription`. Admin adjustments
+    pass surface as 'admin_adjust:<reason>' or kind=='admin_adjust' — they
+    map to `admin_adjustment`.
+    """
+    if not surface:
+        return "unknown"
+    s = surface.lower()
+    if s.startswith("payment:") or s.startswith("topup:") or s == "subscription":
+        return "subscription"
+    if s.startswith("admin_adjust") or s.startswith("admin:"):
+        return "admin_adjustment"
+    return SURFACE_FEATURE_MAP.get(s, "unknown")
+
+
 # ----- Credit grant: signup grants are DISABLED (founder directive 2026-05-11) -----
 # New users start at 0. They must subscribe to receive credits.
 # This function is kept callable for backward compatibility but now returns
@@ -433,7 +485,25 @@ async def get_user_credit_state(user: dict) -> dict:
 
 
 # ----- Audit log -----
-async def _emit_credit_event(user_id: str, kind: str, delta: int, balance_before: int, balance_after: int, *, surface: str, request_id: Optional[str]) -> None:
+async def _emit_credit_event(
+    user_id: str, kind: str, delta: int,
+    balance_before: int, balance_after: int,
+    *, surface: str, request_id: Optional[str],
+    feature: Optional[str] = None,
+) -> None:
+    # Derive feature from surface unless caller passed an explicit override.
+    if feature is None:
+        # `admin_adjust` is a kind, not a surface — handle it here so existing
+        # callers (admin/billing/credit-adjust route) don't need to thread the
+        # mapping themselves.
+        if kind == "admin_adjust":
+            feature = "admin_adjustment"
+        elif kind in ("grant",) and (surface or "").startswith(("payment:", "topup:")):
+            feature = "subscription"
+        else:
+            feature = feature_for_surface(surface)
+    if feature not in ALLOWED_FEATURES:
+        feature = "unknown"
     await db.credit_events.insert_one({
         "event_id": uuid.uuid4().hex,
         "user_id": user_id,
@@ -442,6 +512,7 @@ async def _emit_credit_event(user_id: str, kind: str, delta: int, balance_before
         "balance_before": balance_before,
         "balance_after": balance_after,
         "surface": surface,
+        "feature": feature,
         "request_id": request_id,
         "created_at": now_iso(),
     })

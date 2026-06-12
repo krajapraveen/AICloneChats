@@ -23,6 +23,19 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (Per-Feature Cost Tagging — Cost Telemetry foundation)** — Single-line, zero-callsite-changes addition that makes the upcoming Cost Telemetry Dashboard a one-`$group`-query exercise.
+  - **Backend** (`/app/backend/credits.py`)
+    - New `ALLOWED_FEATURES` taxonomy: `ai_clone`, `voice`, `video`, `chat`, `image`, `avatar`, `subscription`, `admin_adjustment`, `unknown`.
+    - New `SURFACE_FEATURE_MAP` and `feature_for_surface()` helper. Every existing surface label routes to the right bucket without changing any caller's signature.
+    - `_emit_credit_event` now derives `feature` automatically from `surface` + `kind`. Payment grants (`payment:<plan>`, `topup:<pack>`) → `subscription`. Admin labels (`admin:<reason>`, `admin_adjust:*`) → `admin_adjustment`. Unknown / future surfaces → `unknown` (never raises).
+    - `billing_api.admin_credit_adjust` route directly writes `feature: "admin_adjustment"` on its insert (the only credit_events insert outside `credits.py`).
+  - **Backward compatibility**: rows written before this change have NO `feature` field. The Cost Telemetry Dashboard MUST use `{$ifNull: ["$feature", "unknown"]}` in its `$group` keys — pinned by a regression test so any future query that forgets it will be caught.
+  - **No backfill**: historical rows stay untagged on purpose. Backfilling would require speculation about old surface labels we no longer ship, and the `unknown` bucket visibly surfaces stale data in the dashboard for follow-up.
+  - **Tests** (`/app/backend/tests/test_credit_feature_tagging.py`, 18/18 passing):
+    - Taxonomy completeness, full surface→feature mapping, parametrised deduction across all 10 surfaces, refund carries same feature as the deduction, subscription + topup grants both map to `subscription`, unknown surface gracefully falls back to `unknown`, legacy rows without `feature` aggregate correctly via `$ifNull`, callsite backward-compatibility (no signature changes).
+  - **Live verification**: today's credit_events distribution = `chat: 16 · ai_clone: 7 · subscription: 6 · voice: 6 · unknown: 3 · video: 2`. Every new event since this work landed is correctly tagged.
+  - **Cumulative session tests**: 61/61 passing.
+
 - **2026-06-12 (Scheduler Heartbeat — silent-failure protection)** — Operator-visible health badge for the renewal reminder scheduler.
   - **Backend**: `renewal_reminders.py` now:
     - Detects scheduler source from the request User-Agent (`cloudflare_cron`, `github_actions`, `systemd_timer`, `manual_admin`, `manual_browser`, `manual_cli`, `startup_hook`, `unknown`).
