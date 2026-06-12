@@ -113,6 +113,12 @@ const SECTIONS = [
         blurb: "Deletions + pending cancellations bucketed by free-form reason. Pure observation — the system remembers, it does not chase.",
         testId: "admin-card-exit-insights",
       },
+      {
+        to: "/admin/user-activity",
+        name: "User Activity · Who, Where, How",
+        blurb: "Per-user: last login (timestamp + city/country), login count, feature uses, plan, full chronological timeline on drill-down. Search by email.",
+        testId: "admin-card-user-activity",
+      },
     ],
   },
   {

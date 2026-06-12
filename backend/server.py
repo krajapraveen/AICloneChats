@@ -145,6 +145,9 @@ app.include_router(cost_telemetry_rollup.router)
 import exit_insights  # noqa: E402
 app.include_router(exit_insights.router)
 
+import admin_user_activity  # noqa: E402
+app.include_router(admin_user_activity.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
