@@ -147,11 +147,22 @@ def test_send_via_smtp_sets_reply_to_header(monkeypatch):
 
 
 # ───────────────────── support_inbox call-site layer ─────────────────────
+#
+# Note (Feb 12, 2026 policy change): we no longer send any email when a user
+# submits a concern/recommendation. Admins read the thread inside the in-app
+# admin support inbox. The Reply-To plumbing in email_sender stays —
+# transactional emails (password reset, etc.) still benefit from it — but
+# the support-thread notification call site no longer triggers a send.
+#
+# The test below guards that policy: a new thread must NOT invoke
+# send_email at all. Older versions of this file (pre-Feb 12) asserted the
+# opposite — that send_email was called with reply_to=user.email. Those
+# assertions are intentionally inverted now.
 
-def test_notify_admins_new_thread_passes_user_email_as_reply_to(monkeypatch):
-    """The wiring in support_inbox.py must call send_email with
-    `reply_to=<user's email>`. This is what fixes the original bug
-    (admin clicks Reply → To: vishal7293kumar@gmail.com, not admin@…)."""
+def test_notify_admins_new_thread_no_email_sent(monkeypatch):
+    """Policy guard: _notify_admins_new_thread is a noop. It must not
+    invoke email_sender.send_email under any circumstances (no email
+    ping to admin@aiclonechats.com / krajapraveen@aiclonechats.com / etc.)."""
     import support_inbox
 
     sent_calls: list[dict] = []
@@ -176,38 +187,7 @@ def test_notify_admins_new_thread_passes_user_email_as_reply_to(monkeypatch):
     }
     _run(support_inbox._notify_admins_new_thread(thread, user))
 
-    assert len(sent_calls) == 2, "should fan out to two admin recipients"
-    for call in sent_calls:
-        assert call["reply_to"] == "vishal7293kumar@gmail.com", (
-            "admin notification Reply-To must be the user's email, not the no-reply sender"
-        )
-        # And the To field is the admin (each admin gets their own email)
-        assert call["to_email"] in {"admin@aiclonechats.com", "owner@aiclonechats.com"}
-        assert call["purpose"] == "support_thread_admin_notify"
-
-
-def test_notify_admins_handles_missing_user_email_gracefully(monkeypatch):
-    """If the submitting user record is missing an email for any reason,
-    we still send the notification — just without a Reply-To header."""
-    import support_inbox
-
-    sent_calls: list[dict] = []
-
-    async def fake_send(**kwargs):
-        sent_calls.append(kwargs)
-        return True, "fake"
-
-    monkeypatch.setattr("email_sender.send_email", fake_send)
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@aiclonechats.com")
-
-    thread = {
-        "thread_id": "th_x", "kind": "concern", "subject": "s",
-        "messages": [{"body": "b"}],
-    }
-    user = {"email": "", "user_id": "u_anon"}
-    _run(support_inbox._notify_admins_new_thread(thread, user))
-
-    assert sent_calls
-    # When user email is empty/falsy we pass None so providers omit the
-    # header rather than send an invalid empty Reply-To.
-    assert sent_calls[0]["reply_to"] is None
+    assert sent_calls == [], (
+        "Per Feb 12 2026 policy, user concerns/recommendations stay in-app. "
+        "_notify_admins_new_thread must NOT call email_sender.send_email."
+    )

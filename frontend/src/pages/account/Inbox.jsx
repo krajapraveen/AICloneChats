@@ -83,7 +83,7 @@ function NewThreadForm({ onCreated }) {
       />
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-[11px] text-muted">
-          Goes to admin@aiclonechats.com & krajapraveen@aiclonechats.com. We reply here.
+          Admins will read this here. Their reply appears below — no email is sent.
         </p>
         <button type="submit" disabled={loading} className="btn-brutal text-xs disabled:opacity-50" data-testid="inbox-send-btn">
           {loading ? "Sending…" : "Send"}
@@ -251,7 +251,7 @@ Inbox.Wrap = function Wrap({ children }) {
   return (
     <section data-testid="inbox-section">
       <h2 className="heading-display text-2xl mb-1">Inbox</h2>
-      <p className="text-sm text-muted mb-5">Direct line to the admin team. Reach krajapraveen@aiclonechats.com & admin@aiclonechats.com.</p>
+      <p className="text-sm text-muted mb-5">Direct line to the admin team. Everything stays in-app — admins read it here and reply here. No email ping.</p>
       {children}
     </section>
   );
