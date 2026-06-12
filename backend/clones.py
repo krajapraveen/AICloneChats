@@ -1,7 +1,7 @@
 import re
 import uuid
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
 
 from db import db
@@ -76,7 +76,17 @@ def _serialize(doc: dict) -> dict:
 
 
 @router.post("")
-async def create_clone(payload: CloneCreate, user: dict = Depends(get_current_user)):
+async def create_clone(payload: CloneCreate, request: Request, user: dict = Depends(get_current_user)):
+    # Anti-abuse guard — clone creation is moderately expensive (DB writes,
+    # safety moderation, IP-blocklist scan). Tight per-user caps to prevent
+    # spam clone farms. Admins bypass.
+    from anti_abuse import guard_expensive_action
+    await guard_expensive_action(
+        user=user, scope="clone.create", request=request,
+        max_per_user_per_min=5, max_per_user_per_hour=30,
+        endpoint="POST /api/clones",
+    )
+
     slug = payload.slug.lower()
     if slug in RESERVED_SLUGS:
         raise HTTPException(status_code=400, detail="Slug is reserved")
