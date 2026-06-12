@@ -163,6 +163,36 @@ def test_list_endpoint_sort_logins(admin_token):
     assert counts == sorted(counts, reverse=True), "logins sort must be DESC"
 
 
+def test_list_endpoint_default_sort_floats_active_users(admin_token, seeded_user):
+    """Regression: a user with NO recent activity must not outrank a user
+    with real activity under the default `last_active` DESC sort. This
+    catches the original "all rows blank" bug where the null-handling on
+    the sort key put inactive users at the top."""
+    # Default sort is `last_active`. The seeded_user has 3 fresh logins +
+    # 5 feature uses, so they must appear well within the first page (25)
+    # alongside other active users — not buried after every inactive
+    # account in the DB.
+    r = requests.get(
+        f"{BASE_URL}/api/admin/user-activity?days=30&limit=50",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=15,
+    )
+    body = r.json()
+    # Every item that appears MUST have a non-None last_active_at, OR they
+    # were genuinely the most-recent in the DB (which is fine). What
+    # matters is: a user with a fresh last_active_at can't sit after a
+    # user whose last_active_at is None.
+    seen_none = False
+    for item in body["items"]:
+        if item["last_active_at"] is None:
+            seen_none = True
+        else:
+            assert not seen_none, (
+                f"Non-null last_active_at {item['last_active_at']} appears AFTER "
+                f"a null. Nulls must sink to the bottom regardless of direction."
+            )
+
+
 def test_list_endpoint_user_doc_sanitized(admin_token, seeded_user):
     """No password_hash or reset_token_hash should leak into the list."""
     r = requests.get(

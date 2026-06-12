@@ -215,15 +215,21 @@ async def user_activity_list(
             "top_features": a.get("top_features", []),
         })
 
-    # Sort. Use a None-aware key that picks a type-appropriate default so
-    # we never compare str against int.
+    # Sort. We want nulls to sink to the BOTTOM regardless of direction
+    # (a user with no activity shouldn't outrank a user with 192 logins/30d
+    # just because they're alphabetically first). Two-pass stable sort:
+    #   1. Inner: sort by value, direction-aware
+    #   2. Outer: sort by has-value flag (stable, preserves inner ordering)
     sort_key, sort_dir = VALID_SORTS.get(sort, VALID_SORTS["last_active"])
     _NUMERIC_KEYS = {"logins_in_window", "feature_uses_in_window"}
     _default = 0 if sort_key in _NUMERIC_KEYS else ""
-    rows.sort(
-        key=lambda r: (r.get(sort_key) is None, r.get(sort_key) if r.get(sort_key) is not None else _default),
-        reverse=(sort_dir == -1),
-    )
+
+    def _value(r):
+        v = r.get(sort_key)
+        return v if v is not None else _default
+
+    rows.sort(key=_value, reverse=(sort_dir == -1))
+    rows.sort(key=lambda r: r.get(sort_key) in (None, "", 0))  # False (have value) before True (don't)
 
     # Paginate
     start = (page - 1) * limit

@@ -380,15 +380,30 @@ export default function AdminUserActivity() {
                       {u.role === "admin" && <span className="text-violet-soft mr-1.5">admin</span>}
                       {u.user_id}
                     </div>
+                    <div className="text-[10px] font-mono text-muted/70 mt-0.5">
+                      signed up {relative(u.created_at)}{u.auth_provider && u.auth_provider !== "email" ? ` · via ${u.auth_provider}` : ""}
+                    </div>
                   </td>
                   <td className="p-3"><PlanBadge plan_id={u.plan_id} plan_status={u.plan_status} /></td>
                   <td className="p-3 font-mono text-[11px]">
-                    <div>{relative(u.last_login_at)}</div>
-                    <div className="text-muted">{formatDateTime(u.last_login_at)}</div>
+                    {u.last_login_at ? (
+                      <>
+                        <div>{relative(u.last_login_at)}</div>
+                        <div className="text-muted">{formatDateTime(u.last_login_at)}</div>
+                      </>
+                    ) : (
+                      <span className="text-muted italic">never in window</span>
+                    )}
                   </td>
                   <td className="p-3 text-[12px]">
-                    <Location city={u.last_login_city} region={u.last_login_region} country={u.last_login_country} />
-                    {u.last_login_method && <div className="text-[10px] font-mono text-muted">{u.last_login_method}</div>}
+                    {(u.last_login_city || u.last_login_country) ? (
+                      <>
+                        <Location city={u.last_login_city} region={u.last_login_region} country={u.last_login_country} />
+                        {u.last_login_method && <div className="text-[10px] font-mono text-muted">{u.last_login_method}</div>}
+                      </>
+                    ) : (
+                      <span className="text-muted italic">—</span>
+                    )}
                   </td>
                   <td className="p-3 text-right font-mono text-[13px]">{u.logins_in_window}</td>
                   <td className="p-3 text-right font-mono text-[13px]">{u.feature_uses_in_window}</td>
