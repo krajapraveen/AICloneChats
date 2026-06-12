@@ -840,3 +840,35 @@ Built full legal/compliance surface for aiclonechats.com (5 pages + reusable lay
 
 **Production rollout:** code change only — runs idempotently on next redeploy via startup hook. Set `SEED_DEMO_CLONES=0` in production env vars if you want to disable seeding.
 
+
+---
+
+## My Profile + Inbox + Admin Support — Feb 11, 2026
+
+**User-facing surface at `/account/*`:**
+- `/account/space` — My Space — every clone owned by signed-in user. View/Edit per card.
+- `/account/inbox` — User ↔ Admin concerns/recommendations. Compose form (recommendation|concern kind, subject 3-120, body 10-4000). Thread list with status badges, unread "NEW" pill. Click → ThreadView with full message history + reply box. Closed threads are read-only.
+- `/account/settings/change-password` — current-password verify + live 6-rule strength checklist + match validation. Submit disabled until everything green. Server-side `_password_is_strong()` reused. Confirmation email sent. All other sessions invalidated.
+- `/account/settings/subscriptions` — current plan card + purchase history table. "Manage plan" CTA links to `/pricing`.
+
+**Admin-facing surface at `/admin/support`:**
+- Thread list with `status` filter + "unread only" toggle + unread-total chip.
+- ThreadDetail with inline reply form, four status pills (open / awaiting_user / resolved / closed) one-click switch.
+- New tile on `/admin` index page: "Concerns / Recommendations".
+
+**Backend additions:**
+- `/app/backend/support_inbox.py` — `db.support_threads` collection with messages array. Endpoints: `POST /api/support/threads`, `GET /api/support/threads`, `GET /api/support/threads/{id}`, `POST /api/support/threads/{id}/messages`, admin parallel under `/api/admin/support/*`. Anti-abuse: 3/min user create, 10/min user reply, admins bypass. Indexes ensured on startup.
+- `/app/backend/password_reset.py` — new `POST /api/auth/change-password` for authenticated change. Returns proper 400 codes: `wrong_current_password`, `password_unchanged`, `password_mismatch`, `weak_password`. On success: invalidates all `user_sessions`, sends confirmation email, audits.
+- `/app/backend/billing_api.py` — new `GET /api/me/orders` returns user's order history + current plan/credits/admin_unlimited flag.
+
+**Frontend additions:**
+- `/app/frontend/src/pages/Account.jsx` — shell with sidebar tabs + auth gate + outlet for nested routes. Unread-on-Inbox badge updates live via outlet context.
+- `/app/frontend/src/pages/account/{MySpace, Inbox, ChangePassword, Subscriptions}.jsx` — four child pages.
+- `/app/frontend/src/pages/AdminSupport.jsx` — admin-only thread management.
+- `/app/frontend/src/components/Navbar.jsx` — "My Profile" link for signed-in users (desktop + mobile).
+- `/app/frontend/src/pages/AdminIndex.jsx` — new admin tile.
+
+**Testing:** iteration_24 — **26/26 backend pytest + frontend Playwright PASS.** Verified the full create → user-reply → admin-reply → user-read → status-change → closed-thread loop end-to-end. All 4 change-password error codes validated. Anti-abuse 3/min rate-limit verified. Admin endpoint auth gates verified (403 for non-admin). sr-tester credentials restored to `TestPass123!`.
+
+**Production rollout:** code only — no env vars. Ready for next redeploy.
+
