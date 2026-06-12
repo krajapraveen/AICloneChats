@@ -189,11 +189,17 @@ async def _notify_admins_new_thread(thread: dict, user: dict) -> None:
       </p>
     </div>
     """
+    user_email = (user.get("email") or "").strip()
     for to_email in recipients:
         try:
             await _send_email(
                 to_email=to_email, subject=subject, html=body_html, text=body_text,
                 purpose="support_thread_admin_notify",
+                # Reply-To = the user who submitted the thread, so when admin
+                # clicks Reply in their mail client the response goes directly
+                # back to the original recommender, not to the no-reply
+                # sender address (admin@aiclonechats.com).
+                reply_to=user_email or None,
             )
         except Exception as e:
             logger.warning("support_inbox: admin notify send failed for %s: %s", to_email, e)

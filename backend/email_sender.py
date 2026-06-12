@@ -69,16 +69,23 @@ class SendResult:
 
 
 # ----- Provider implementations -----
-async def _send_via_resend(to_email: str, subject: str, html: str, text: str) -> SendResult:
+async def _send_via_resend(
+    to_email: str, subject: str, html: str, text: str,
+    reply_to: Optional[str] = None,
+) -> SendResult:
     started = time.monotonic()
     if not RESEND_API_KEY:
         return SendResult(False, "resend", 0, "not_configured")
     try:
+        payload = {"from": RESEND_FROM, "to": [to_email], "subject": subject, "text": text, "html": html}
+        if reply_to:
+            # Resend accepts reply_to as string or list — string is fine.
+            payload["reply_to"] = reply_to
         async with httpx.AsyncClient(timeout=RESEND_TIMEOUT_S) as client:
             r = await client.post(
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                json={"from": RESEND_FROM, "to": [to_email], "subject": subject, "text": text, "html": html},
+                json=payload,
             )
         latency = int((time.monotonic() - started) * 1000)
         if 200 <= r.status_code < 300:
@@ -90,7 +97,10 @@ async def _send_via_resend(to_email: str, subject: str, html: str, text: str) ->
         return SendResult(False, "resend", latency, f"exc_{type(e).__name__}")
 
 
-def _send_via_smtp_blocking(to_email: str, subject: str, html: str, text: str) -> Tuple[bool, Optional[str]]:
+def _send_via_smtp_blocking(
+    to_email: str, subject: str, html: str, text: str,
+    reply_to: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
     """Plain smtplib in a worker thread. SSL/TLS based on SMTP_USE_TLS + port."""
     if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD and SMTP_FROM):
         return False, "not_configured"
@@ -98,6 +108,8 @@ def _send_via_smtp_blocking(to_email: str, subject: str, html: str, text: str) -
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg["Subject"] = subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
     try:
@@ -123,12 +135,15 @@ def _send_via_smtp_blocking(to_email: str, subject: str, html: str, text: str) -
         return False, f"exc_{type(e).__name__}"
 
 
-async def _send_via_smtp(to_email: str, subject: str, html: str, text: str) -> SendResult:
+async def _send_via_smtp(
+    to_email: str, subject: str, html: str, text: str,
+    reply_to: Optional[str] = None,
+) -> SendResult:
     started = time.monotonic()
     if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD):
         return SendResult(False, "smtp", 0, "not_configured")
     try:
-        ok, err = await asyncio.to_thread(_send_via_smtp_blocking, to_email, subject, html, text)
+        ok, err = await asyncio.to_thread(_send_via_smtp_blocking, to_email, subject, html, text, reply_to)
         latency = int((time.monotonic() - started) * 1000)
         return SendResult(ok, "smtp", latency, None if ok else err)
     except Exception as e:
@@ -149,16 +164,21 @@ async def send_email(
     html: str,
     text: str,
     purpose: str = "transactional",
+    reply_to: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Try each configured provider in order. Logs every attempt. Returns
     (ok, used_provider_name). On total failure, used_provider_name is None.
+
+    `reply_to` (optional): sets the Reply-To header so when the recipient
+    clicks Reply in their mail client, the response goes to this address
+    instead of the sender (which is typically a no-reply mailbox).
     """
     chain = [p for p in EMAIL_PROVIDER_ORDER if p in PROVIDERS] or ["resend"]
     event_group = uuid.uuid4().hex[:12]
     attempted: List[SendResult] = []
     for provider_name in chain:
         sender = PROVIDERS[provider_name]
-        result = await sender(to_email, subject, html, text)
+        result = await sender(to_email, subject, html, text, reply_to=reply_to)
         attempted.append(result)
         # Log every attempt
         try:
