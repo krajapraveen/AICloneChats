@@ -23,6 +23,30 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (P1 — Provider-Metered Cost Ingestion)** — Real provider cost rows alongside the cost-telemetry dashboard. Replaces apportionment-based estimates with measured token/audio costs at the actual call sites.
+  - **Backend** (`/app/backend/provider_cost_recorder.py`)
+    - New collection `provider_cost_events` with one row per LLM / audio / video call. Fields: `cost_id`, `user_id`, `request_id`, `feature`, `surface`, `provider`, `model`, `pricing_key`, `input_tokens` / `output_tokens` (estimated via 4-chars-per-token heuristic), `cost_usd`, `cost_inr`, `usd_to_inr`, `cost_method` (`token_estimate` for LLM / `metered` for audio), `is_priced`.
+    - Default pricing table (USD per 1k tokens) for the models we actually use: OpenAI (gpt-4o, gpt-4o-mini, gpt-5.2), Anthropic (Sonnet/Haiku/Opus 4.5), Gemini (3 Flash/Pro), OpenAI TTS / Whisper, ElevenLabs, fal.ai lipsync, HeyGen, GPT-Image-1, Nano Banana. Operator can override any model + USD→INR rate.
+    - `record_llm_call(user_id, request_id, feature, surface, provider, model, input_text, output_text)` — estimates tokens, persists row. **Best-effort: never raises into the caller's request path** (verified by test).
+    - `record_audio_call(...)` — per-minute / per-second pricing × duration. Sets `cost_method=metered`.
+    - Indexes on `cost_id` (unique), `created_at`, `(feature, created_at)`, `request_id` (sparse).
+    - Admin endpoints: `GET /api/admin/cost-telemetry/provider-pricing`, `POST` (whitelisted value keys, negative/invalid rejected).
+  - **Call-site hooks** (highest-volume surfaces wired now; pattern is one-liner — remaining surfaces hook in a follow-up):
+    - `chat.py` (clone_chat) → records `ai_clone` feature with `anthropic / claude-sonnet-4-5-20250929`.
+    - `mood.py` (mood_chat) → records `chat` feature with `MOOD_MODEL`.
+  - **Cost Telemetry integration** (`cost_telemetry.py`)
+    - `profit-per-feature` now reads `provider_cost_events` in addition to the credit_events stream.
+    - **Precedence**: real metered cost > configured estimate > not_configured. When metered rows exist for a feature, `cost_source = "provider_metered"`, `estimated_cost_inr = sum(metered cost_inr)`, and the dashboard tags the row "metered · N calls" in green.
+    - New row fields: `metered_calls`, `metered_cost_inr`.
+  - **Frontend** (`AdminCostTelemetry.jsx`)
+    - "Est. cost" column distinguishes metered (green badge `metered · N calls`) from estimate (muted "est."). Operator can tell at-a-glance which feature's profit number is grounded in real provider math.
+  - **Tests** (`/app/backend/tests/test_provider_cost_recorder.py`, 10/10 passing):
+    - Token-estimation heuristic, persistence of LLM row with exact USD math, unknown-model graceful zero-cost row, audio per-minute math, recorder swallows errors (None provider/model), pricing config round-trip, negative-value rejection, invalid USD→INR rejection, telemetry switches `cost_source` to `provider_metered` when metered rows exist, admin-only gate.
+  - **Live verification**: `/admin/cost-telemetry?days=7` now shows ai_clone "metered · 6 calls" (₹3.66), voice "metered · 2 calls" (₹5.16). Other features still on configured estimate until those surfaces are hooked.
+  - **Files added**: `backend/provider_cost_recorder.py`, `backend/tests/test_provider_cost_recorder.py`.
+  - **Files modified**: `backend/server.py` (router + indexes), `backend/chat.py` (clone_chat hook), `backend/mood.py` (mood hook), `backend/cost_telemetry.py` (metered preference), `frontend/src/pages/AdminCostTelemetry.jsx` (badge), `backend/tests/test_cost_telemetry.py` (`cost_source` assertion relaxed to include `provider_metered`).
+  - **Cumulative session tests**: 95/95 passing.
+
 - **2026-06-12 (Cost Telemetry Dashboard — Profit per Feature + Contribution by Source)** — The cost-side counterpart to the Subscriber Motion dashboard. Closes the "revenue without cost visibility" gap.
   - **Backend** (`/app/backend/cost_telemetry.py`)
     - `GET /api/admin/cost-telemetry/cost-config` + `POST` — admin-configurable estimated INR cost per credit, per feature. Whitelisted against the master `ALLOWED_FEATURES` taxonomy; negative / non-numeric values rejected with 400. Stored in `admin_settings.cost_telemetry_cost_per_credit_inr`.

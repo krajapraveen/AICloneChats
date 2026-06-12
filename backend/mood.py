@@ -142,6 +142,18 @@ async def _analyze_with_llm(message: str, recent_messages: List[str]) -> Emotion
     ).with_model(MOOD_MODEL[0], MOOD_MODEL[1]).with_max_tokens(300)
 
     raw = await chat.send_message(UserMessage(text=user_text))
+    # Provider-metered cost ingestion (best-effort)
+    try:
+        from provider_cost_recorder import record_llm_call
+        await record_llm_call(
+            user_id=None, request_id=None,
+            feature="chat", surface="mood_chat",
+            provider=MOOD_MODEL[0], model=MOOD_MODEL[1],
+            input_text=(sys + "\n" + user_text),
+            output_text=raw or "",
+        )
+    except Exception:
+        pass
     raw = (raw or "").strip()
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)

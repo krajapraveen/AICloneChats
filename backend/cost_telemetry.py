@@ -153,6 +153,17 @@ async def profit_per_feature(
     ]).to_list(50)
     by_feature = {r["_id"]: r for r in consumed_rows}
 
+    # ── Provider-metered actual cost per feature (when recorded)
+    metered_rows = await db.provider_cost_events.aggregate([
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {
+            "_id": {"$ifNull": ["$feature", "unknown"]},
+            "metered_cost_inr": {"$sum": "$cost_inr"},
+            "metered_calls": {"$sum": 1},
+        }},
+    ]).to_list(50)
+    metered_by_feature = {r["_id"]: r for r in metered_rows}
+
     total_credits_consumed = sum(r["credits_consumed"] for r in consumed_rows) or 0
 
     # ── Revenue in window (paid orders only)
@@ -169,7 +180,15 @@ async def profit_per_feature(
         usage = int(bucket.get("usage_count") or 0)
 
         cost_per_credit = cost_table.get(feature)
-        if cost_per_credit is not None:
+        metered_bucket = metered_by_feature.get(feature, {})
+        metered_cost_inr = metered_bucket.get("metered_cost_inr")
+        metered_calls = int(metered_bucket.get("metered_calls") or 0)
+
+        if metered_cost_inr is not None and metered_cost_inr > 0:
+            # Real provider-metered cost trumps configured estimate
+            estimated_cost_inr = round(float(metered_cost_inr), 2)
+            cost_source = "provider_metered"
+        elif cost_per_credit is not None:
             estimated_cost_inr = round(credits * cost_per_credit, 2)
             cost_source = "configured"
         else:
@@ -199,6 +218,8 @@ async def profit_per_feature(
             "estimated_cost_inr": estimated_cost_inr,
             "cost_per_credit_inr": cost_per_credit,
             "cost_source": cost_source,
+            "metered_calls": metered_calls,
+            "metered_cost_inr": round(float(metered_cost_inr), 2) if metered_cost_inr else 0.0,
             "revenue_attributed_inr": revenue_attributed_inr,
             "gross_profit_inr": gross_profit_inr,
             "margin_pct": margin_pct,

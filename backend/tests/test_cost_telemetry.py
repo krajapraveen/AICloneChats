@@ -135,8 +135,10 @@ def test_profit_per_feature_shape(admin_token: str):
                   "estimated_cost_inr", "cost_per_credit_inr", "cost_source",
                   "revenue_attributed_inr", "gross_profit_inr", "margin_pct"):
             assert k in row, (row, k)
-        # With all features costed, none should be None
-        assert row["cost_source"] == "configured"
+        # With all features costed, none should be `not_configured`.
+        # `configured` (estimate from cost table) and `provider_metered`
+        # (real provider rows) are both valid passing states.
+        assert row["cost_source"] in ("configured", "provider_metered"), row
 
 
 def test_profit_math_consistency(admin_token: str):

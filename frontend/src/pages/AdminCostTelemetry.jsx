@@ -272,12 +272,14 @@ export default function AdminCostTelemetry() {
                         <td className="p-3 text-right font-mono">{row.credits_consumed.toLocaleString("en-IN")}</td>
                         <td className="p-3 text-right font-mono text-muted">{row.share_of_credits_pct}%</td>
                         <td className="p-3 text-right font-mono">
-                          {row.cost_source === "configured" ? inr(row.estimated_cost_inr) : (
+                          {row.cost_source === "not_configured" ? (
                             <span className="text-amber/70" title="No cost configured for this feature">—</span>
+                          ) : (
+                            inr(row.estimated_cost_inr)
                           )}
-                          {row.cost_source === "configured" && (
-                            <div className="text-[9px] font-mono text-muted">est.</div>
-                          )}
+                          <div className={`text-[9px] font-mono ${row.cost_source === "provider_metered" ? "text-emerald-300" : "text-muted"}`}>
+                            {row.cost_source === "provider_metered" ? `metered · ${row.metered_calls} call${row.metered_calls === 1 ? "" : "s"}` : row.cost_source === "configured" ? "est." : ""}
+                          </div>
                         </td>
                         <td className="p-3 text-right font-mono">{inr(row.revenue_attributed_inr)}</td>
                         <td className={`p-3 text-right font-mono font-bold ${row.gross_profit_inr == null ? "" : row.gross_profit_inr >= 0 ? "text-emerald-300" : "text-rose-soft"}`}>

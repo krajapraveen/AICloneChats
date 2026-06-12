@@ -289,6 +289,18 @@ async def send_clone_message(clone_id_or_slug: str, payload: ChatRequest, reques
             user_msg = UserMessage(text=payload.message)
             reply_text = await chat.send_message(user_msg)
             reply = (reply_text or "").strip() or "Hmm, give me a sec — try saying that again?"
+            # Provider-metered cost ingestion (best-effort, swallowed on failure)
+            try:
+                from provider_cost_recorder import record_llm_call
+                await record_llm_call(
+                    user_id=visitor_id, request_id=getattr(credit_handle, "request_id", None),
+                    feature="ai_clone", surface="clone_chat",
+                    provider=CLONE_MODEL[0], model=CLONE_MODEL[1],
+                    input_text=(system_prompt or "") + "\n" + (payload.message or ""),
+                    output_text=reply,
+                )
+            except Exception:
+                pass
         except Exception as e:
             await credit_handle.refund(reason="llm_failure")
             logger.exception("LLM call failed")

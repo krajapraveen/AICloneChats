@@ -135,6 +135,10 @@ app.include_router(subscription_motion.router)
 import cost_telemetry  # noqa: E402
 app.include_router(cost_telemetry.router)
 
+# Provider-metered cost ingestion (records real costs at the call site)
+import provider_cost_recorder  # noqa: E402
+app.include_router(provider_cost_recorder.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
@@ -326,6 +330,12 @@ async def on_startup():
         await _rr_indexes()
     except Exception as e:
         logger.warning("renewal_reminders.ensure_indexes failed: %s", e)
+    # Provider cost-event indexes
+    try:
+        from provider_cost_recorder import ensure_indexes as _pcr_indexes
+        await _pcr_indexes()
+    except Exception as e:
+        logger.warning("provider_cost_recorder.ensure_indexes failed: %s", e)
     # Renewal reminders — fire any due reminders at boot. Idempotent (writes
     # renewal_reminder_sent_for=order_id, so re-runs are safe). Skips admins.
     try:
