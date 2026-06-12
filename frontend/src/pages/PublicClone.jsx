@@ -256,7 +256,15 @@ export default function PublicClone() {
         </div>
 
         <p className="text-center text-xs text-muted mt-5 font-mono uppercase tracking-widest">
-          Built on aiclonechats.com · <a href="/" className="underline hover:text-amber-soft">Make your own →</a>
+          Built on aiclonechats.com ·{" "}
+          <button
+            type="button"
+            onClick={() => navigate(user ? "/create" : "/register?next=/create")}
+            className="underline hover:text-amber-soft cursor-pointer bg-transparent border-0 p-0 text-inherit font-inherit uppercase tracking-widest"
+            data-testid="public-clone-make-your-own"
+          >
+            Make your own →
+          </button>
         </p>
 
         {/* Send later — only authenticated users; visitors don't get a delayed inbox */}
