@@ -143,6 +143,10 @@ async def get_current_user(
     user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.get("is_deleted") or user.get("is_deactivated"):
+        # Defense-in-depth: deletion already removes sessions, but if a stale
+        # token slips through (e.g. between cascade steps) we still hard-deny.
+        raise HTTPException(status_code=401, detail="Account no longer exists")
     return user
 
 
@@ -243,7 +247,7 @@ async def login(payload: LoginRequest, request: Request, response: Response):
             failure_reason="invalid_credentials",
         )
         raise _auth_err("invalid_credentials", invalid_msg, request_id, status=401)
-    if user.get("is_suspended") or user.get("is_deactivated"):
+    if user.get("is_suspended") or user.get("is_deactivated") or user.get("is_deleted"):
         await record_login_event(
             request,
             event_type="login_failed",

@@ -11,6 +11,7 @@ const NAV = [
   { type: "group", label: "Settings", children: [
     { to: "/account/settings/change-password", label: "Change Password", testId: "tab-change-password" },
     { to: "/account/settings/subscriptions", label: "Manage Subscriptions", testId: "tab-subscriptions" },
+    { to: "/account/settings/delete-account", label: "Privacy & Data", testId: "tab-delete-account" },
   ]},
 ];
 
@@ -84,8 +85,12 @@ export default function Account() {
                       className={({ isActive }) =>
                         `block px-4 py-2 rounded-lg text-sm transition border ${
                           isActive
-                            ? "bg-amber/15 border-amber/40 text-amber"
-                            : "bg-white/[0.02] border-white/5 text-ink/80 hover:bg-white/[0.06] hover:border-white/15"
+                            ? c.danger
+                              ? "bg-rose/15 border-rose/40 text-rose-soft"
+                              : "bg-amber/15 border-amber/40 text-amber"
+                            : c.danger
+                              ? "bg-white/[0.02] border-white/5 text-rose-soft/80 hover:bg-rose/10 hover:border-rose/30"
+                              : "bg-white/[0.02] border-white/5 text-ink/80 hover:bg-white/[0.06] hover:border-white/15"
                         }`
                       }
                       data-testid={c.testId}

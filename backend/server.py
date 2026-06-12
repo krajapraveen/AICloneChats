@@ -113,6 +113,14 @@ app.include_router(profile_aliases.admin_router)
 import renewal_reminders  # noqa: E402
 app.include_router(renewal_reminders.router)
 
+# Account lifecycle — Apple/Google-compliant in-app account deletion
+import account_lifecycle  # noqa: E402
+app.include_router(account_lifecycle.router)
+
+# Data export — GDPR/DPDP portability
+import data_export  # noqa: E402
+app.include_router(data_export.router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
@@ -292,6 +300,12 @@ async def on_startup():
         await _si_indexes()
     except Exception as e:
         logger.warning("support_inbox.ensure_indexes failed: %s", e)
+    # Account lifecycle indexes (deletion audit log)
+    try:
+        from account_lifecycle import ensure_indexes as _al_indexes
+        await _al_indexes()
+    except Exception as e:
+        logger.warning("account_lifecycle.ensure_indexes failed: %s", e)
     # Renewal reminders — fire any due reminders at boot. Idempotent (writes
     # renewal_reminder_sent_for=order_id, so re-runs are safe). Skips admins.
     try:

@@ -21,6 +21,7 @@ import Account from "./pages/Account";
 import MySpace from "./pages/account/MySpace";
 import ChangePassword from "./pages/account/ChangePassword";
 import Subscriptions from "./pages/account/Subscriptions";
+import DeleteAccount from "./pages/account/DeleteAccount";
 import Inbox from "./pages/account/Inbox";
 import AdminSupport from "./pages/AdminSupport";
 import Dashboard from "./pages/Dashboard";
@@ -97,6 +98,7 @@ function AppRouter() {
         <Route path="concerns" element={<Inbox />} />
         <Route path="settings/change-password" element={<ChangePassword />} />
         <Route path="settings/subscriptions" element={<Subscriptions />} />
+        <Route path="settings/delete-account" element={<DeleteAccount />} />
       </Route>
       <Route path="/admin/support" element={<AdminSupport />} />
       <Route path="/explore" element={<Explore />} />
