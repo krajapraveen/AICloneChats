@@ -233,6 +233,158 @@ async def admin_payment_detail(order_id: str, _admin: dict = Depends(_require_ad
     }
 
 
+@admin_router.get("/diagnostic/by-email/{email}")
+async def admin_user_diagnostic_by_email(
+    email: str,
+    _admin: dict = Depends(_require_admin),
+):
+    """Single-shot forensic view of one user — built specifically to debug
+    "user paid but UI thinks they're free" reports.
+
+    Returns:
+      - The raw `users` document (sanitized of password_hash).
+      - The user's last 5 `payment_orders` (newest first).
+      - The user's last 10 `credit_events` (newest first).
+      - The user's last 10 `funnel_events` (signals which CTA / surface
+        treated them as free).
+      - The user's last 10 `paywall_events` (every 402 the user has hit).
+      - The user's last 5 `subscription_transitions` if any.
+      - Derived `credit_state` (what get_user_credit_state currently
+        reports — this is the source of truth the frontend sees).
+      - Webhook arrivals for the user's last paid order (to confirm
+        whether the gateway actually called us back successfully).
+      - `consistency_check`: explicit ✅/⚠ summary of common drift modes.
+
+    Read-only. Admin-only.
+    """
+    norm_email = (email or "").strip().lower()
+    if not norm_email:
+        raise HTTPException(400, {"code": "missing_email", "message": "Email is required"})
+
+    user = await db.users.find_one(
+        {"email": norm_email},
+        {"_id": 0, "password_hash": 0, "reset_token_hash": 0},
+    )
+    if not user:
+        raise HTTPException(404, {"code": "user_not_found", "message": f"No user with email {norm_email}"})
+
+    uid = user["user_id"]
+
+    orders = await db.payment_orders.find(
+        {"user_id": uid}, {"_id": 0},
+    ).sort("created_at", -1).limit(5).to_list(5)
+
+    credit_events = await db.credit_events.find(
+        {"user_id": uid}, {"_id": 0},
+    ).sort("created_at", -1).limit(10).to_list(10)
+
+    funnel = await db.funnel_events.find(
+        {"user_id": uid}, {"_id": 0},
+    ).sort("created_at", -1).limit(10).to_list(10)
+
+    paywall = await db.paywall_events.find(
+        {"user_id": uid}, {"_id": 0},
+    ).sort("created_at", -1).limit(10).to_list(10)
+
+    transitions = await db.subscription_transitions.find(
+        {"user_id": uid}, {"_id": 0},
+    ).sort("at", -1).limit(5).to_list(5)
+
+    # Derived credit state — exactly what /api/me/credits returns
+    try:
+        derived_state = await get_user_credit_state(user)
+    except Exception as e:
+        derived_state = {"error": f"get_user_credit_state failed: {type(e).__name__}: {e}"}
+
+    # Last paid order + its webhook arrivals
+    last_paid_order = next((o for o in orders if o.get("status") == "paid"), None)
+    webhook_arrivals: list[dict] = []
+    if last_paid_order and last_paid_order.get("order_id"):
+        webhook_arrivals = await db.webhook_logs.find(
+            {"order_id": last_paid_order["order_id"]}, {"_id": 0},
+        ).sort("received_at", -1).limit(20).to_list(20)
+
+    # Consistency checks — surface the common drift modes that cause
+    # "paid but UI says free":
+    checks: list[dict] = []
+
+    paid_orders = [o for o in orders if o.get("status") == "paid"]
+    user_plan = user.get("plan_id") or "free"
+    user_plan_status = user.get("plan_status") or ""
+
+    if paid_orders and user_plan == "free":
+        checks.append({
+            "name": "paid_order_but_user_plan_free",
+            "level": "critical",
+            "message": (
+                f"User has {len(paid_orders)} paid order(s), most recent for plan "
+                f"{paid_orders[0].get('plan_id')!r}, but users.plan_id is 'free'. "
+                f"The Cashfree webhook likely arrived (order is paid) but the "
+                f"user-plan update side-effect didn't fire (or fired against "
+                f"the wrong user_id)."
+            ),
+        })
+
+    if paid_orders and paid_orders[0].get("plan_id") != user_plan and user_plan != "free":
+        checks.append({
+            "name": "user_plan_does_not_match_last_paid_order",
+            "level": "warning",
+            "message": (
+                f"Most recent paid order is for plan {paid_orders[0].get('plan_id')!r} "
+                f"but users.plan_id is {user_plan!r}. Possible plan_id rename or "
+                f"a stale earlier plan still active."
+            ),
+        })
+
+    if user_plan and user_plan != "free" and user_plan_status not in ("active", "cancel_at_period_end"):
+        checks.append({
+            "name": "plan_id_set_but_status_inactive",
+            "level": "warning",
+            "message": (
+                f"users.plan_id={user_plan!r} but plan_status={user_plan_status!r}. "
+                f"Subscriber-gated features will refuse this user."
+            ),
+        })
+
+    grant_events = [e for e in credit_events if e.get("kind") in ("subscription_grant", "topup_grant", "grant")]
+    if paid_orders and not grant_events:
+        checks.append({
+            "name": "paid_order_but_no_credit_grant",
+            "level": "critical",
+            "message": (
+                "User has paid orders but no subscription_grant credit_events. "
+                "The grant side of the payment fulfillment did not fire."
+            ),
+        })
+
+    if last_paid_order and not webhook_arrivals:
+        checks.append({
+            "name": "paid_order_no_webhook_arrivals_logged",
+            "level": "info",
+            "message": (
+                "No webhook_logs rows for the most recent paid order. Either the "
+                "logger is off or the order was marked paid by a non-webhook path "
+                "(e.g., manual admin action / verify-payment poll)."
+            ),
+        })
+
+    if not checks:
+        checks.append({"name": "ok", "level": "ok", "message": "No drift detected. User state is internally consistent."})
+
+    return {
+        "user": user,
+        "derived_credit_state": derived_state,
+        "orders": orders,
+        "credit_events": credit_events,
+        "funnel_events": funnel,
+        "paywall_events": paywall,
+        "subscription_transitions": transitions,
+        "last_paid_order_webhook_arrivals": webhook_arrivals,
+        "consistency_check": checks,
+        "computed_at": now_iso(),
+    }
+
+
 @admin_router.get("/overview")
 async def admin_billing_overview(_admin: dict = Depends(_require_admin), days: int = Query(default=30, ge=1, le=365)):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
