@@ -334,3 +334,164 @@ async def contribution_by_source(
         "rows": rows,
         "totals": totals,
     }
+
+
+# ─────────────── Loss-making request alerts + Top-N expensive ───────────────
+
+def _severity_for_margin_pct(margin_pct: Optional[float]) -> str:
+    """info  : margin < 10% (warning zone but still profitable)
+       warning: margin < 0%  (actively losing money)
+       critical: margin < -20% (bleeding fast)
+       ok    : margin >= 10%
+    """
+    if margin_pct is None:
+        return "unknown"
+    if margin_pct < -20:
+        return "critical"
+    if margin_pct < 0:
+        return "warning"
+    if margin_pct < 10:
+        return "info"
+    return "ok"
+
+
+@router.get("/loss-making")
+async def loss_making_requests(
+    admin: dict = Depends(get_admin_user),
+    days: int = Query(default=30, ge=1, le=365),
+    top_n: int = Query(default=10, ge=5, le=50),
+):
+    """Per-request margin analysis built on the metered cost ledger.
+
+    For each `provider_cost_events` row in window, we compute:
+      - credits_deducted: the matching `credit_events.delta` (joined by
+        request_id; falls back to 0 if no match — typical for surfaces that
+        record cost but don't deduct credits, or for legacy rows pre-tagging)
+      - estimated_revenue_inr: `credits_deducted × revenue_per_credit`
+        where `revenue_per_credit` = total_window_revenue / total_window_credits_consumed
+        (the same apportionment used by the profit-per-feature table — keeps
+        the two views internally consistent).
+      - margin_inr: estimated_revenue_inr - cost_inr
+      - severity: critical / warning / info / ok based on margin %.
+
+    Returns:
+      - summary  (total flagged, total negative margin, by_feature, by_severity)
+      - top_expensive (Top-N cost desc)
+      - top_losses (Top-N margin asc)
+    """
+    since = _window_iso(days)
+
+    # Revenue per credit, derived once over the window for consistency
+    paid_total_rows = await db.payment_orders.aggregate([
+        {"$match": {"status": "paid", "paid_at": {"$gte": since}}},
+        {"$group": {"_id": None, "total_inr": {"$sum": "$amount_inr"}}},
+    ]).to_list(2)
+    total_revenue_inr = float((paid_total_rows[0]["total_inr"] if paid_total_rows else 0) or 0)
+    consumed_total_rows = await db.credit_events.aggregate([
+        {"$match": {"created_at": {"$gte": since}, "delta": {"$lt": 0},
+                    "kind": {"$nin": ["admin_adjust", "refund"]}}},
+        {"$group": {"_id": None, "total": {"$sum": {"$abs": "$delta"}}}},
+    ]).to_list(2)
+    total_credits = int((consumed_total_rows[0]["total"] if consumed_total_rows else 0) or 0)
+    revenue_per_credit = (total_revenue_inr / total_credits) if total_credits > 0 else 0.0
+
+    # All cost rows in window — these are the universe of metered requests.
+    cost_rows = await db.provider_cost_events.find(
+        {"created_at": {"$gte": since}, "is_priced": True},
+        {"_id": 0},
+    ).to_list(length=10000)
+
+    # Bulk-load matching credit_events by request_id (one read per unique
+    # request_id; small list in practice). If a row has no request_id, we
+    # treat credits_deducted = 0 (no revenue attributable).
+    request_ids = [r["request_id"] for r in cost_rows if r.get("request_id")]
+    credits_by_request: dict[str, int] = {}
+    if request_ids:
+        async for ce in db.credit_events.find(
+            {"request_id": {"$in": request_ids}, "delta": {"$lt": 0}},
+            {"_id": 0, "request_id": 1, "delta": 1},
+        ):
+            rid = ce.get("request_id")
+            if rid:
+                credits_by_request[rid] = credits_by_request.get(rid, 0) + abs(int(ce["delta"]))
+
+    enriched: list[dict] = []
+    flagged_count = 0
+    total_negative_margin = 0.0
+    by_feature: dict[str, dict] = {}
+    by_severity: dict[str, int] = {"critical": 0, "warning": 0, "info": 0, "ok": 0, "unknown": 0}
+
+    for row in cost_rows:
+        rid = row.get("request_id")
+        credits = credits_by_request.get(rid, 0) if rid else 0
+        cost_inr = float(row.get("cost_inr") or 0)
+        revenue_inr = round(credits * revenue_per_credit, 4)
+        margin_inr = round(revenue_inr - cost_inr, 4)
+        margin_pct = round((margin_inr / revenue_inr) * 100, 2) if revenue_inr > 0 else None
+        sev = _severity_for_margin_pct(margin_pct)
+        enriched_row = {
+            "cost_id": row.get("cost_id"),
+            "created_at": row.get("created_at"),
+            "user_id": row.get("user_id"),
+            "request_id": rid,
+            "feature": row.get("feature") or "unknown",
+            "surface": row.get("surface"),
+            "provider": row.get("provider"),
+            "model": row.get("model"),
+            "cost_method": row.get("cost_method"),
+            "credits_deducted": credits,
+            "metered_cost_inr": round(cost_inr, 4),
+            "estimated_revenue_inr": revenue_inr,
+            "margin_inr": margin_inr,
+            "margin_pct": margin_pct,
+            "severity": sev,
+        }
+        enriched.append(enriched_row)
+
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+        feat = enriched_row["feature"]
+        b = by_feature.setdefault(feat, {
+            "feature": feat, "requests": 0, "cost_inr": 0.0,
+            "revenue_inr": 0.0, "margin_inr": 0.0, "flagged": 0,
+        })
+        b["requests"] += 1
+        b["cost_inr"] += cost_inr
+        b["revenue_inr"] += revenue_inr
+        b["margin_inr"] += margin_inr
+        if sev in ("warning", "critical"):
+            flagged_count += 1
+            b["flagged"] += 1
+            if margin_inr < 0:
+                total_negative_margin += margin_inr
+
+    # Round bucket numbers
+    for b in by_feature.values():
+        b["cost_inr"] = round(b["cost_inr"], 2)
+        b["revenue_inr"] = round(b["revenue_inr"], 2)
+        b["margin_inr"] = round(b["margin_inr"], 2)
+
+    top_expensive = sorted(enriched, key=lambda r: r["metered_cost_inr"], reverse=True)[:top_n]
+    top_losses = sorted(
+        [r for r in enriched if r["severity"] in ("warning", "critical")],
+        key=lambda r: r["margin_inr"],
+    )[:top_n]
+
+    return {
+        "window_days": days,
+        "computed_at": _now_iso(),
+        "revenue_per_credit_inr": round(revenue_per_credit, 6),
+        "summary": {
+            "total_requests_analyzed": len(enriched),
+            "total_flagged": flagged_count,
+            "total_negative_margin_inr": round(total_negative_margin, 2),
+            "by_severity": by_severity,
+            "by_feature": sorted(by_feature.values(), key=lambda b: b["margin_inr"]),
+        },
+        "top_expensive": top_expensive,
+        "top_losses": top_losses,
+        "thresholds": {
+            "critical_margin_pct": -20,
+            "warning_margin_pct": 0,
+            "info_margin_pct": 10,
+        },
+    }

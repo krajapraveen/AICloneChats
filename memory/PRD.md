@@ -23,6 +23,33 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-12 (P2 — Loss-Making Request Alerts + Top 10 Most Expensive / Top 10 Biggest Losses)** — Per-request margin analysis shipped together inside the Cost Telemetry dashboard. The dashboard now answers "WHICH requests hurt margin?" AND "WHY/WHERE?" in one screen.
+  - **Backend** (`/app/backend/cost_telemetry.py`)
+    - New endpoint `GET /api/admin/cost-telemetry/loss-making?days=&top_n=` returns:
+      - `summary`: `total_requests_analyzed`, `total_flagged`, `total_negative_margin_inr`, `by_severity` (5 buckets), `by_feature` (per-feature: requests, cost, revenue, margin, flagged), `revenue_per_credit_inr`.
+      - `top_expensive`: sorted by `metered_cost_inr` desc (Top-N).
+      - `top_losses`: sorted by `margin_inr` asc; ONLY rows with severity `warning` or `critical` (Top-N).
+      - `thresholds`: critical -20% · warning 0% · info 10%.
+    - Per-request math: `credits_deducted` (from `credit_events.request_id` join), `estimated_revenue_inr = credits_deducted × revenue_per_credit`, `margin_inr = revenue - cost`, `margin_pct`, `severity` (`_severity_for_margin_pct`).
+    - Bulk request_id-keyed credit lookup → single DB query (no N+1).
+  - **Severity buckets** (operator-tunable in future):
+    - **critical**: margin < -20%
+    - **warning**: margin < 0%
+    - **info**: margin < 10%
+    - **ok**: margin ≥ 10%
+    - **unknown**: no matching credit deduction (typical for legacy / surfaces without credit flow)
+  - **Frontend** (`AdminCostTelemetry.jsx`)
+    - "Loss-making requests" section: 4 summary tiles + by-severity card (5 buckets, color-coded) + by-feature card (table of requests/cost/margin/flagged).
+    - "Top 10 most expensive requests" table: When, User, Feature, Provider·model, Credits, Cost, Revenue, Margin, Severity tag.
+    - "Top 10 biggest losses" table: same columns, sorted by most-negative margin first. Empty-state cheerfully shows "✓ No loss-making requests — margins are positive everywhere."
+    - Severity tags use existing `tag-rose / tag-amber / tag-sky / tag-emerald / tag-muted` palette.
+  - **Tests** (`/app/backend/tests/test_loss_making_alerts.py`, 6/6 passing):
+    - Severity-bucket function correctness across thresholds, endpoint envelope shape, top_expensive sorted desc, top_losses contains only warning+critical and sorted asc, by_feature aggregation sums correctly across multiple rows, admin-only gate.
+  - **Live verification**: 30d window shows 19 requests analyzed, 4 flagged, ₹-1,13,567.52 total negative margin. Top loss: ₹-99,516 (ai_clone, CRITICAL @ -20609%).
+  - **Files modified**: `backend/cost_telemetry.py` (new endpoint + helper), `frontend/src/pages/AdminCostTelemetry.jsx` (3 new sections + RequestTable helper).
+  - **Files added**: `backend/tests/test_loss_making_alerts.py`.
+  - **Cumulative session tests**: 101/101 passing.
+
 - **2026-06-12 (P1 — Provider-Metered Cost Ingestion)** — Real provider cost rows alongside the cost-telemetry dashboard. Replaces apportionment-based estimates with measured token/audio costs at the actual call sites.
   - **Backend** (`/app/backend/provider_cost_recorder.py`)
     - New collection `provider_cost_events` with one row per LLM / audio / video call. Fields: `cost_id`, `user_id`, `request_id`, `feature`, `surface`, `provider`, `model`, `pricing_key`, `input_tokens` / `output_tokens` (estimated via 4-chars-per-token heuristic), `cost_usd`, `cost_inr`, `usd_to_inr`, `cost_method` (`token_estimate` for LLM / `metered` for audio), `is_priced`.

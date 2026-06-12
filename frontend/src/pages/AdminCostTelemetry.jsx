@@ -50,6 +50,57 @@ function Tile({ label, value, tone, testId, sub }) {
   );
 }
 
+const SEVERITY_TAG = {
+  critical: "tag-rose",
+  warning: "tag-amber",
+  info: "tag-sky",
+  ok: "tag-emerald",
+  unknown: "tag-muted",
+};
+
+function formatDateTime(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+function RequestTable({ rows, testIdPrefix }) {
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="text-[10px] font-mono uppercase tracking-widest text-muted text-left">
+          <th className="p-3">When</th>
+          <th className="p-3">User</th>
+          <th className="p-3">Feature</th>
+          <th className="p-3">Provider · model</th>
+          <th className="p-3 text-right">Credits</th>
+          <th className="p-3 text-right">Cost</th>
+          <th className="p-3 text-right">Revenue</th>
+          <th className="p-3 text-right">Margin</th>
+          <th className="p-3">Severity</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.cost_id} className="border-t border-white/5" data-testid={`${testIdPrefix}-${r.cost_id}`}>
+            <td className="p-3 font-mono text-[11px] text-muted whitespace-nowrap">{formatDateTime(r.created_at)}</td>
+            <td className="p-3 font-mono text-[11px]">{r.user_id || "—"}</td>
+            <td className={`p-3 font-mono ${FEATURE_TONE[r.feature] || ""}`}>{r.feature}</td>
+            <td className="p-3 font-mono text-[11px] text-muted">{r.provider}<br/>{r.model}</td>
+            <td className="p-3 text-right font-mono">{r.credits_deducted}</td>
+            <td className="p-3 text-right font-mono text-rose-soft">{inr(r.metered_cost_inr)}</td>
+            <td className="p-3 text-right font-mono">{inr(r.estimated_revenue_inr)}</td>
+            <td className={`p-3 text-right font-mono font-bold ${(r.margin_inr ?? 0) >= 0 ? "text-emerald-300" : "text-rose-soft"}`}>
+              {inr(r.margin_inr)}
+              {r.margin_pct != null && (<div className="text-[10px] text-muted">{r.margin_pct}%</div>)}
+            </td>
+            <td className="p-3"><span className={`tag ${SEVERITY_TAG[r.severity] || "tag-muted"}`}>{r.severity}</span></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function FeatureCostEditor({ values, onSave, saving }) {
   const [draft, setDraft] = useState(() => Object.fromEntries(
     ["ai_clone", "voice", "video", "chat", "image", "avatar", "unknown"].map((f) => [f, values[f] ?? ""])
@@ -115,6 +166,7 @@ export default function AdminCostTelemetry() {
   const [days, setDays] = useState(30);
   const [profit, setProfit] = useState(null);
   const [contribution, setContribution] = useState(null);
+  const [lossMaking, setLossMaking] = useState(null);
   const [costConfig, setCostConfig] = useState({ values: {} });
   const [loading, setLoading] = useState(true);
   const [savingCosts, setSavingCosts] = useState(false);
@@ -125,13 +177,15 @@ export default function AdminCostTelemetry() {
     setLoading(true);
     setError(null);
     try {
-      const [p, c, cfg] = await Promise.all([
+      const [p, c, lm, cfg] = await Promise.all([
         api.get(`/admin/cost-telemetry/profit-per-feature?days=${days}`),
         api.get(`/admin/cost-telemetry/contribution-by-source?days=${days}`),
+        api.get(`/admin/cost-telemetry/loss-making?days=${days}&top_n=10`),
         api.get("/admin/cost-telemetry/cost-config"),
       ]);
       setProfit(p.data);
       setContribution(c.data);
+      setLossMaking(lm.data);
       setCostConfig(cfg.data || { values: {} });
     } catch (e) {
       setError(e?.response?.data?.detail?.message || "Could not load cost telemetry.");
@@ -308,6 +362,100 @@ export default function AdminCostTelemetry() {
                 Cost &quot;—&quot; means no cost-per-credit configured for that feature yet.
                 <button onClick={() => setShowEditor(true)} className="text-amber underline ml-1.5">Configure now</button>
               </p>
+            </section>
+          </>
+        )}
+
+        {lossMaking && (
+          <>
+            {/* ── Loss-making summary ─────────────────────────── */}
+            <section className="space-y-3" data-testid="lm-summary-section">
+              <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Loss-making requests · {days}d</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <Tile label="Requests analyzed" value={lossMaking.summary.total_requests_analyzed} testId="lm-tile-analyzed" />
+                <Tile label="Flagged (warning + critical)" value={lossMaking.summary.total_flagged}
+                  tone={lossMaking.summary.total_flagged > 0 ? "text-rose-soft" : "text-emerald-300"}
+                  testId="lm-tile-flagged" />
+                <Tile label="Total negative margin" value={inr(lossMaking.summary.total_negative_margin_inr)}
+                  tone={(lossMaking.summary.total_negative_margin_inr ?? 0) < 0 ? "text-rose-soft" : "text-emerald-300"}
+                  testId="lm-tile-neg-margin" />
+                <Tile label="Revenue / credit" value={`₹${lossMaking.revenue_per_credit_inr}`}
+                  sub="apportioned" testId="lm-tile-rev-per-credit" />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {/* By severity */}
+                <div className="brutal-card p-4" data-testid="lm-by-severity">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">By severity</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(lossMaking.summary.by_severity).map(([sev, count]) => {
+                      const tone = sev === "critical" ? "text-rose-soft" : sev === "warning" ? "text-amber" : sev === "info" ? "text-sky-300" : sev === "ok" ? "text-emerald-300" : "text-muted";
+                      return (
+                        <div key={sev} className="flex justify-between border-b border-white/5 py-1.5">
+                          <span className={`font-mono uppercase text-[11px] tracking-widest ${tone}`}>{sev}</span>
+                          <span className="font-mono font-bold">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] font-mono text-muted mt-2">
+                    Critical: margin &lt; -20% · Warning: margin &lt; 0% · Info: margin &lt; 10% · OK: margin ≥ 10%
+                  </p>
+                </div>
+
+                {/* By feature */}
+                <div className="brutal-card p-4" data-testid="lm-by-feature">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-2">By feature</div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-[10px] font-mono uppercase tracking-widest text-muted text-left">
+                        <th className="py-1">Feature</th>
+                        <th className="py-1 text-right">Requests</th>
+                        <th className="py-1 text-right">Cost</th>
+                        <th className="py-1 text-right">Margin</th>
+                        <th className="py-1 text-right">Flagged</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lossMaking.summary.by_feature.map((b) => (
+                        <tr key={b.feature} className="border-t border-white/5">
+                          <td className={`py-1 font-mono ${FEATURE_TONE[b.feature] || ""}`}>{b.feature}</td>
+                          <td className="py-1 text-right font-mono">{b.requests}</td>
+                          <td className="py-1 text-right font-mono">{inr(b.cost_inr)}</td>
+                          <td className={`py-1 text-right font-mono font-bold ${b.margin_inr >= 0 ? "text-emerald-300" : "text-rose-soft"}`}>{inr(b.margin_inr)}</td>
+                          <td className={`py-1 text-right font-mono ${b.flagged > 0 ? "text-rose-soft" : "text-muted"}`}>{b.flagged}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            {/* ── Top 10 Most Expensive Requests ────────────── */}
+            <section className="space-y-3" data-testid="lm-top-expensive">
+              <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Top 10 most expensive requests</h2>
+              {lossMaking.top_expensive.length === 0 ? (
+                <div className="brutal-card p-4 text-sm text-muted" data-testid="lm-expensive-empty">No metered requests in window.</div>
+              ) : (
+                <div className="brutal-card overflow-x-auto">
+                  <RequestTable rows={lossMaking.top_expensive} testIdPrefix="lm-expensive" />
+                </div>
+              )}
+            </section>
+
+            {/* ── Top 10 Biggest Losses ────────────────────── */}
+            <section className="space-y-3" data-testid="lm-top-losses">
+              <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">Top 10 biggest losses</h2>
+              {lossMaking.top_losses.length === 0 ? (
+                <div className="brutal-card p-4 text-sm text-emerald-300" data-testid="lm-losses-empty">
+                  ✓ No loss-making requests in this window. Margins are positive everywhere.
+                </div>
+              ) : (
+                <div className="brutal-card overflow-x-auto">
+                  <RequestTable rows={lossMaking.top_losses} testIdPrefix="lm-losses" />
+                </div>
+              )}
             </section>
           </>
         )}
