@@ -28,7 +28,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from db import db
@@ -420,3 +420,112 @@ async def validate_reset_token(token: str, response: Response):
     except Exception:
         return {"valid": False, "code": "token_invalid", "request_id": request_id}
     return {"valid": True, "request_id": request_id}
+
+
+# ─────────────── Authenticated change-password ───────────────
+# Used from /account/settings/change-password — user is signed in and knows
+# their current password. Different from the email-driven reset flow above:
+# (a) no token, (b) requires current password, (c) reuses _password_is_strong
+# and _send_reset_confirmation_email so the security posture is identical.
+
+from fastapi import Depends as _Depends  # noqa: E402  (avoid clobbering)
+from pydantic import BaseModel as _BaseModel, Field as _Field  # noqa: E402
+
+
+class ChangePasswordReq(_BaseModel):
+    current_password: str = _Field(..., min_length=1, max_length=200)
+    new_password: str = _Field(..., min_length=8, max_length=200)
+    confirm_password: str = _Field(..., min_length=8, max_length=200)
+
+
+@router.post("/change-password")
+async def change_password(payload: ChangePasswordReq, request: Request,
+                          user: dict = Depends(__import__("auth", fromlist=["get_current_user"]).get_current_user)):
+    request_id = uuid.uuid4().hex
+    ip = _client_ip(request)
+
+    # Anti-abuse — strict caps to defeat hostile session-token reuse
+    from anti_abuse import guard_expensive_action
+    await guard_expensive_action(
+        user=user, scope="auth.change_password", request=request,
+        max_per_user_per_min=3, max_per_user_per_hour=10,
+        endpoint="POST /api/auth/change-password",
+    )
+
+    # Confirm passwords match
+    if payload.new_password != payload.confirm_password:
+        await _audit("password_change_failed", request_id=request_id, user_id=user.get("user_id"),
+                     email=user.get("email"), metadata={"reason": "password_mismatch"})
+        raise HTTPException(status_code=400, detail={
+            "code": "password_mismatch",
+            "message": "New password and confirmation do not match.",
+            "request_id": request_id,
+        })
+
+    # Verify current password
+    from auth import verify_password, hash_password
+    user_doc = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 1, "email": 1})
+    if not user_doc or not user_doc.get("password_hash"):
+        await _audit("password_change_failed", request_id=request_id, user_id=user.get("user_id"),
+                     email=user.get("email"), metadata={"reason": "no_password_hash"})
+        raise HTTPException(status_code=400, detail={
+            "code": "no_password_hash",
+            "message": "This account doesn't have a password set. If you signed up with Google, sign in with Google instead.",
+            "request_id": request_id,
+        })
+    if not verify_password(payload.current_password, user_doc["password_hash"]):
+        await _audit("password_change_failed", request_id=request_id, user_id=user.get("user_id"),
+                     email=user.get("email"), metadata={"reason": "wrong_current_password"})
+        raise HTTPException(status_code=400, detail={
+            "code": "wrong_current_password",
+            "message": "Your current password is incorrect.",
+            "request_id": request_id,
+        })
+
+    # Block reusing the same password
+    if verify_password(payload.new_password, user_doc["password_hash"]):
+        raise HTTPException(status_code=400, detail={
+            "code": "password_unchanged",
+            "message": "New password must be different from your current password.",
+            "request_id": request_id,
+        })
+
+    # Strength
+    ok, msg = _password_is_strong(payload.new_password)
+    if not ok:
+        await _audit("password_change_failed", request_id=request_id, user_id=user.get("user_id"),
+                     email=user.get("email"), metadata={"reason": "weak_password", "msg": msg})
+        raise HTTPException(status_code=400, detail={
+            "code": "weak_password",
+            "message": msg,
+            "request_id": request_id,
+        })
+
+    # Update + invalidate other sessions (best-effort delete-many; the current
+    # session's cookie/token will need re-login on next request)
+    new_hash = hash_password(payload.new_password)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"password_hash": new_hash, "password_updated_at": now_iso()}},
+    )
+    invalidated = await db.user_sessions.delete_many({"user_id": user["user_id"]})
+
+    # Confirmation email (best-effort)
+    confirmation_sent = False
+    try:
+        ip_hash_short = hashlib.sha256(ip.encode()).hexdigest()[:12]
+        confirmation_sent, _ = await _send_reset_confirmation_email(
+            user_doc.get("email", ""), ip_hash_short,
+        )
+    except Exception as e:
+        logger.warning("password_change confirmation email failed: %s", e)
+
+    await _audit("password_change_completed", request_id=request_id, user_id=user["user_id"],
+                 email=user_doc.get("email"),
+                 metadata={"sessions_invalidated": invalidated.deleted_count,
+                           "confirmation_email_sent": confirmation_sent})
+    return {
+        "code": "password_change_completed",
+        "request_id": request_id,
+        "message": "Password updated. You have been signed out on all other devices.",
+    }

@@ -99,6 +99,11 @@ app.include_router(payments_cashfree_aliases.router)
 import admin_anti_abuse  # noqa: E402
 app.include_router(admin_anti_abuse.router)
 
+# Support inbox — user concerns/recommendations + admin replies
+import support_inbox  # noqa: E402
+app.include_router(support_inbox.router)
+app.include_router(support_inbox.admin_router)
+
 # CORS — must use explicit origins (not '*') because we send credentials.
 # Browsers reject Access-Control-Allow-Origin='*' when credentials are included.
 _default_origins = [
@@ -272,6 +277,12 @@ async def on_startup():
             logger.info("seed_demo_clones: complete")
         except Exception as e:
             logger.warning("seed_demo_clones failed: %s", e)
+    # Support inbox indexes
+    try:
+        from support_inbox import ensure_indexes as _si_indexes
+        await _si_indexes()
+    except Exception as e:
+        logger.warning("support_inbox.ensure_indexes failed: %s", e)
     # Seed billing plans on every boot — plans are code, not user data
     try:
         await ensure_plans_seeded()

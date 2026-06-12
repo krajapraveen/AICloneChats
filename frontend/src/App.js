@@ -17,6 +17,12 @@ import AcceptableUse from "./pages/AcceptableUse";
 import CookiePolicy from "./pages/CookiePolicy";
 import Security from "./pages/Security";
 import PrivacySettings from "./pages/PrivacySettings";
+import Account from "./pages/Account";
+import MySpace from "./pages/account/MySpace";
+import ChangePassword from "./pages/account/ChangePassword";
+import Subscriptions from "./pages/account/Subscriptions";
+import Inbox from "./pages/account/Inbox";
+import AdminSupport from "./pages/AdminSupport";
 import Dashboard from "./pages/Dashboard";
 import CloneEditor from "./pages/CloneEditor";
 import MemoryManager from "./pages/MemoryManager";
@@ -84,6 +90,14 @@ function AppRouter() {
       <Route path="/security" element={<Security />} />
       <Route path="/privacy-settings" element={<PrivacySettings />} />
       <Route path="/acceptable-use" element={<AcceptableUse />} />
+      <Route path="/account" element={<Account />}>
+        <Route index element={<MySpace />} />
+        <Route path="space" element={<MySpace />} />
+        <Route path="inbox" element={<Inbox />} />
+        <Route path="settings/change-password" element={<ChangePassword />} />
+        <Route path="settings/subscriptions" element={<Subscriptions />} />
+      </Route>
+      <Route path="/admin/support" element={<AdminSupport />} />
       <Route path="/explore" element={<Explore />} />
       <Route path="/mood-chat" element={<MoodChat />} />
       <Route path="/smart-reply" element={<SmartReplyStudio />} />

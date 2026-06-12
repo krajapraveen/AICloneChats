@@ -79,6 +79,9 @@ export default function Navbar() {
           {user && (
             <NavLink to="/dashboard" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-dashboard">Dashboard</NavLink>
           )}
+          {user && (
+            <NavLink to="/account/space" className={({ isActive }) => `${baseLink} ${isActive ? active : inactive}`} data-testid="nav-my-profile">My Profile</NavLink>
+          )}
           {user?.role === "admin" && (
             <NavLink to="/admin" className={({ isActive }) => `${baseLink} ${isActive ? adminActive : adminInactive}`} data-testid="nav-admin">Admin</NavLink>
           )}
@@ -144,7 +147,10 @@ export default function Navbar() {
               data-testid="nav-mobile-explore"
             >Explore</NavLink>
             {user && (
+              <>
               <NavLink to="/dashboard" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-dashboard">Dashboard</NavLink>
+            <NavLink to="/account/space" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-my-profile">My Profile</NavLink>
+              </>
             )}
             <NavLink to="/pricing" className={({ isActive }) => `py-2 text-sm font-display font-bold ${isActive ? "text-ink" : "text-ink/85"}`} data-testid="nav-mobile-pricing">Pricing</NavLink>
             {user?.role === "admin" && (

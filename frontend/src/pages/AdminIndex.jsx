@@ -121,6 +121,12 @@ const SECTIONS = [
         blurb: "Provider chain status, 24h send success rate, per-provider latency, failover events. Resend → SMTP fallback.",
         testId: "admin-card-email-health",
       },
+      {
+        to: "/admin/support",
+        name: "Concerns / Recommendations",
+        blurb: "User-submitted concerns and recommendations. Reply inline, mark resolved or closed. All threads logged for audit.",
+        testId: "admin-card-support",
+      },
     ],
   },
 ];

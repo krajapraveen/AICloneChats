@@ -118,6 +118,28 @@ async def my_credits(user: dict = Depends(get_current_user)):
     return {**state, "recent_events": rows, "email_verified": bool(user.get("email_verified")) or is_admin_unlimited_user(user)}
 
 
+@public_router.get("/api/me/orders")
+async def my_orders(user: dict = Depends(get_current_user), limit: int = Query(default=50, ge=1, le=200)):
+    """Return this user's purchase history (subscriptions + top-ups). Used by
+    the My Profile → Manage Subscriptions page. Sorted newest-first.
+    """
+    rows = await db.payment_orders.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0, "order_id": 1, "status": 1, "amount": 1, "currency": 1,
+         "plan_id": 1, "pack_id": 1, "credits_to_grant": 1, "provider": 1,
+         "created_at": 1, "paid_at": 1},
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    state = await get_user_credit_state(user)
+    return {
+        "items": rows,
+        "count": len(rows),
+        "current_plan_id": state.get("plan_id"),
+        "current_plan_name": state.get("plan_name"),
+        "credits_balance": state.get("credits_balance", 0),
+        "admin_unlimited": bool(state.get("admin_unlimited")),
+    }
+
+
 # ----- Admin -----
 @admin_router.get("/pricing-catalog")
 async def admin_pricing_catalog(_admin: dict = Depends(_require_admin)):
