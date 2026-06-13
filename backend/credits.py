@@ -33,17 +33,30 @@ logger = logging.getLogger(__name__)
 
 
 # ----- Admin allowlist (backend-only, NEVER trust frontend) -----
+# Canonical admin emails are baked in as a safety floor so the unlimited
+# bypass works even if the env var is misconfigured on a fresh deploy.
+# The env var (ADMIN_UNLIMITED_EMAIL, CSV) can ADD more emails but
+# cannot remove these.
+_CANONICAL_ADMIN_UNLIMITED = {
+    "admin@aiclonechats.com",
+    "krajapraveen@aiclonechats.com",
+    "krajapraveen@gmail.com",
+}
+
+
 def _parse_admin_unlimited_emails() -> set[str]:
     """Parse ADMIN_UNLIMITED_EMAIL env var. Supports a single email or a CSV
-    list. Returns a set of lowercase, stripped emails. Empty entries are
-    ignored. Backward-compatible: a single email still works exactly as before.
+    list. Returns a set of lowercase, stripped emails — UNION'd with the
+    canonical admin emails so misconfiguration on prod cannot lock the
+    operator out of unlimited access.
     """
-    raw = os.environ.get("ADMIN_UNLIMITED_EMAIL", "krajapraveen@gmail.com")
-    return {
+    raw = os.environ.get("ADMIN_UNLIMITED_EMAIL", "")
+    from_env = {
         e.lower().strip()
         for e in raw.split(",")
         if e and e.strip()
     }
+    return from_env | _CANONICAL_ADMIN_UNLIMITED
 
 
 ADMIN_UNLIMITED_EMAILS: set[str] = _parse_admin_unlimited_emails()
