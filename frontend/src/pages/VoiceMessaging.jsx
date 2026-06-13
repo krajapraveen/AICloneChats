@@ -11,6 +11,60 @@ import VoiceSignupWall from "../components/VoiceSignupWall";
 import UsageLimitModal from "../components/UsageLimitModal";
 import useVoiceRecorder from "../hooks/useVoiceRecorder";
 
+// Top 14 languages — covers ~85% of the global user base. "Auto-detect"
+// is the default: Whisper figures out the input language and mirrors it
+// to the output. Use the named options when the user wants to compose
+// in a DIFFERENT language than they spoke/typed.
+const OUTPUT_LANGUAGES = [
+  { code: "auto", label: "Auto-detect (same as input)" },
+  { code: "en", label: "English" },
+  { code: "hi", label: "Hindi · हिन्दी" },
+  { code: "es", label: "Spanish · Español" },
+  { code: "fr", label: "French · Français" },
+  { code: "de", label: "German · Deutsch" },
+  { code: "ar", label: "Arabic · العربية" },
+  { code: "zh", label: "Mandarin · 中文" },
+  { code: "ja", label: "Japanese · 日本語" },
+  { code: "ko", label: "Korean · 한국어" },
+  { code: "pt", label: "Portuguese · Português" },
+  { code: "ru", label: "Russian · Русский" },
+  { code: "it", label: "Italian · Italiano" },
+  { code: "tr", label: "Turkish · Türkçe" },
+  { code: "id", label: "Indonesian · Bahasa Indonesia" },
+];
+
+function LanguageSelector({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-2 mb-3 flex-wrap" data-testid="voice-lang-selector">
+      <label htmlFor="voice-target-lang" className="text-[10px] font-mono uppercase tracking-widest text-muted">
+        Output language
+      </label>
+      <select
+        id="voice-target-lang"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="input-brutal text-xs py-1.5"
+        data-testid="voice-lang-select"
+      >
+        {OUTPUT_LANGUAGES.map((l) => (
+          <option key={l.code} value={l.code}>{l.label}</option>
+        ))}
+      </select>
+      {value !== "auto" && (
+        <button
+          type="button"
+          className="text-[10px] font-mono text-muted hover:text-amber underline"
+          onClick={() => onChange("auto")}
+          data-testid="voice-lang-reset"
+        >
+          reset to auto
+        </button>
+      )}
+    </div>
+  );
+}
+
+
 const TONES = [
   { id: "concise", label: "Concise", desc: "Stripped to the essential" },
   { id: "professional", label: "Professional", desc: "Polished, decisive" },
@@ -91,6 +145,14 @@ export default function VoiceMessaging() {
   const transcriptBlockRef = useRef(null);
   const messagesBlockRef = useRef(null);
   const recorder = useVoiceRecorder({ maxSeconds: 90 });
+  const [targetLanguage, setTargetLanguageState] = useState(() => {
+    try { return localStorage.getItem("voice_target_language") || "auto"; }
+    catch { return "auto"; }
+  });
+  const setTargetLanguage = (v) => {
+    setTargetLanguageState(v);
+    try { localStorage.setItem("voice_target_language", v); } catch { /* ignore */ }
+  };
 
   // Initial usage + page-view
   useEffect(() => {
@@ -213,6 +275,7 @@ export default function VoiceMessaging() {
       const fd = new FormData();
       fd.append("audio_file", blob, filename || "audio.webm");
       fd.append("source_type", sourceType);
+      fd.append("target_language", targetLanguage || "auto");
       const { data } = await api.post("/voice/transcribe", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setStage("cleaning"); // brief flash; cleaning already happened server-side, but show the stage
       setSession(data);
@@ -243,7 +306,7 @@ export default function VoiceMessaging() {
     setMessages([]);
     setSession(null);
     try {
-      const { data } = await api.post("/voice/text-input", { text: text.trim() });
+      const { data } = await api.post("/voice/text-input", { text: text.trim(), target_language: targetLanguage || "auto" });
       setSession(data);
       setEditedTranscript(data.cleaned_transcript || "");
       refreshUsage(data);
@@ -266,7 +329,7 @@ export default function VoiceMessaging() {
   async function runGenerateAll(sessionId, sourceType) {
     setStage("generating");
     try {
-      const { data } = await api.post("/voice/generate-all", { session_id: sessionId });
+      const { data } = await api.post("/voice/generate-all", { session_id: sessionId, target_language: targetLanguage || "auto" });
       const ordered = TONES.map((t) => (data.messages || []).find((m) => m.tone === t.id)).filter(Boolean);
       setMessages(ordered);
       setTimeout(() => messagesBlockRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
@@ -472,6 +535,10 @@ export default function VoiceMessaging() {
               </button>
             ))}
           </div>
+
+          {/* Output language selector — applies to Record, Upload, and Paste tabs.
+              Default 'auto' = mirror whatever language the user spoke/typed. */}
+          <LanguageSelector value={targetLanguage} onChange={setTargetLanguage} />
 
           {tab === "record" && (
             <div data-testid="voice-record-panel">

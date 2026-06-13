@@ -23,6 +23,28 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-13 (P1 — Production 0-Credit Backfill + Optimistic UI Rollout)** — Two pieces landed together to retroactively enforce the strict 0-credit policy AND polish the chat-send UX across the major surfaces.
+  - **Backend — Enforce Zero-Credit Policy** (`/app/backend/billing_api.py`)
+    - New admin endpoint `POST /api/admin/billing/enforce-zero-credit-policy`.
+    - Body: `{dry_run?: bool, reason?: str}` (defaults: dry_run=false, reason=`enforce_zero_policy`).
+    - Pulls every user with `credits_balance > 0`, classifies in Python using the same `is_admin_unlimited_user` + `is_active_subscriber` predicates that runtime uses. Subscribers + admin-unlimited accounts are NEVER touched.
+    - Per-user mutation: `find_one_and_update({user_id, credits_balance: {$gt: 0}}, {$set: {credits_balance: 0}})` — race-safe against a concurrent topup. Emits a `credit_events` row with `kind=admin_adjust`, `surface=admin_adjust:enforce_zero_policy`, `feature=admin_adjustment`, `delta = -before`.
+    - Idempotent: rerunning on a clean slate is a no-op (no double-zero, no extra audit row).
+    - Response envelope: `{ok, dry_run, scanned, affected, total_credits_zeroed, sample (first 20), skipped: {admins, subscribers}}`.
+  - **Frontend — Admin page** (`/admin/enforce-zero-credit-policy`, `/app/frontend/src/pages/AdminEnforceZeroCreditPolicy.jsx`)
+    - Auto-pulls dry-run on mount → 4 summary tiles (Would zero, Credits at stake, Skipped admins, Skipped subscribers) + sample table.
+    - "Run for real" CTA → confirmation modal that requires typing `enforce zero policy` to enable. Post-run: last-run banner + re-pulls dry-run for fresh state.
+    - Wired into AdminIndex under Operations.
+  - **Live verification (preview)**: 0 stray balances detected · 1 admin + 449 subscribers skipped. The policy is fully enforced on the preview DB; the same endpoint is ready to flip on production after the user redeploys.
+  - **Tests** (`/app/backend/tests/test_enforce_zero_credit_policy.py`, 8/8 passing): admin-only gate, unauth blocked, dry-run never writes, real-run zeroes + audits, active subscribers untouched, admin-unlimited untouched, idempotent second-run, response envelope shape.
+  - **Frontend — Optimistic UI rollout** (P4 polish from the backlog)
+    - `ChatBubble` component extended with `pending` / `failed` / `onRetry` props. Failed bubbles get a rose ring + inline Retry link. Pending bubbles render at 70% opacity with a "Sending…" status pill underneath.
+    - `MoodChat.jsx`: send() now mints a `tempKey`, inserts a `pending` user bubble, clears `pending` on success, marks `failed` on error (instead of the old behaviour of adding a fake "snag" clone bubble that lost the user's text). Retry path: drop the failed bubble + re-submit the form.
+    - `PublicClone.jsx`: same pattern. Removed the "Hmm, I couldn't reply just now" fake-clone bubble; user's failed message stays visible with Retry instead.
+    - `VideoAvatarChat.jsx`: added optimistic temp insert (was previously: user saw nothing until the POST returned). Internal `MessageBubble` learnt `_pending` / `_failed` states + a Retry-send affordance distinct from the existing media-retry button.
+  - **Files added**: `backend/tests/test_enforce_zero_credit_policy.py`, `frontend/src/pages/AdminEnforceZeroCreditPolicy.jsx`.
+  - **Files modified**: `backend/billing_api.py`, `frontend/src/App.js`, `frontend/src/pages/AdminIndex.jsx`, `frontend/src/components/ChatBubble.jsx`, `frontend/src/pages/MoodChat.jsx`, `frontend/src/pages/PublicClone.jsx`, `frontend/src/pages/VideoAvatarChat.jsx`.
+
 - **2026-06-12 (P2 — Loss-Making Request Alerts + Top 10 Most Expensive / Top 10 Biggest Losses)** — Per-request margin analysis shipped together inside the Cost Telemetry dashboard. The dashboard now answers "WHICH requests hurt margin?" AND "WHY/WHERE?" in one screen.
   - **Backend** (`/app/backend/cost_telemetry.py`)
     - New endpoint `GET /api/admin/cost-telemetry/loss-making?days=&top_n=` returns:

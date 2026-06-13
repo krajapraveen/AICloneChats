@@ -1,5 +1,15 @@
-export default function ChatBubble({ sender, text, name, onShare, shareWorthy }) {
+export default function ChatBubble({
+  sender,
+  text,
+  name,
+  onShare,
+  shareWorthy,
+  pending,
+  failed,
+  onRetry,
+}) {
   const isClone = sender === "clone";
+  const stateClass = failed ? " ring-2 ring-rose-500/60" : pending ? " opacity-70" : "";
   return (
     <div className={`flex ${isClone ? "justify-start" : "justify-end"} animate-fade-up group w-full`} data-testid={`chat-bubble-${sender}`}>
       <div className={`flex flex-col gap-1 ${isClone ? "max-w-[88%] items-start" : "max-w-[80%] items-end"}`}>
@@ -14,7 +24,7 @@ export default function ChatBubble({ sender, text, name, onShare, shareWorthy })
               ✨ share
             </span>
           )}
-          <div className={isClone ? "chat-bubble-clone" : "chat-bubble-visitor"}>
+          <div className={(isClone ? "chat-bubble-clone" : "chat-bubble-visitor") + stateClass}>
             {text}
           </div>
           {isClone && onShare && (
@@ -33,6 +43,22 @@ export default function ChatBubble({ sender, text, name, onShare, shareWorthy })
             </button>
           )}
         </div>
+        {(pending || failed) && (
+          <div className={`text-[10px] font-mono uppercase tracking-widest ${failed ? "text-rose-300" : "text-muted"} flex items-center gap-2`}
+               data-testid={`chat-bubble-status-${failed ? "failed" : "pending"}`}>
+            {failed ? "Failed to send" : "Sending…"}
+            {failed && onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="underline hover:text-rose-200"
+                data-testid="chat-bubble-retry"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

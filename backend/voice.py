@@ -84,11 +84,13 @@ class TranscribeResponse(BaseModel):
 
 class TextInputRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+    target_language: Optional[str] = None
 
 
 class GenerateRequest(BaseModel):
     session_id: str
     tone: Literal["concise", "professional", "friendly", "apology", "dating", "negotiation"]
+    target_language: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -99,6 +101,7 @@ class GenerateResponse(BaseModel):
 
 class GenerateAllRequest(BaseModel):
     session_id: str
+    target_language: Optional[str] = None
 
 
 class CopyEventRequest(BaseModel):
@@ -112,6 +115,7 @@ class EditTranscriptRequest(BaseModel):
 class RefineRequest(BaseModel):
     message_id: str
     refine_type: Literal["shorter", "confident", "polite", "flirty", "professional"]
+    target_language: Optional[str] = None
 
 
 # -------------- Actor resolution (auth'd user OR anonymous device) --------------
@@ -219,11 +223,12 @@ async def _transcribe_audio(
     bio = io.BytesIO(audio_bytes)
     bio.name = filename or "audio.webm"
     try:
+        # No `language` parameter — Whisper auto-detects the spoken language
+        # so users worldwide can speak in their native tongue.
         resp = await stt.transcribe(
             file=bio,
             model="whisper-1",
             response_format="verbose_json",
-            language="en",
             temperature=0.0,
         )
     except Exception as e:
@@ -248,6 +253,32 @@ async def _transcribe_audio(
     return {"text": text, "duration": duration, "language": language}
 
 
+# -------------- Language --------------
+def _lang_directive(target_language: Optional[str], detected_language: Optional[str] = None) -> str:
+    """Build a short system-prompt directive telling the LLM which language
+    the output must be in. `target_language` is whatever the client sent —
+    it may be a BCP-47 code (`en`, `hi`, `es-MX`), a name (`Hindi`,
+    `Spanish`), or one of the sentinels `auto`/`mirror`/`same`/`""` which
+    means "use the language of the input". `detected_language` is whatever
+    Whisper auto-detected (or None for text-input flows)."""
+    tl = (target_language or "").strip().lower()
+    if not tl or tl in ("auto", "mirror", "same", "input"):
+        if detected_language:
+            return (
+                f"\n\nLANGUAGE: Write your output in the same language as the user's input "
+                f"(detected: {detected_language}). Preserve the user's native tongue and tone."
+            )
+        return (
+            "\n\nLANGUAGE: Write your output in the same language as the user's input. "
+            "Preserve the user's native tongue and tone."
+        )
+    return (
+        f"\n\nLANGUAGE: Write your output in {target_language}. Even if the user wrote "
+        f"in another language, the final message MUST be in {target_language}. "
+        f"Match natural tone and idiom of native {target_language} speakers."
+    )
+
+
 # -------------- Claude --------------
 def _claude_chat(system: str, session_id: Optional[str] = None) -> LlmChat:
     return LlmChat(
@@ -262,6 +293,8 @@ async def _clean_transcript(
     *,
     user_id: Optional[str] = None,
     request_id: Optional[str] = None,
+    target_language: Optional[str] = None,
+    detected_language: Optional[str] = None,
 ) -> str:
     if not raw.strip():
         return ""
@@ -272,7 +305,7 @@ Rules:
 - Fix obvious grammar and punctuation.
 - Keep the original meaning EXACTLY. Do not add facts the speaker did not say.
 - Keep it short.
-- Return only the cleaned text. No quotes, no preamble, no markdown."""
+- Return only the cleaned text. No quotes, no preamble, no markdown.""" + _lang_directive(target_language, detected_language)
     chat = _claude_chat(system)
     try:
         cleaned = await chat.send_message(UserMessage(text=f"Raw input:\n{raw}"))
@@ -301,6 +334,8 @@ async def _generate_message(
     *,
     user_id: Optional[str] = None,
     request_id: Optional[str] = None,
+    target_language: Optional[str] = None,
+    detected_language: Optional[str] = None,
 ) -> str:
     desc = TONE_DESCRIPTIONS.get(tone, "")
     system = f"""You are a smart-message assistant. Convert the user's cleaned input into a polished message they can send right now.
@@ -313,7 +348,7 @@ RULES:
 - Keep it concise: 1-3 short sentences for most tones; up to 4 for negotiation/professional if needed.
 - Do NOT invent any fact the user did not say.
 - No emojis unless the tone is friendly/dating AND it adds warmth (max 1).
-- Refuse and rewrite as a healthy alternative if the input asks for harassment, manipulation, coercion, or sexual pressure."""
+- Refuse and rewrite as a healthy alternative if the input asks for harassment, manipulation, coercion, or sexual pressure.""" + _lang_directive(target_language, detected_language)
     chat = _claude_chat(system)
     try:
         out = await chat.send_message(UserMessage(text=f"Cleaned input:\n{cleaned}"))
@@ -342,6 +377,8 @@ async def _refine_message(
     *,
     user_id: Optional[str] = None,
     request_id: Optional[str] = None,
+    target_language: Optional[str] = None,
+    detected_language: Optional[str] = None,
 ) -> str:
     instruction = REFINE_INSTRUCTIONS.get(refine_type, "Improve clarity.")
     system = f"""You are a smart-message refiner. Given a message, rewrite it according to the instruction.
@@ -351,7 +388,7 @@ INSTRUCTION: {instruction}
 RULES:
 - Output ONLY the rewritten message text. No quotes, no labels, no markdown, no preamble.
 - Preserve the speaker's intent and core facts.
-- Keep it human and natural. Refuse harassment, manipulation, or coercion."""
+- Keep it human and natural. Refuse harassment, manipulation, or coercion.""" + _lang_directive(target_language, detected_language)
     chat = _claude_chat(system)
     try:
         out = await chat.send_message(UserMessage(text=f"Original message:\n{original}"))
@@ -419,6 +456,7 @@ async def transcribe(
     request: Request,
     audio_file: UploadFile = File(...),
     source_type: str = Form("recording"),  # "recording" or "upload"
+    target_language: str = Form(""),  # "" = auto-detect / mirror input
     actor: dict = Depends(voice_actor),
 ):
     if source_type not in ("recording", "upload"):
@@ -455,12 +493,23 @@ async def transcribe(
     if len(raw) > 2000:
         raw = raw[:2000]
 
-    cleaned = await _clean_transcript(raw, user_id=actor.get("user_id"), request_id=None)
+    cleaned = await _clean_transcript(
+        raw, user_id=actor.get("user_id"), request_id=None,
+        target_language=target_language, detected_language=result["language"],
+    )
     session_id = await _create_session(
         actor, raw, cleaned, source_type=source_type,
         duration=result["duration"], language=result["language"],
         upload_filename=audio_file.filename, mime_type=ct or None,
     )
+    # Persist target_language onto the session so generate-all and refine
+    # use the same setting without the client having to re-send it.
+    if target_language:
+        from db import db as _db
+        await _db.voice_sessions.update_one(
+            {"session_id": session_id},
+            {"$set": {"target_language": target_language}},
+        )
 
     # Consume on success
     usage = await _check_usage(actor, consume=True)
@@ -485,8 +534,17 @@ async def text_input(payload: TextInputRequest, actor: dict = Depends(voice_acto
     await _check_usage(actor, consume=False)
 
     raw = payload.text.strip()
-    cleaned = await _clean_transcript(raw, user_id=actor.get("user_id"), request_id=None)
+    cleaned = await _clean_transcript(
+        raw, user_id=actor.get("user_id"), request_id=None,
+        target_language=payload.target_language, detected_language=None,
+    )
     session_id = await _create_session(actor, raw, cleaned, source_type="text")
+    if payload.target_language:
+        from db import db as _db
+        await _db.voice_sessions.update_one(
+            {"session_id": session_id},
+            {"$set": {"target_language": payload.target_language}},
+        )
     usage = await _check_usage(actor, consume=True)
 
     await _emit(actor, "voice_transcription_success", {"session_id": session_id, "chars": len(raw), "source_type": "text"})
@@ -533,6 +591,8 @@ async def generate(payload: GenerateRequest, actor: dict = Depends(voice_actor))
             cleaned, payload.tone,
             user_id=actor.get("user_id"),
             request_id=getattr(credit_handle, "request_id", None),
+            target_language=payload.target_language or sess.get("target_language"),
+            detected_language=sess.get("detected_language"),
         )
     except Exception:
         await credit_handle.refund(reason="generation_failed")
@@ -574,6 +634,8 @@ async def generate_all(payload: GenerateAllRequest, actor: dict = Depends(voice_
             cleaned, t,
             user_id=actor.get("user_id"),
             request_id=getattr(credit_handle, "request_id", None),
+            target_language=payload.target_language or sess.get("target_language"),
+            detected_language=sess.get("detected_language"),
         ) for t in TONES],
         return_exceptions=True,
     )
@@ -625,6 +687,8 @@ async def refine(payload: RefineRequest, actor: dict = Depends(voice_actor)):
             msg["generated_message"], payload.refine_type,
             user_id=actor.get("user_id"),
             request_id=getattr(credit_handle, "request_id", None),
+            target_language=payload.target_language,
+            detected_language=None,
         )
     except Exception:
         await credit_handle.refund(reason="refine_failed")

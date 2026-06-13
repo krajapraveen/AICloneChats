@@ -67,7 +67,8 @@ export default function PublicClone() {
     const text = input.trim();
     if (!text || !clone || sending) return;
     setInput("");
-    const newMsg = { sender: "visitor", text, key: Date.now() };
+    const tempKey = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const newMsg = { sender: "visitor", text, key: tempKey, pending: true };
     setMessages((m) => [...m, newMsg]);
     setSending(true);
     try {
@@ -79,7 +80,10 @@ export default function PublicClone() {
       });
       if (data?.conversation_id) setConversationId(data.conversation_id);
       const reply = (typeof data?.reply === "string" && data.reply.trim()) || "(no reply)";
-      setMessages((m) => [...m, { sender: "clone", text: reply, key: Date.now() + 1, prevQuestion: text }]);
+      setMessages((m) => [
+        ...m.map((x) => (x.key === tempKey ? { ...x, pending: false } : x)),
+        { sender: "clone", text: reply, key: Date.now() + 1, prevQuestion: text },
+      ]);
       if (data?.mood_ui) updateMoodUI(data.mood_ui);
     } catch (err) {
       // Backend may return either a string detail or the new structured
@@ -92,10 +96,23 @@ export default function PublicClone() {
       else if (err?.message === "Network Error") msg = "Network error — try again.";
       else msg = "Couldn't send";
       toast.error(msg);
-      setMessages((m) => [...m, { sender: "clone", text: "(Hmm, I couldn't reply just now. Try again?)", key: Date.now() + 1, prevQuestion: text }]);
+      // Mark user's bubble as failed; keep text visible for retry.
+      setMessages((m) =>
+        m.map((x) => (x.key === tempKey ? { ...x, pending: false, failed: true, _retryText: text } : x)),
+      );
     } finally {
       setSending(false);
     }
+  };
+
+  const retry = (m) => {
+    if (!m?._retryText) return;
+    setMessages((prev) => prev.filter((x) => x.key !== m.key));
+    setInput(m._retryText);
+    setTimeout(() => {
+      const form = document.querySelector('[data-testid="chat-form"]');
+      form?.requestSubmit?.();
+    }, 0);
   };
 
   const submitName = (e) => {
@@ -206,6 +223,9 @@ export default function PublicClone() {
                 name={m.sender === "visitor" ? (visitorName || "you") : clone.display_name}
                 onShare={m.sender === "clone" ? () => openShareCard(m) : undefined}
                 shareWorthy={m.sender === "clone" && (m.text || "").length >= SHARE_WORTHY_THRESHOLD}
+                pending={m.pending}
+                failed={m.failed}
+                onRetry={m.failed ? () => retry(m) : undefined}
               />
             ))}
             {sending && (

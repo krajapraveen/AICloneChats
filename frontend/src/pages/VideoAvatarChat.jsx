@@ -31,16 +31,28 @@ function StatusPill({ status, error }) {
   );
 }
 
-function MessageBubble({ msg, onRetry }) {
+function MessageBubble({ msg, onRetry, onRetrySend }) {
   const isVideo = !!msg.video_url;
   const isAudio = !!msg.audio_url && !isVideo;
   const isText = !msg.audio_url && !msg.video_url;
+  const isOptimistic = !!msg._pending || !!msg._failed;
   return (
     <div className="flex flex-col gap-2 mb-5" data-testid={`avatar-msg-${msg.message_id}`}>
       <div className="text-right text-[10px] font-mono uppercase tracking-widest text-muted">you</div>
-      <div className="brutal-card p-3 self-end max-w-[85%] sm:max-w-[70%] bg-violet-500/10 border-violet-400/30">
+      <div className={`brutal-card p-3 self-end max-w-[85%] sm:max-w-[70%] bg-violet-500/10 border-violet-400/30 ${msg._pending ? "opacity-70" : ""} ${msg._failed ? "ring-2 ring-rose-500/60" : ""}`}>
         <div className="text-sm whitespace-pre-wrap break-words">{msg.input_text}</div>
       </div>
+      {isOptimistic ? (
+        <div className={`text-right text-[10px] font-mono uppercase tracking-widest ${msg._failed ? "text-rose-300" : "text-muted"} flex items-center justify-end gap-2`} data-testid={msg._failed ? "avatar-msg-failed" : "avatar-msg-pending"}>
+          {msg._failed ? "Failed to send" : "Sending…"}
+          {msg._failed && onRetrySend && (
+            <button type="button" onClick={() => onRetrySend(msg)} className="underline hover:text-rose-200" data-testid={`avatar-retry-send-${msg.message_id}`}>
+              Retry
+            </button>
+          )}
+        </div>
+      ) : (
+      <>
       <div className="text-[10px] font-mono uppercase tracking-widest text-muted">clone</div>
       <div className="brutal-card p-3 max-w-[85%] sm:max-w-[80%]">
         <div className="flex items-center gap-2 mb-2">
@@ -65,6 +77,8 @@ function MessageBubble({ msg, onRetry }) {
           <button onClick={() => onRetry(msg.message_id)} className="btn-ghost text-xs mt-2" data-testid={`avatar-retry-${msg.message_id}`}>Retry</button>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -142,6 +156,17 @@ export default function VideoAvatarChat() {
     const text = draft.trim();
     if (!text || sending) return;
     setSending(true);
+    // Optimistic insert so the user sees their bubble immediately.
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const tempMessage = {
+      message_id: tempId,
+      _pending: true,
+      input_text: text,
+      ai_response_text: "",
+      video_status: "queued",
+    };
+    setMessages((prev) => [...prev, tempMessage]);
+    setDraft("");
     try {
       const r = await api.post("/avatar-chat/send", {
         clone_id_or_slug: cloneSlug || "companion",
@@ -152,18 +177,38 @@ export default function VideoAvatarChat() {
       const m = r.data?.message;
       const cid = r.data?.conversation_id;
       if (cid) setConversationId(cid);
-      if (m) setMessages((prev) => [...prev, m]);
-      setDraft("");
+      if (m) {
+        // Replace the optimistic temp with the server message.
+        setMessages((prev) => prev.map((x) => (x.message_id === tempId ? m : x)));
+      } else {
+        // No server message returned — drop the temp.
+        setMessages((prev) => prev.filter((x) => x.message_id !== tempId));
+      }
       // Track event
       api.post("/analytics/event", { event_name: "avatar_message_submitted", metadata: { clone_id: cloneSlug, experience_variant: "avatar_chat_v1" } }).catch(() => {});
     } catch (e) {
       const code = e?.response?.status;
       if (code === 503) toast.error("Avatar Chat is currently disabled for public users.");
       else toast.error(formatApiError(e, "Could not send message"));
+      // Mark the optimistic temp as failed so the user can retry.
+      setMessages((prev) =>
+        prev.map((x) =>
+          x.message_id === tempId
+            ? { ...x, _pending: false, _failed: true, _retryText: text }
+            : x,
+        ),
+      );
     } finally {
       setSending(false);
     }
   }, [draft, sending, cloneSlug, conversationId, selectedAvatarId]);
+
+  const onRetrySend = useCallback((msg) => {
+    if (!msg?._retryText) return;
+    setMessages((prev) => prev.filter((x) => x.message_id !== msg.message_id));
+    setDraft(msg._retryText);
+    setTimeout(() => onSend(), 0);
+  }, [onSend]);
 
   const onRetry = useCallback(async (messageId) => {
     try {
@@ -224,7 +269,7 @@ export default function VideoAvatarChat() {
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pr-1" data-testid="avatar-message-list">
               {messages.length === 0 && <div className="text-muted text-sm font-mono">Send a message to see an avatar reply.</div>}
-              {messages.map((m) => <MessageBubble key={m.message_id} msg={m} onRetry={onRetry} />)}
+              {messages.map((m) => <MessageBubble key={m.message_id} msg={m} onRetry={onRetry} onRetrySend={onRetrySend} />)}
             </div>
 
             <div className="chat-form-sticky pt-3 mt-2 border-t border-ink/10 flex flex-col sm:flex-row gap-2">

@@ -74,7 +74,8 @@ export default function MoodChat() {
     const text = input.trim();
     if (!text || sending) return;
     setInput("");
-    setMessages((m) => [...m, { sender: "visitor", text, key: Date.now() }]);
+    const tempKey = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setMessages((m) => [...m, { sender: "visitor", text, key: tempKey, pending: true }]);
     setSending(true);
     try {
       const { data } = await api.post(`/clones/${COMPANION_SLUG}/chat`, {
@@ -84,14 +85,33 @@ export default function MoodChat() {
       });
       if (data?.conversation_id) setConversationId(data.conversation_id);
       const reply = (typeof data?.reply === "string" && data.reply.trim()) || "(no reply)";
-      setMessages((m) => [...m, { sender: "clone", text: reply, key: Date.now() + 1 }]);
+      // Clear pending on the temp; append clone reply.
+      setMessages((m) => [
+        ...m.map((x) => (x.key === tempKey ? { ...x, pending: false } : x)),
+        { sender: "clone", text: reply, key: Date.now() + 1 },
+      ]);
       if (data?.mood_ui) updateMoodUI(data.mood_ui);
     } catch (err) {
       toast.error(formatApiError(err, "Couldn't send"));
-      setMessages((m) => [...m, { sender: "clone", text: "(I hit a snag. Try again?)", key: Date.now() + 1 }]);
+      // Mark the user's bubble as failed so they can retry; keep their text visible.
+      setMessages((m) =>
+        m.map((x) => (x.key === tempKey ? { ...x, pending: false, failed: true, _retryText: text } : x)),
+      );
     } finally {
       setSending(false);
     }
+  };
+
+  const retry = (m) => {
+    if (!m?._retryText) return;
+    // Drop the failed bubble and re-send.
+    setMessages((prev) => prev.filter((x) => x.key !== m.key));
+    setInput(m._retryText);
+    // Defer to next tick so the input value is committed before submit.
+    setTimeout(() => {
+      const form = document.querySelector('[data-testid="mood-chat-form"]');
+      form?.requestSubmit?.();
+    }, 0);
   };
 
   return (
@@ -147,6 +167,9 @@ export default function MoodChat() {
                 sender={m.sender}
                 text={m.text}
                 name={m.sender === "visitor" ? "you" : "Companion"}
+                pending={m.pending}
+                failed={m.failed}
+                onRetry={m.failed ? () => retry(m) : undefined}
               />
             ))}
             {sending && (

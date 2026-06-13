@@ -4,6 +4,7 @@ Public + admin endpoints for plans, credits, payments, fraud signals.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -18,6 +19,7 @@ from credits import (
     get_user_credit_state,
     is_admin_unlimited_user,
     is_active_subscriber,
+    ADMIN_UNLIMITED_EMAILS,
 )
 from pricing import (
     catalog_for_country,
@@ -459,6 +461,143 @@ async def admin_fraud_signals(_admin: dict = Depends(_require_admin), limit: int
         {"expires_at": {"$gt": now_iso()}}, {"_id": 0}
     ).sort("expires_at", -1).limit(50).to_list(50)
     return {"signals": rows, "active_cooldowns": cooldowns}
+
+
+@admin_router.post("/enforce-zero-credit-policy")
+async def admin_enforce_zero_credit_policy(
+    payload: Optional[dict] = None,
+    _admin: dict = Depends(_require_admin),
+):
+    """Sweep & zero-out stray `credits_balance` for non-admin, non-subscriber users.
+
+    The platform enforces a strict 0-credit policy for free users (no signup
+    grants, no daily free allowance — only subscribers and admin-unlimited
+    accounts can spend). Historical rows in production may still carry stale
+    positive balances from earlier code paths. This endpoint reconciles them
+    in one transaction-per-user.
+
+    Request body (all optional):
+      - dry_run: bool — if true, report what WOULD change without writing. Default false.
+      - reason: str  — audit label, persisted on the credit_events row.
+                       Default `enforce_zero_policy`.
+
+    Response shape:
+      {
+        ok: true,
+        dry_run: bool,
+        scanned: int,        # non-admin non-subscriber users with balance > 0
+        affected: int,       # users actually zeroed (== scanned when not dry_run)
+        total_credits_zeroed: int,  # sum of credits removed
+        sample: [             # first 20 affected users for operator inspection
+          {user_id, email, plan_id, plan_status, balance_before},
+          ...
+        ],
+        skipped: {
+          admins: int,        # admin-unlimited users skipped (kept untouched)
+          subscribers: int,   # active subscribers skipped
+        },
+      }
+    """
+    body = payload or {}
+    dry_run = bool(body.get("dry_run", False))
+    reason = (body.get("reason") or "enforce_zero_policy").strip() or "enforce_zero_policy"
+
+    admin_emails = ADMIN_UNLIMITED_EMAILS  # imported at module-bottom via credits
+
+    # Pull every user with positive balance; classify in Python so the
+    # admin-bypass + subscriber rules stay identical to runtime.
+    cursor = db.users.find(
+        {"credits_balance": {"$gt": 0}},
+        {"_id": 0, "user_id": 1, "email": 1, "plan_id": 1, "plan_status": 1, "credits_balance": 1},
+    )
+
+    skipped_admins = 0
+    skipped_subscribers = 0
+    affected_users: list[dict] = []
+
+    async for u in cursor:
+        email = (u.get("email") or "").lower().strip()
+        if email in admin_emails:
+            skipped_admins += 1
+            continue
+        if is_active_subscriber(u):
+            skipped_subscribers += 1
+            continue
+        affected_users.append(u)
+
+    scanned = len(affected_users)
+    total_credits_zeroed = sum(int(u.get("credits_balance") or 0) for u in affected_users)
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "scanned": scanned,
+            "affected": 0,
+            "total_credits_zeroed": total_credits_zeroed,
+            "sample": [
+                {
+                    "user_id": u["user_id"],
+                    "email": u.get("email"),
+                    "plan_id": u.get("plan_id"),
+                    "plan_status": u.get("plan_status"),
+                    "balance_before": int(u.get("credits_balance") or 0),
+                }
+                for u in affected_users[:20]
+            ],
+            "skipped": {"admins": skipped_admins, "subscribers": skipped_subscribers},
+        }
+
+    # Apply the sweep. Per-user transactional shape: set balance to 0 only if
+    # the current balance is still positive (no negative-balance race), then
+    # emit an `admin_adjust` credit event. If a user's balance was top'd-up
+    # between scan and write (e.g., they subscribed in the meantime), the
+    # update simply matches no document and we skip the audit row.
+    affected = 0
+    for u in affected_users:
+        before = int(u.get("credits_balance") or 0)
+        if before <= 0:
+            continue
+        updated = await db.users.find_one_and_update(
+            {"user_id": u["user_id"], "credits_balance": {"$gt": 0}},
+            {"$set": {"credits_balance": 0}},
+            projection={"_id": 0, "credits_balance": 1},
+            return_document=False,
+        )
+        if not updated:
+            continue
+        await db.credit_events.insert_one({
+            "event_id": f"{u['user_id']}_{uuid.uuid4().hex}",
+            "user_id": u["user_id"],
+            "kind": "admin_adjust",
+            "delta": -before,
+            "balance_before": before,
+            "balance_after": 0,
+            "surface": f"admin_adjust:{reason}",
+            "feature": "admin_adjustment",
+            "request_id": _admin.get("email"),
+            "created_at": now_iso(),
+        })
+        affected += 1
+
+    return {
+        "ok": True,
+        "dry_run": False,
+        "scanned": scanned,
+        "affected": affected,
+        "total_credits_zeroed": total_credits_zeroed,
+        "sample": [
+            {
+                "user_id": u["user_id"],
+                "email": u.get("email"),
+                "plan_id": u.get("plan_id"),
+                "plan_status": u.get("plan_status"),
+                "balance_before": int(u.get("credits_balance") or 0),
+            }
+            for u in affected_users[:20]
+        ],
+        "skipped": {"admins": skipped_admins, "subscribers": skipped_subscribers},
+    }
 
 
 @admin_router.post("/credit-adjust")

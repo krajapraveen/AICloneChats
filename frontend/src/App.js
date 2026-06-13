@@ -70,6 +70,7 @@ import AdminRenewalReminders from "./pages/AdminRenewalReminders";
 import AdminCostTelemetry from "./pages/AdminCostTelemetry";
 import AdminExitInsights from "./pages/AdminExitInsights";
 import AdminUserActivity from "./pages/AdminUserActivity";
+import AdminEnforceZeroCreditPolicy from "./pages/AdminEnforceZeroCreditPolicy";
 import Pricing from "./pages/Pricing";
 import VerifyEmail from "./pages/VerifyEmail";
 import PaymentReturn from "./pages/PaymentReturn";
@@ -130,6 +131,7 @@ function AppRouter() {
       <Route path="/admin/cost-telemetry" element={<AdminCostTelemetry />} />
       <Route path="/admin/exit-insights" element={<AdminExitInsights />} />
       <Route path="/admin/user-activity" element={<AdminUserActivity />} />
+      <Route path="/admin/enforce-zero-credit-policy" element={<AdminEnforceZeroCreditPolicy />} />
       <Route path="/admin/voice-metrics" element={<AdminVoiceMetrics />} />
       <Route path="/admin/anonymous-reality" element={<AnonymousAdmin />} />
       <Route path="/admin/anonymous-metrics" element={<AdminAnonymousMetrics />} />

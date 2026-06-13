@@ -164,6 +164,12 @@ const SECTIONS = [
         testId: "admin-card-renewal-reminders",
       },
       {
+        to: "/admin/enforce-zero-credit-policy",
+        name: "Enforce 0-Credit Policy",
+        blurb: "Production backfill: zero stray balances for non-admin, non-subscriber users. Dry-run preview + idempotent sweep + audit ledger.",
+        testId: "admin-card-enforce-zero-policy",
+      },
+      {
         to: "/admin/support",
         name: "Concerns / Recommendations",
         blurb: "User-submitted concerns and recommendations. Reply inline, mark resolved or closed. All threads logged for audit.",
