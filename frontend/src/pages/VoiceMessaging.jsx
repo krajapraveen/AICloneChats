@@ -158,6 +158,13 @@ export default function VoiceMessaging() {
       setPaywall(true);
       return true;
     }
+    // Any other 402 (insufficient_balance, subscription_required, etc.) is
+    // already surfaced by the global paywall modal mounted at the app root —
+    // we just need to swallow the local generic error toast so the UI shows
+    // ONE consistent paywall, not a toast + modal stacked on top of each other.
+    if (status === 402) {
+      return true;
+    }
     return false;
   }
 
