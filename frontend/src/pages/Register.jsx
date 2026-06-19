@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useGoogleAuthConfig } from "../contexts/GoogleAuthConfigContext";
 import Navbar from "../components/Navbar";
 import GoogleSignInButton from "../components/GoogleSignInButton";
+import AppleSignInButton from "../components/AppleSignInButton";
 
 export default function Register() {
   const [email, setEmail] = useState("");
@@ -50,6 +51,11 @@ export default function Register() {
           <p className="text-sm text-muted mb-7 font-medium">3 minutes. No credit card. No vibes harmed.</p>
 
           <GoogleSignInButton testId="register-google-btn" label="Sign up with Google" />
+          <AppleSignInButton
+            testId="register-apple-btn"
+            label="Sign up with Apple"
+            next={searchParams.get("redirect") || searchParams.get("next") || "/dashboard"}
+          />
 
           {googleConfigured && (
             <div className="flex items-center gap-3 my-5">

@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useGoogleAuthConfig } from "../contexts/GoogleAuthConfigContext";
 import Navbar from "../components/Navbar";
 import GoogleSignInButton from "../components/GoogleSignInButton";
+import AppleSignInButton from "../components/AppleSignInButton";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -57,6 +58,10 @@ export default function Login() {
           <p className="text-sm text-muted mb-7 font-medium">Talk to your AI self again.</p>
 
           <GoogleSignInButton testId="login-google-btn" />
+          <AppleSignInButton
+            testId="login-apple-btn"
+            next={searchParams.get("redirect") || searchParams.get("next") || "/dashboard"}
+          />
 
           {googleConfigured && (
             <div className="flex items-center gap-3 my-5">

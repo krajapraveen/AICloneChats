@@ -23,6 +23,25 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-19 (P1 — "Continue with Apple" on Login + Register)** — Full server-side Sign in with Apple integrated. Code-side ready; awaits operator's Apple Developer credentials.
+  - **Backend** (`/app/backend/auth_apple.py`)
+    - `GET /api/auth/apple/config` → `{configured: bool}` for the frontend to gate the button.
+    - `GET /api/auth/apple/login?next=…` → mints `state`+`nonce` (stored in `apple_oauth_states`, single-use), 302s to Apple's authorize endpoint with `response_mode=form_post` + `scope=name email`.
+    - `POST /api/auth/apple/callback` → Apple's form-post lands here. Consumes the state row, generates an **ES256-signed client_secret JWT** from the operator's `.p8` private key, exchanges the auth code at Apple's token endpoint, verifies the returned `id_token` against Apple's JWKS (signature + iss + aud + exp + nonce), then matches/creates the user.
+    - User matching strategy: primary by `apple_sub`, fallback by email, then create. Email may be Apple's `@privaterelay.appleid.com` — treated as a real email. `is_private_email` is persisted.
+    - All failure modes redirect to `/login?error=apple_<code>` (apple_state_invalid, apple_token_…, apple_nonce_mismatch, etc.) so the SPA can surface a friendly toast.
+    - login_events rows are emitted with `login_method=apple_oauth` for both successes and failures — feeds the existing admin login dashboards.
+  - **Frontend** (`/app/frontend/src/components/AppleSignInButton.jsx`)
+    - Renders an official-style black pill button matching Apple HIG (logo + "Continue with Apple" / "Sign up with Apple"), stacked directly below the existing Google button.
+    - **Two-gate visibility**: hidden unless (a) backend reports `configured=true` AND (b) hostname matches `aiclonechats.com` or `www.aiclonechats.com`. Apple rejects unverified domains, so preview/staging hosts never see a guaranteed-to-fail button.
+    - Dev override: `window.__FORCE_APPLE_BUTTON__ = true` lets the operator preview rendering on any host (auth still won't complete on non-prod).
+  - **Frontend wiring**: `Login.jsx` and `Register.jsx` import `AppleSignInButton` and pass `next` so post-auth redirect respects the `?redirect=` query.
+  - **Indexes**: `apple_oauth_states.state` unique + `users.apple_sub` sparse, added to the startup index pass in `server.py`.
+  - **Tests** (`/app/backend/tests/test_auth_apple.py`, 10/10 passing): unconfigured 503s, config endpoint shape, ES256 client_secret structure, login redirect+state stash, callback invalid state → /login?error, full happy path with real RS256 id_token + mocked Apple token endpoint + new user creation, nonce mismatch rejection, existing-email link path.
+  - **Operator setup guide**: `/app/memory/APPLE_SIGNIN_SETUP.md` — 5-step walkthrough of the Apple Developer console with the 4 env vars to paste after.
+  - **Domain-association scaffolding**: `/app/frontend/public/.well-known/` created with a placeholder README explaining where to drop Apple's `apple-developer-domain-association.txt`.
+  - **Status**: all code is in. To go live in production, the operator needs to (1) generate the 4 Apple credentials per the setup guide, (2) paste the env vars, (3) upload the domain-association file, (4) redeploy. The preview button is hidden by design.
+
 - **2026-06-13 (P1 — Production 0-Credit Backfill + Optimistic UI Rollout)** — Two pieces landed together to retroactively enforce the strict 0-credit policy AND polish the chat-send UX across the major surfaces.
   - **Backend — Enforce Zero-Credit Policy** (`/app/backend/billing_api.py`)
     - New admin endpoint `POST /api/admin/billing/enforce-zero-credit-policy`.

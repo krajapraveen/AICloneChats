@@ -11,6 +11,7 @@ load_dotenv(ROOT_DIR / ".env")
 # Import routers AFTER load_dotenv so module-level env reads succeed
 from db import client  # noqa: E402
 import auth  # noqa: E402
+import auth_apple  # noqa: E402
 import clones  # noqa: E402
 import memories  # noqa: E402
 import chat  # noqa: E402
@@ -50,6 +51,7 @@ async def health():
 
 app.include_router(api_router)
 app.include_router(auth.router)
+app.include_router(auth_apple.router)
 app.include_router(clones.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
@@ -179,6 +181,11 @@ async def on_startup():
     await _db.users.create_index("email", unique=True)
     await _db.users.create_index("user_id", unique=True)
     await _db.user_sessions.create_index("session_token", unique=True)
+    # Apple Sign-in state pool — short-lived (10 min); single-use by callback.
+    await _db.apple_oauth_states.create_index("state", unique=True)
+    await _db.apple_oauth_states.create_index([("expires_at_epoch", 1)])
+    # Speed up Apple sub lookups on the users collection.
+    await _db.users.create_index([("apple_sub", 1)], sparse=True)
     await _db.clones.create_index("slug", unique=True)
     await _db.clones.create_index("user_id")
     await _db.clones.create_index("clone_id", unique=True)
