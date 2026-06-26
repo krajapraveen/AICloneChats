@@ -19,6 +19,7 @@ Feature gating:
 - Admin/QA users (role=admin) ALWAYS see the feature regardless of flag (per the override spec)
 
 Strict analytics separation: experience_variant="avatar_chat_v1".
+Trigger redeploy: fal-client added to requirements.txt for lipsync video generation.
 """
 from __future__ import annotations
 
