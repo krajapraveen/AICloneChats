@@ -2,6 +2,7 @@ import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useCredits } from "../hooks/useCredits";
+import { displayNameOf } from "../lib/displayName";
 
 /**
  * Public navbar — five anchors, no operator/admin tooling leak.
@@ -101,7 +102,7 @@ export default function Navbar() {
           {user ? (
             <div className="flex items-center gap-3">
               <span className="hidden lg:inline-block text-xs font-mono text-muted truncate max-w-[160px]" data-testid="nav-user-email">
-                {user.email}
+                {displayNameOf(user)}
               </span>
               <button
                 onClick={async () => { await logout(); navigate("/"); }}
@@ -163,7 +164,7 @@ export default function Navbar() {
             <div className="border-t border-white/5 mt-2 pt-2 flex items-center gap-2">
               {user ? (
                 <>
-                  <span className="text-[11px] font-mono text-muted truncate flex-1">{user.email}</span>
+                  <span className="text-[11px] font-mono text-muted truncate flex-1">{displayNameOf(user)}</span>
                   <button
                     onClick={async () => { setMobileOpen(false); await logout(); navigate("/"); }}
                     className="btn-ghost text-xs"
