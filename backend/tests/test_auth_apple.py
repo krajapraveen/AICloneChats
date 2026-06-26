@@ -320,7 +320,10 @@ def test_callback_happy_path_creates_user(apple_env, app_client, monkeypatch):
     )
     assert r2.status_code == 302, r2.text
     assert "aiclonechats.com" in r2.headers["location"]
-    assert "/dashboard" in r2.headers["location"]
+    # New return URL format: /auth/apple/return#token=…&next=/dashboard
+    assert "/auth/apple/return" in r2.headers["location"]
+    assert "token=" in r2.headers["location"]
+    assert "next=" in r2.headers["location"]
 
     # Verify the user was created with apple_sub set.
     async def _find_user():

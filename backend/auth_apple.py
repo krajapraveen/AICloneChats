@@ -359,14 +359,26 @@ async def apple_callback(request: Request, response: Response):
     user = await ensure_admin_role(user)
     await record_login_event(request, event_type="login_success", login_method="apple_oauth", user=user)
 
-    # Build the redirect to the SPA. We keep `next` opaque and only allow
-    # in-app paths starting with `/` to prevent open-redirect.
+    # Build the redirect to the SPA.
+    #
+    # IMPORTANT: The React app authenticates via `localStorage.session_token`
+    # (Bearer header), NOT via cookies — see /app/frontend/src/lib/api.js. The
+    # Set-Cookie we just emitted is HttpOnly and JS can't read it, so the SPA
+    # would render as logged-out and bounce the user back to the landing page.
+    #
+    # The fix: redirect to a dedicated SPA route `/auth/apple/return` with
+    # the token in the URL FRAGMENT (`#token=…&next=…`). Fragments are NOT
+    # sent to the server (no log/referer leak) and the SPA reads them
+    # client-side, persists to localStorage, then navigates to `next`.
     safe_next = next_path if next_path.startswith("/") else "/dashboard"
     spa_root = APPLE_POST_AUTH_REDIRECT.rstrip("/")
-    # The cookie carries the session; the SPA hydrates from /api/auth/me.
-    redirect_to = f"{spa_root}{safe_next}"
+    # URL-encode the next path so query parsing on the SPA side is robust.
+    from urllib.parse import quote
+    fragment = f"token={token}&next={quote(safe_next, safe='/')}"
+    redirect_to = f"{spa_root}/auth/apple/return#{fragment}"
     final = RedirectResponse(url=redirect_to, status_code=302)
-    # FastAPI strips set_cookie on RedirectResponse unless we re-apply.
+    # Keep the HttpOnly cookie too — harmless and useful if we ever flip the
+    # frontend to cookie-based auth in the future.
     set_session_cookie(final, token)
     return final
 
