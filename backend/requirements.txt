@@ -76,6 +76,8 @@ pandas==3.0.2
 passlib==1.7.4
 pathspec==1.1.1
 pillow==12.2.0
+imageio==2.37.3
+imageio-ffmpeg==0.6.0
 platformdirs==4.9.6
 pluggy==1.6.0
 propcache==0.4.1

@@ -190,6 +190,8 @@ async def _fetch_image_bytes(image_url: str) -> tuple[Optional[bytes], Optional[
 
 def _ext_for_ct(content_type: str) -> str:
     ct = (content_type or "").lower()
+    if "mp4" in ct:
+        return ".mp4"
     if "png" in ct:
         return ".png"
     if "webp" in ct:
@@ -202,27 +204,20 @@ def _ext_for_ct(content_type: str) -> str:
 def _image_bytes_to_gif(image_bytes: bytes) -> tuple[bytes, str]:
     """Convert a still image (JPG/PNG/WEBP) to a 1-frame GIF.
 
-    fal-ai/sync-lipsync requires `video_url` to be a VIDEO (mp4/mov/webm/m4v/gif).
-    Passing a JPG returns HTTP 422 with a Pydantic validation error. A static
-    1-frame GIF satisfies the schema; we then pass `sync_mode: "loop"` so the
-    provider repeats the frame to match the audio duration.
-
-    Returns (gif_bytes, content_type). Falls back to the original bytes on
-    PIL failure (best-effort — caller can still try the upload).
+    NOTE: kept for backward compat / fallback only. fal-ai/sync-lipsync's
+    ffprobe step rejects a 1-frame GIF with "Failed to read video metadata".
+    Prefer `_image_bytes_to_mp4()` which produces a real H.264 MP4.
     """
     try:
         from PIL import Image
         import io as _io
         img = Image.open(_io.BytesIO(image_bytes))
-        # Convert to RGB then to P (palette) for GIF.
         if img.mode in ("RGBA", "LA"):
             bg = Image.new("RGB", img.size, (0, 0, 0))
             bg.paste(img, mask=img.split()[-1])
             img = bg
         elif img.mode != "RGB":
             img = img.convert("RGB")
-        # Downscale very large avatars — fal happily accepts ≤1024px and we
-        # avoid >10MB uploads for static avatars.
         if max(img.size) > 1024:
             img.thumbnail((1024, 1024))
         buf = _io.BytesIO()
@@ -231,6 +226,75 @@ def _image_bytes_to_gif(image_bytes: bytes) -> tuple[bytes, str]:
     except Exception as e:
         logger.warning("image_to_gif_failed | will_pass_original | err=%s", e)
         return image_bytes, "image/jpeg"
+
+
+def _image_bytes_to_mp4(image_bytes: bytes, *, fps: int = 25, duration_sec: float = 2.0) -> tuple[Optional[bytes], str]:
+    """Convert a still image into a short H.264 MP4 with valid video metadata.
+
+    The previous GIF approach was rejected by fal-ai/sync-lipsync's ffprobe
+    step with `Failed to read video metadata. Ensure the video is valid.`
+    fal needs a real video container with codec metadata — a 1-frame GIF
+    doesn't qualify even though the suffix is in the allowlist.
+
+    We use `imageio` + the bundled `imageio-ffmpeg` (portable wheel binary,
+    no system ffmpeg required) to write a libx264 MP4 with `duration_sec`
+    repetitions of the same frame. fal's `sync_mode: "loop"` then repeats
+    this short clip across the full audio duration.
+
+    Returns (mp4_bytes, content_type) on success, (None, error_detail) on failure.
+    """
+    try:
+        from PIL import Image
+        import io as _io
+        import imageio.v3 as iio  # type: ignore
+        import numpy as np
+        import tempfile
+        # Decode + sanitise the still image
+        img = Image.open(_io.BytesIO(image_bytes))
+        if img.mode in ("RGBA", "LA"):
+            bg = Image.new("RGB", img.size, (0, 0, 0))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        # H.264 requires even dimensions — pad/crop to even px.
+        w, h = img.size
+        if w > 1024 or h > 1024:
+            img.thumbnail((1024, 1024))
+            w, h = img.size
+        if w % 2 != 0 or h % 2 != 0:
+            new_w = w - (w % 2)
+            new_h = h - (h % 2)
+            img = img.crop((0, 0, new_w, new_h))
+        frame = np.asarray(img, dtype=np.uint8)
+        n_frames = max(1, int(fps * duration_sec))
+        # Write to a tempfile (imageio_ffmpeg writes via subprocess).
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+            mp4_path = tf.name
+        try:
+            iio.imwrite(
+                mp4_path,
+                np.stack([frame] * n_frames, axis=0),
+                fps=fps,
+                codec="libx264",
+                pixelformat="yuv420p",
+                macro_block_size=1,
+                ffmpeg_log_level="error",
+            )
+            with open(mp4_path, "rb") as f:
+                mp4_bytes = f.read()
+        finally:
+            try:
+                os.unlink(mp4_path)
+            except OSError:
+                pass
+        if not mp4_bytes:
+            return None, "mp4_empty"
+        logger.error("image_to_mp4_ok | bytes=%d frames=%d fps=%d size=%dx%d", len(mp4_bytes), n_frames, fps, img.size[0], img.size[1])
+        return mp4_bytes, "video/mp4"
+    except Exception as e:
+        logger.exception("image_to_mp4_failed")
+        return None, f"{type(e).__name__}:{str(e)[:200]}"
 
 
 # Canonical lipsync error codes — surfaced via `error_code` so ops can grep.
@@ -338,15 +402,25 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
         return None, LIPSYNC_ERR_INVALID_AVATAR_ID, f"image_fetch_failed:{image_dbg}"
     logger.error("lipsync_image_fetched | bytes=%d ct=%s dbg=%s", len(image_bytes), image_ct, image_dbg)
 
-    # fal-ai/sync-lipsync requires `video_url` to be a VIDEO (mp4/mov/gif/etc).
-    # Convert the still avatar image to a 1-frame GIF so it satisfies the
-    # schema. We pair this with `sync_mode: "loop"` so fal repeats the frame
-    # to match the audio duration (instead of cropping to a single-frame video).
-    gif_bytes, gif_ct = _image_bytes_to_gif(image_bytes)
-    logger.error("lipsync_image_as_gif | bytes=%d ct=%s", len(gif_bytes), gif_ct)
-    # Override the upload bytes with the GIF version (sync-lipsync wants a video).
-    image_bytes_for_upload = gif_bytes
-    image_ct_for_upload = gif_ct
+    # fal-ai/sync-lipsync requires `video_url` to be a real VIDEO with valid
+    # codec metadata. A 1-frame GIF satisfies the file-suffix allowlist but
+    # fal's ffprobe step rejects it ("Failed to read video metadata"). We
+    # build a short H.264 MP4 from the still image via imageio + bundled
+    # ffmpeg binary (no system ffmpeg required) and feed that as video_url.
+    # Pair with `sync_mode: "loop"` so fal repeats the short clip across the
+    # full audio duration.
+    mp4_bytes, mp4_dbg = _image_bytes_to_mp4(image_bytes)
+    if mp4_bytes:
+        image_bytes_for_upload = mp4_bytes
+        image_ct_for_upload = "video/mp4"
+        logger.error("lipsync_image_as_mp4 | bytes=%d", len(mp4_bytes))
+    else:
+        # Fallback to GIF (legacy path). At worst we get the same 422 we had
+        # before, which surfaces in the admin UI as before.
+        gif_bytes, gif_ct = _image_bytes_to_gif(image_bytes)
+        image_bytes_for_upload = gif_bytes
+        image_ct_for_upload = gif_ct
+        logger.error("lipsync_image_mp4_fallback_to_gif | mp4_dbg=%s gif_bytes=%d", mp4_dbg, len(gif_bytes))
 
     try:
         import fal_client  # type: ignore

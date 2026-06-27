@@ -281,3 +281,55 @@ def test_image_bytes_to_gif_fallback_on_bad_input():
     out, ct = avatar_chat._image_bytes_to_gif(junk)
     assert out == junk
     assert ct == "image/jpeg"
+
+
+# --- MP4 conversion (the iter5 fix for "Failed to read video metadata") ---
+
+
+def test_image_bytes_to_mp4_jpg_input_produces_valid_mp4():
+    """JPG → real H.264 MP4 with valid ftyp box (so fal's ffprobe accepts it)."""
+    import avatar_chat
+    jpg = _make_test_jpg_bytes()
+    mp4, ct = avatar_chat._image_bytes_to_mp4(jpg)
+    assert mp4 is not None, "MP4 conversion failed (ffmpeg-bundled binary issue?)"
+    assert ct == "video/mp4"
+    # MP4 files start with a `ftyp` box header at bytes 4-8.
+    assert mp4[4:8] == b"ftyp", f"not a valid MP4 (no ftyp box): {mp4[:12]!r}"
+    # Should be more than a trivial placeholder (≥1KB for 2s at 25fps).
+    assert len(mp4) > 1000, f"MP4 too small: {len(mp4)} bytes"
+
+
+def test_image_bytes_to_mp4_png_rgba_input():
+    """PNG with alpha must flatten and still produce a valid MP4."""
+    from PIL import Image
+    import io as _io
+    img = Image.new("RGBA", (128, 128), (10, 200, 10, 128))
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    import avatar_chat
+    mp4, ct = avatar_chat._image_bytes_to_mp4(buf.getvalue())
+    assert mp4 is not None
+    assert ct == "video/mp4"
+    assert mp4[4:8] == b"ftyp"
+
+
+def test_image_bytes_to_mp4_handles_odd_dimensions():
+    """H.264 requires even px — image with odd width/height must still encode."""
+    from PIL import Image
+    import io as _io
+    # Deliberately odd dimensions.
+    img = Image.new("RGB", (255, 333), (100, 100, 100))
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG")
+    import avatar_chat
+    mp4, ct = avatar_chat._image_bytes_to_mp4(buf.getvalue())
+    assert mp4 is not None, "odd-dim image should be cropped to even and still encode"
+    assert ct == "video/mp4"
+
+
+def test_image_bytes_to_mp4_fallback_on_garbage():
+    """Garbage bytes → returns (None, error_detail) so caller can fall through to GIF."""
+    import avatar_chat
+    mp4, dbg = avatar_chat._image_bytes_to_mp4(b"definitely not an image")
+    assert mp4 is None
+    assert isinstance(dbg, str) and len(dbg) > 0
