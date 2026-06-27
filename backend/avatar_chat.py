@@ -132,14 +132,65 @@ async def _generate_tts(text: str, voice: str = "alloy") -> Optional[bytes]:
         return None
 
 
+async def _fetch_image_bytes(image_url: str) -> tuple[Optional[bytes], Optional[str], str]:
+    """Resolve an avatar image URL to bytes + content-type.
+
+    Supports:
+      - http(s)://...                   → requests.get
+      - /api/storage/files/<storage_path> → look up db.files directly so we
+        never depend on our own ingress being reachable from fal.ai's egress
+        network.
+
+    Returns (bytes, content_type, debug_reason).
+    """
+    if not image_url:
+        return None, None, "no_image_url"
+    try:
+        # Local storage path → bypass HTTP and pull straight from Mongo
+        marker = "/api/storage/files/"
+        if marker in image_url:
+            from urllib.parse import unquote
+            storage_path = unquote(image_url.split(marker, 1)[1])
+            try:
+                import storage as _storage
+                blob, blob_ct = _storage._get(storage_path)
+            except Exception as e:
+                return None, None, f"storage_get_failed:{type(e).__name__}:{str(e)[:120]}"
+            if not blob:
+                return None, None, f"storage_blob_missing:{storage_path[:80]}"
+            row = await db.files.find_one({"storage_path": storage_path}, {"_id": 0, "content_type": 1})
+            ct = (row or {}).get("content_type") or blob_ct or "image/jpeg"
+            return blob, ct, "ok_storage"
+        if image_url.startswith("http"):
+            import requests
+            r = requests.get(image_url, timeout=30)
+            if r.status_code >= 400:
+                return None, None, f"http_{r.status_code}"
+            ct = r.headers.get("content-type", "image/jpeg").split(";")[0].strip() or "image/jpeg"
+            return r.content, ct, "ok_http"
+        return None, None, f"unsupported_image_url:{image_url[:80]}"
+    except Exception as e:
+        return None, None, f"fetch_exception:{type(e).__name__}:{str(e)[:120]}"
+
+
+def _ext_for_ct(content_type: str) -> str:
+    ct = (content_type or "").lower()
+    if "png" in ct:
+        return ".png"
+    if "webp" in ct:
+        return ".webp"
+    if "gif" in ct:
+        return ".gif"
+    return ".jpg"
+
+
 async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[Optional[str], str]:
     """Returns (provider's MP4 URL, debug_reason).
 
-    Uploads `audio_bytes` to fal.ai's CDN (so production's ephemeral disk
-    doesn't matter — fal serves the file itself), then submits sync-lipsync.
-
-    Image is passed by URL because clones' avatar images already live on a
-    persistent storage CDN (/api/storage/files/) that fal CAN reach.
+    Uploads BOTH audio bytes AND avatar image bytes to fal.ai's CDN, so the
+    pipeline never depends on our backend URL being reachable from fal.ai's
+    egress network. This mirrors the audio fix and removes the last
+    production-only failure surface.
     """
     logger.error(
         "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_bytes=%d",
@@ -151,10 +202,17 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
         return None, "no_fal_key"
     if LIPSYNC_PROVIDER != "fal":
         return None, f"wrong_provider:{LIPSYNC_PROVIDER}"
-    if not image_url or not image_url.startswith("http"):
-        return None, f"bad_image_url:{(image_url or '')[:80]}"
+    if not image_url:
+        return None, "no_image_url"
     if not audio_bytes:
         return None, "empty_audio_bytes"
+
+    # Fetch the image bytes ourselves so we can re-upload to fal's CDN.
+    image_bytes, image_ct, image_dbg = await _fetch_image_bytes(image_url)
+    if not image_bytes:
+        return None, f"image_fetch_failed:{image_dbg}"
+    logger.error("lipsync_image_fetched | bytes=%d ct=%s dbg=%s", len(image_bytes), image_ct, image_dbg)
+
     try:
         import fal_client  # type: ignore
         import tempfile
@@ -162,24 +220,40 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
 
         def _sync_call() -> tuple[Optional[str], str]:
             try:
-                # Write the audio bytes to a tempfile and upload to fal.ai's
-                # CDN. fal_client.upload_file expects a path (the SDK doesn't
-                # have an `upload_bytes` helper as of v1.0). The tempfile is
-                # auto-cleaned when the `with` block exits.
+                # --- Upload audio to fal CDN ---
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
                     tf.write(audio_bytes)
-                    tmp_path = tf.name
+                    audio_tmp = tf.name
                 try:
-                    fal_audio_url = fal_client.upload_file(tmp_path)
+                    fal_audio_url = fal_client.upload_file(audio_tmp)
                 finally:
                     try:
-                        os.unlink(tmp_path)
+                        os.unlink(audio_tmp)
                     except OSError:
                         pass
                 logger.error("fal_client_audio_uploaded | url=%s", fal_audio_url[:120])
+
+                # --- Upload image to fal CDN ---
+                img_ext = _ext_for_ct(image_ct or "")
+                with tempfile.NamedTemporaryFile(suffix=img_ext, delete=False) as tf:
+                    tf.write(image_bytes)
+                    image_tmp = tf.name
+                try:
+                    fal_image_url = fal_client.upload_file(image_tmp)
+                finally:
+                    try:
+                        os.unlink(image_tmp)
+                    except OSError:
+                        pass
+                logger.error("fal_client_image_uploaded | url=%s", fal_image_url[:120])
+
                 handler = fal_client.submit(
                     "fal-ai/sync-lipsync",
-                    arguments={"video_url": image_url, "audio_url": fal_audio_url, "model": "lipsync-1.9.0-beta"},
+                    arguments={
+                        "video_url": fal_image_url,
+                        "audio_url": fal_audio_url,
+                        "model": "lipsync-1.9.0-beta",
+                    },
                 )
                 result = handler.get()
                 if not isinstance(result, dict):
@@ -238,7 +312,7 @@ async def _run_pipeline(message_id: str) -> None:
     )
     await db.avatar_chat_messages.update_one(
         {"message_id": message_id},
-        {"$set": {"video_status": "generating_audio", "updated_at": now_iso()}},
+        {"$set": {"video_status": "generating_audio", "job_id": job_id, "updated_at": now_iso()}},
     )
     await _emit("avatar_generation_started", message_id=message_id, user_id=msg.get("user_id"), clone_id=msg.get("clone_id"))
 
@@ -323,30 +397,18 @@ async def _run_pipeline(message_id: str) -> None:
         await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "no_avatar_image"})
         return
 
-    # Need a publicly fetchable audio URL for fal.ai. Use BACKEND_PUBLIC_URL or fall back.
-    public_base = os.environ.get("BACKEND_PUBLIC_URL", "").rstrip("/")
-    if not public_base:
-        # Skip lipsync — audio-only fallback
-        logger.error("lipsync_skip_no_backend_public_url | message_id=%s avatar_image=%s", message_id, (avatar_image or "")[:200])
-        await db.avatar_chat_messages.update_one(
-            {"message_id": message_id},
-            {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso()}},
-        )
-        await db.avatar_generation_jobs.update_one(
-            {"job_id": job_id},
-            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso()}},
-        )
-        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "no_public_base"})
-        return
-
-    audio_public = f"{public_base}{audio_url}"
-    image_public = avatar_image if avatar_image.startswith("http") else f"{public_base}{avatar_image}"
-    logger.error("lipsync_resolved_urls | message_id=%s image_public=%s audio_public=%s", message_id, image_public[:200], audio_public[:200])
+    # We no longer need BACKEND_PUBLIC_URL — both audio and image bytes are
+    # uploaded directly to fal.ai's CDN inside _generate_lipsync_video().
+    # Just resolve the image URL to whatever the avatar profile stored
+    # (either http(s)://… or /api/storage/files/…); _fetch_image_bytes()
+    # handles both.
+    image_for_fal = avatar_image
+    logger.error("lipsync_resolved_urls | message_id=%s image=%s audio_bytes=%d", message_id, (image_for_fal or "")[:200], len(audio_bytes or b""))
 
     # Pass audio_bytes directly — we'll upload them to fal.ai's CDN inside the
     # helper so production's ephemeral disk (where our local audio file may
     # already be gone by the time fal tries to fetch it) doesn't matter.
-    video_provider_url, lipsync_debug = await _generate_lipsync_video(image_public, audio_bytes)
+    video_provider_url, lipsync_debug = await _generate_lipsync_video(image_for_fal, audio_bytes)
     if not video_provider_url:
         logger.error("lipsync_completed_audio_only | message_id=%s reason=%s", message_id, lipsync_debug)
         # Audio-only completion (graceful degrade) — persist the specific
@@ -366,16 +428,39 @@ async def _run_pipeline(message_id: str) -> None:
         await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "lipsync_unavailable", "lipsync_debug": lipsync_debug})
         return
 
-    # ---- Download MP4 from provider, store locally ----
+    # ---- Download MP4 from provider, persist to object store (db.files) ----
+    # Local disk is ephemeral so we mirror the audio fix: write the MP4 to
+    # persistent object storage and serve it via /api/storage/files/. This
+    # also unblocks production deployments where avatar_videos/ is wiped.
     try:
         import requests
         r = requests.get(video_provider_url, timeout=120)
         r.raise_for_status()
-        video_path = VIDEO_DIR / f"{message_id}.mp4"
-        video_path.write_bytes(r.content)
-        video_url = f"/api/avatar-chat/files/{message_id}/video"
+        video_bytes = r.content
+        # Best-effort local cache for the legacy /files/{id}/video route.
+        try:
+            (VIDEO_DIR / f"{message_id}.mp4").write_bytes(video_bytes)
+        except OSError:
+            pass
+        # Persistent storage.
+        from urllib.parse import quote as _quote
+        import storage as _storage
+        import uuid as _uuid
+        storage_path = f"cloneme/video/{message_id}.mp4"
+        _storage._put(storage_path, video_bytes, "video/mp4")
+        await db.files.insert_one({
+            "file_id": _uuid.uuid4().hex,
+            "user_id": msg.get("user_id") or "",
+            "storage_path": storage_path,
+            "content_type": "video/mp4",
+            "size": len(video_bytes),
+            "purpose": "avatar_chat_video",
+            "is_deleted": False,
+        })
+        video_url = f"/api/storage/files/{_quote(storage_path, safe='')}"
+        logger.info("video_persisted_to_objstore | message_id=%s url=%s", message_id, video_url)
     except Exception as e:
-        logger.warning("Video download failed: %s", e)
+        logger.warning("Video download/persist failed: %s", e)
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
@@ -399,16 +484,20 @@ async def _run_pipeline(message_id: str) -> None:
 
 
 def _public_message(m: dict) -> dict:
+    # Surface job_id under both names so older/newer frontends can read it.
+    job_id = m.get("job_id") or m.get("video_job_id")
     return {
         "message_id": m.get("message_id"),
         "conversation_id": m.get("conversation_id"),
         "clone_id": m.get("clone_id"),
         "input_text": m.get("input_text"),
         "ai_response_text": m.get("ai_response_text"),
+        "reply_text": m.get("ai_response_text"),  # alias for newer clients
         "response_mode": m.get("response_mode") or "avatar_video",
         "audio_url": m.get("audio_url"),
         "video_url": m.get("video_url"),
         "video_status": m.get("video_status") or "queued",
+        "video_job_id": job_id,
         "error_code": m.get("error_code"),
         "error_message": m.get("error_message"),
         # Detailed lipsync failure reason — operator-facing, surfaced so we can
@@ -575,6 +664,23 @@ async def send_avatar_message(payload: AvatarSendRequest, user: dict = Depends(g
         "conversation_id": conversation_id,
         "message": _public_message(msg or {}),
     }
+
+
+@router.get("/messages")
+async def list_recent_messages(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Recent avatar messages for the current user (newest first).
+
+    Used by clients that want to recover their last few replies without
+    knowing a specific conversation_id (e.g. after a hard refresh).
+    """
+    _require_feature(user)
+    rows = await db.avatar_chat_messages.find(
+        {"user_id": user["user_id"]}, {"_id": 0},
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"messages": [_public_message(r) for r in rows]}
 
 
 @router.get("/messages/{conversation_id}")

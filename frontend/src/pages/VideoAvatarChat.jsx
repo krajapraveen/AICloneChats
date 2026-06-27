@@ -122,7 +122,17 @@ export default function VideoAvatarChat() {
   // Poll job status for any in-flight message every 2s
   const refreshJobs = useCallback(async () => {
     if (!messages.length) return;
-    const inflight = messages.filter((m) => ["queued", "generating_audio", "rendering_video"].includes(m.video_status));
+    // Skip optimistic temp messages (no server message_id yet) and any
+    // pending/failed bubbles — polling them would 404 and spam logs.
+    const inflight = messages.filter(
+      (m) =>
+        m &&
+        m.message_id &&
+        !m._pending &&
+        !m._failed &&
+        !String(m.message_id).startsWith("temp_") &&
+        ["queued", "generating_audio", "rendering_video"].includes(m.video_status),
+    );
     if (!inflight.length) return;
     const updates = await Promise.all(
       inflight.map((m) =>
@@ -177,11 +187,12 @@ export default function VideoAvatarChat() {
       const m = r.data?.message;
       const cid = r.data?.conversation_id;
       if (cid) setConversationId(cid);
-      if (m) {
+      if (m && m.message_id) {
         // Replace the optimistic temp with the server message.
         setMessages((prev) => prev.map((x) => (x.message_id === tempId ? m : x)));
       } else {
         // No server message returned — drop the temp.
+        console.warn("avatar-chat/send returned no message_id", r?.data);
         setMessages((prev) => prev.filter((x) => x.message_id !== tempId));
       }
       // Track event
