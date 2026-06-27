@@ -57,6 +57,16 @@ LIPSYNC_PROVIDER = os.environ.get("LIPSYNC_PROVIDER", "fal")  # only "fal" imple
 MAX_AVATAR_VIDEO_RETRIES = int(os.environ.get("MAX_AVATAR_VIDEO_RETRIES", "3"))
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 FAL_KEY = os.environ.get("FAL_KEY", "")
+# Fal lipsync endpoint and optional model parameter. The default
+# `fal-ai/sync-lipsync` no longer accepts a `model` argument in its current
+# schema (it returns 422 with Pydantic validation errors). To keep the
+# integration future-proof:
+#   FAL_LIPSYNC_ENDPOINT  → e.g. "fal-ai/sync-lipsync" (default), or
+#                           "fal-ai/sync-lipsync-2" for the v2 model.
+#   FAL_LIPSYNC_MODEL     → if set, sent as the `model` arg. Leave UNSET to
+#                           omit it (this is the safe default for v1/v2).
+FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/sync-lipsync")
+FAL_LIPSYNC_MODEL = os.environ.get("FAL_LIPSYNC_MODEL", "")  # empty = omit
 
 STORAGE_ROOT = Path(__file__).parent / "storage"
 AUDIO_DIR = STORAGE_ROOT / "avatar_audio"
@@ -200,6 +210,64 @@ LIPSYNC_ERR_VIDEO_NOT_STARTED = "VIDEO_NOT_STARTED"         # pipeline didn't re
 LIPSYNC_TIMEOUT_SEC = int(os.environ.get("LIPSYNC_TIMEOUT_SEC", "180"))
 
 
+def _classify_fal_exception(err: Exception, *, stage: str, request_id: Optional[str] = None) -> tuple[str, str]:
+    """Extract canonical error_code + verbose lipsync_debug from a fal.ai exception.
+
+    Handles `FalClientHTTPError` specifically — pulls `.status_code` and the
+    raw response body text (NOT the truncated str(err) repr). This is what
+    ops needs to actually debug a 422 / 4xx from fal.
+
+    Returns (canonical_code, debug_detail).
+    """
+    # Lazy import; fal_client may not be installed at import time in tests.
+    try:
+        from fal_client import FalClientHTTPError, FalClientTimeoutError  # type: ignore
+    except Exception:
+        FalClientHTTPError = None  # type: ignore
+        FalClientTimeoutError = None  # type: ignore
+
+    rid = f" request_id={request_id}" if request_id else ""
+
+    if FalClientHTTPError is not None and isinstance(err, FalClientHTTPError):
+        status = getattr(err, "status_code", None)
+        msg = getattr(err, "message", "") or ""
+        body_text = ""
+        resp = getattr(err, "response", None)
+        if resp is not None:
+            try:
+                body_text = resp.text  # full body, not truncated str(err)
+            except Exception:
+                body_text = ""
+        if not body_text:
+            body_text = msg
+        # Hard-cap so we never blow up Mongo doc size, but generous enough to
+        # capture the entire Pydantic validation list.
+        body_text = body_text[:2000]
+        detail = f"{stage}:HTTP {status} body={body_text}{rid}"
+
+        if status in (401, 403):
+            return LIPSYNC_ERR_PROVIDER_AUTH_FAILED, detail
+        if status == 422:
+            return LIPSYNC_ERR_PROVIDER_422, detail
+        if status == 408 or (status and 500 <= status < 600):
+            # 5xx/timeouts from fal — operationally treat as poll/render failures
+            return (LIPSYNC_ERR_POLL_FAILED if stage == "poll" else LIPSYNC_ERR_RENDER_EXCEPTION), detail
+        return (LIPSYNC_ERR_POLL_FAILED if stage == "poll" else LIPSYNC_ERR_RENDER_EXCEPTION), detail
+
+    if FalClientTimeoutError is not None and isinstance(err, FalClientTimeoutError):
+        return LIPSYNC_ERR_JOB_TIMEOUT, f"{stage}:client_timeout{rid}"
+
+    # Generic fallback — last-resort, no truncation of useful info beyond 500ch
+    msg = f"{type(err).__name__}:{str(err)[:500]}"
+    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
+        return LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"{stage}:{msg}{rid}"
+    if "422" in msg:
+        return LIPSYNC_ERR_PROVIDER_422, f"{stage}:{msg}{rid}"
+    if "timeout" in msg.lower():
+        return LIPSYNC_ERR_JOB_TIMEOUT, f"{stage}:{msg}{rid}"
+    return (LIPSYNC_ERR_POLL_FAILED if stage == "poll" else LIPSYNC_ERR_RENDER_EXCEPTION), f"{stage}:{msg}{rid}"
+
+
 async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[Optional[str], str, str]:
     """Returns (provider's MP4 URL, error_code, debug_detail).
 
@@ -251,12 +319,9 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                 try:
                     fal_audio_url = fal_client.upload_file(audio_tmp)
                 except Exception as e_au:
-                    msg = f"{type(e_au).__name__}:{str(e_au)[:200]}"
+                    code, dbg = _classify_fal_exception(e_au, stage="audio_upload")
                     logger.exception("fal_audio_upload_failed")
-                    # 401/403 → auth; otherwise generic
-                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
-                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"audio_upload:{msg}"
-                    return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"audio_upload:{msg}"
+                    return None, code, dbg
                 logger.error("fal_client_audio_uploaded | url=%s", (fal_audio_url or "")[:120])
 
                 # --- Upload image to fal CDN ---
@@ -267,34 +332,36 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                 try:
                     fal_image_url = fal_client.upload_file(image_tmp)
                 except Exception as e_im:
-                    msg = f"{type(e_im).__name__}:{str(e_im)[:200]}"
+                    code, dbg = _classify_fal_exception(e_im, stage="image_upload")
                     logger.exception("fal_image_upload_failed")
-                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
-                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"image_upload:{msg}"
-                    return None, LIPSYNC_ERR_INVALID_AVATAR_ID, f"image_upload:{msg}"
+                    # Image upload failure usually means a bad image, not auth
+                    if code not in (LIPSYNC_ERR_PROVIDER_AUTH_FAILED, LIPSYNC_ERR_JOB_TIMEOUT):
+                        code = LIPSYNC_ERR_INVALID_AVATAR_ID
+                    return None, code, dbg
                 logger.error("fal_client_image_uploaded | url=%s", (fal_image_url or "")[:120])
 
                 # --- Submit lipsync job ---
+                # Build args. Some fal endpoints (e.g. fal-ai/sync-lipsync v1
+                # latest schema) reject `model` with a 422 — we now omit it
+                # unless FAL_LIPSYNC_MODEL is set.
+                submit_args = {
+                    "video_url": fal_image_url,
+                    "audio_url": fal_audio_url,
+                }
+                if FAL_LIPSYNC_MODEL:
+                    submit_args["model"] = FAL_LIPSYNC_MODEL
+                logger.error("fal_submit_args | endpoint=%s keys=%s model=%s",
+                             FAL_LIPSYNC_ENDPOINT, list(submit_args.keys()),
+                             FAL_LIPSYNC_MODEL or "<omitted>")
                 try:
-                    handler = fal_client.submit(
-                        "fal-ai/sync-lipsync",
-                        arguments={
-                            "video_url": fal_image_url,
-                            "audio_url": fal_audio_url,
-                            "model": "lipsync-1.9.0-beta",
-                        },
-                    )
+                    handler = fal_client.submit(FAL_LIPSYNC_ENDPOINT, arguments=submit_args)
                 except Exception as e_sub:
-                    msg = f"{type(e_sub).__name__}:{str(e_sub)[:200]}"
+                    code, dbg = _classify_fal_exception(e_sub, stage="submit")
                     logger.exception("fal_submit_failed")
-                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
-                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"submit:{msg}"
-                    if "422" in msg:
-                        return None, LIPSYNC_ERR_PROVIDER_422, f"submit:{msg}"
-                    return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"submit:{msg}"
+                    return None, code, dbg
 
                 request_id = getattr(handler, "request_id", None) or str(handler)[:80]
-                logger.error("fal_submit_ok | request_id=%s", request_id)
+                logger.error("fal_submit_ok | request_id=%s endpoint=%s", request_id, FAL_LIPSYNC_ENDPOINT)
 
                 # --- Poll with timeout ---
                 # fal_client's handler.get() blocks until terminal state. We
@@ -318,20 +385,16 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                     return None, LIPSYNC_ERR_JOB_TIMEOUT, f"timeout:{LIPSYNC_TIMEOUT_SEC}s request_id={request_id}"
                 if box["err"] is not None:
                     err = box["err"]
-                    msg = f"{type(err).__name__}:{str(err)[:200]}"
+                    code, dbg = _classify_fal_exception(err, stage="poll", request_id=request_id)
                     logger.exception("fal_poll_failed")
-                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
-                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"poll:{msg}"
-                    if "422" in msg:
-                        return None, LIPSYNC_ERR_PROVIDER_422, f"poll:{msg}"
-                    return None, LIPSYNC_ERR_POLL_FAILED, f"poll:{msg}"
+                    return None, code, dbg
 
                 result = box["result"]
                 if not isinstance(result, dict):
-                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"result_not_dict:{type(result).__name__}"
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"result_not_dict:{type(result).__name__} request_id={request_id}"
                 video_url = (result.get("video") or {}).get("url")
                 if not video_url:
-                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"missing_video_url:{str(result)[:200]}"
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"missing_video_url:{str(result)[:300]} request_id={request_id}"
                 logger.error("fal_video_ready | request_id=%s elapsed=%ss url=%s", request_id, elapsed, video_url[:120])
                 return video_url, "ok", f"request_id={request_id} elapsed={elapsed}s"
             except Exception as inner:
@@ -614,6 +677,8 @@ async def feature_status(user: Optional[dict] = Depends(get_optional_user)):
         "lipsync_configured": bool(FAL_KEY) and LIPSYNC_PROVIDER == "fal",
         "tts_provider": TTS_PROVIDER,
         "lipsync_provider": LIPSYNC_PROVIDER,
+        "lipsync_endpoint": FAL_LIPSYNC_ENDPOINT,
+        "lipsync_model": FAL_LIPSYNC_MODEL or None,
     }
 
 

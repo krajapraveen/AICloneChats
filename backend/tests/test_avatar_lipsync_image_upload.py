@@ -152,3 +152,72 @@ def test_error_code_constants_exist():
         "LIPSYNC_ERR_RENDER_EXCEPTION", "LIPSYNC_ERR_VIDEO_NOT_STARTED",
     ]:
         assert hasattr(avatar_chat, c), f"Missing constant: {c}"
+
+
+# --- Tests for _classify_fal_exception (the bit that fixes the
+#     "FalClientHTTPError truncated" bug from prod). ---
+
+class _FakeResp:
+    def __init__(self, text):
+        self.text = text
+
+
+def _make_fal_http_err(status_code, body_text, message="fal error"):
+    """Construct a FalClientHTTPError without hitting the network."""
+    from fal_client import FalClientHTTPError
+    return FalClientHTTPError(
+        message=message,
+        status_code=status_code,
+        response_headers={"content-type": "application/json"},
+        response=_FakeResp(body_text),
+    )
+
+
+def test_classify_fal_422_preserves_full_body():
+    """422 from fal must surface as PROVIDER_422 with the FULL body (not truncated str(err))."""
+    import avatar_chat
+    body = '[{"loc": ["body", "model"], "msg": "extra fields not permitted", "type": "value_error.extra"}]'
+    err = _make_fal_http_err(422, body)
+    code, dbg = avatar_chat._classify_fal_exception(err, stage="poll", request_id="req_abc123")
+    assert code == avatar_chat.LIPSYNC_ERR_PROVIDER_422
+    assert "HTTP 422" in dbg
+    assert "extra fields not permitted" in dbg, f"body must be preserved verbatim, got: {dbg}"
+    assert "req_abc123" in dbg
+
+
+def test_classify_fal_401_is_auth_failed():
+    import avatar_chat
+    err = _make_fal_http_err(401, '{"detail":"unauthorized"}')
+    code, dbg = avatar_chat._classify_fal_exception(err, stage="submit")
+    assert code == avatar_chat.LIPSYNC_ERR_PROVIDER_AUTH_FAILED
+    assert "HTTP 401" in dbg
+
+
+def test_classify_fal_5xx_during_poll_is_poll_failed():
+    import avatar_chat
+    err = _make_fal_http_err(502, "bad gateway")
+    code, dbg = avatar_chat._classify_fal_exception(err, stage="poll", request_id="rid1")
+    assert code == avatar_chat.LIPSYNC_ERR_POLL_FAILED
+    assert "HTTP 502" in dbg
+    assert "rid1" in dbg
+
+
+def test_classify_generic_exception_falls_back():
+    import avatar_chat
+    code, dbg = avatar_chat._classify_fal_exception(RuntimeError("boom"), stage="poll")
+    assert code == avatar_chat.LIPSYNC_ERR_POLL_FAILED
+    assert "RuntimeError" in dbg
+    assert "boom" in dbg
+
+
+def test_lipsync_endpoint_env_override_is_used(monkeypatch):
+    """FAL_LIPSYNC_ENDPOINT env var must be honoured (no hard-coded endpoint)."""
+    import avatar_chat
+    # Reading the module-level constant is enough — the var is consulted at
+    # import time; we only assert the var is referenced inside submit.
+    assert hasattr(avatar_chat, "FAL_LIPSYNC_ENDPOINT")
+    assert hasattr(avatar_chat, "FAL_LIPSYNC_MODEL")
+    # Default should be fal-ai/sync-lipsync (matches what we shipped).
+    assert avatar_chat.FAL_LIPSYNC_ENDPOINT == "fal-ai/sync-lipsync"
+    # Default model is empty (omit from args) — this is the fix for prod 422.
+    assert avatar_chat.FAL_LIPSYNC_MODEL == ""

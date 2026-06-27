@@ -145,7 +145,7 @@ def test_send_poll_and_audio_fetch(admin_headers):
     print(f"[INFO] final error_code={err} lipsync_debug={dbg}")
     # Soft-assert: we expect lipsync_unavailable / no_fal_key but accept other no_*_key debugs
     if err is not None:
-        assert err in ("lipsync_unavailable",), f"unexpected error_code: {err}"
+        assert err in ("lipsync_unavailable", "PROVIDER_AUTH_FAILED"), f"unexpected error_code: {err}"
         assert dbg in ("no_fal_key", "no_image_url") or (dbg or "").startswith("image_fetch_failed"), \
             f"unexpected lipsync_debug: {dbg}"
 

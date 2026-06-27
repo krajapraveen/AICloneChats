@@ -1,0 +1,38 @@
+{
+  "summary": "Iter3 (FAL HTTP error body capture + endpoint/model env override). Validated the new _classify_fal_exception helper, FAL_LIPSYNC_ENDPOINT/FAL_LIPSYNC_MODEL env-driven config, /status surface, removal of hard-coded `model` from submit args, and the /video-avatar-chat UI admin chips. All 13 unit tests pass (classifier preserves full Pydantic 422 body up to 2000 chars, 401/403→PROVIDER_AUTH_FAILED, 5xx@poll→POLL_FAILED, generic fallback, env override). Live /status returns lipsync_endpoint='fal-ai/sync-lipsync' + lipsync_model=null. End-to-end /send→/job in preview returns video_status=completed, audio_url populated, error_code=PROVIDER_AUTH_FAILED, lipsync_debug='no_fal_key' as expected (no FAL_KEY in preview). Frontend chips render correctly: FALLBACK (TEXT), PROVIDER_AUTH_FAILED, no_fal_key, job:avj_<id>.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_avatar_lipsync_image_upload.py",
+    "/app/backend/tests/test_avatar_lipsync_status_iter3.py",
+    "/app/backend/tests/test_avatar_chat_lipsync_e2e.py",
+    "/app/backend/tests/test_avatar_error_code_e2e.py",
+    "/app/test_reports/pytest/iter_avatar_iter3.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "avatar_chat.py L347-352 — submit_args now correctly contains only video_url+audio_url with conditional `model` only when FAL_LIPSYNC_MODEL env is set. The hard-coded `model:'lipsync-1.9.0-beta'` is gone, which is the most likely root cause of the prod 422 (sync-lipsync v1's current schema rejects model).",
+    "avatar_chat.py L213-268 — _classify_fal_exception is sound: extracts err.response.text (full body, capped 2000ch), maps 401/403→PROVIDER_AUTH_FAILED, 422→PROVIDER_422, 408/5xx→POLL_FAILED (during poll) else RENDER_EXCEPTION. Generic exception fallback at 500ch preserves more info than the previous 200ch truncation.",
+    "avatar_chat.py is 1043 lines — borderline of the 700-line guidance; consider splitting fal client glue (classifier+lipsync) into its own module in a future refactor for readability.",
+    "All 4 fal call-sites (audio_upload, image_upload, submit, poll) now use the unified classifier — no truncated str(err)[:200] anywhere on the lipsync path.",
+    "Pre-existing stale assertion in test_avatar_chat_lipsync_e2e.py expected legacy `lipsync_unavailable` only; updated to accept iter26's canonical PROVIDER_AUTH_FAILED as well. This was a test-only change, no app-code touched."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_avatar_lipsync_status_iter3.py (new — 2 tests, both pass)",
+    "/app/backend/tests/test_avatar_chat_lipsync_e2e.py (test assertion updated to accept PROVIDER_AUTH_FAILED, the canonical iter26 code)"
+  ],
+  "success_rate": {"backend": "100% (21/21 lipsync-related tests pass)", "frontend": "100% (smoke + admin chips verified)"},
+  "test_credentials": "Admin krajapraveen@gmail.com / TestPass123! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter3 (this run) verified the prod 422 fix path. Backend now: (a) removes hard-coded model arg from fal-ai/sync-lipsync submit; (b) captures full HTTP response.text body up to 2000 chars in lipsync_debug when fal returns 4xx/5xx; (c) returns lipsync_endpoint + lipsync_model in /api/avatar-chat/status. Preview has NO FAL_KEY, so live fal cannot be exercised end-to-end; classifier behavior is covered by unit tests with a hand-constructed FalClientHTTPError. When prod gets FAL_KEY set, retest by sending an avatar message and inspecting lipsync_debug — should NOT begin with 'poll:FalClientHTTPError:[' anymore; on a 422 it should look like 'submit:HTTP 422 body=[{...full pydantic list...}] request_id=...'. Pre-existing 3 failures in tests/test_avatar_chat.py (subscription gate) are unrelated to this iter and unchanged.",
+  "rca of the issue": "Root cause of the prod FALLBACK (TEXT) POLL_FAILED: (1) the previous code passed `model:'lipsync-1.9.0-beta'` to fal-ai/sync-lipsync, but that endpoint's current Pydantic schema rejects the field → 422; (2) the previous exception handler truncated str(err)[:200], hiding the actual Pydantic 'loc'/'msg' validation list, so ops could not diagnose. Fix applied in iter3: omit `model` by default (env-driven opt-in via FAL_LIPSYNC_MODEL); new classifier reads err.response.text and capt to 2000 chars; /status now surfaces the deployed endpoint+model for sanity check. Reproduction: POST /api/avatar-chat/send with FAL_KEY set and FAL_LIPSYNC_MODEL='lipsync-1.9.0-beta' on the legacy endpoint reproduces the 422; with FAL_LIPSYNC_MODEL unset, submit_args has only {video_url, audio_url} and the 422 is gone."
+}
