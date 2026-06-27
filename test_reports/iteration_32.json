@@ -1,0 +1,35 @@
+{
+  "summary": "iter32 — Verified the fal model ID fix from fal-ai/veed/lipsync (404 'Application not found') to fal-ai/sadtalker. All 27 unit tests in test_avatar_lipsync_image_upload.py pass, and 5/5 new integration tests in test_avatar_fal_health_iter32.py pass (status defaults, fal-health admin/non-admin/unauth gates, end-to-end send+job preview flow). Code review confirms the three required changes are in place. Frontend /video-avatar-chat loads cleanly as admin with no JS console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_avatar_lipsync_image_upload.py",
+    "/app/backend/tests/test_avatar_fal_health_iter32.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "avatar_chat.py:425 — endpoint_is_image_native = 'image' in FAL_LIPSYNC_IMAGE_FIELD ✓ correctly generalised (matches both source_image_url and image_url).",
+    "avatar_chat.py:538-541 — submit_args uses FAL_LIPSYNC_IMAGE_FIELD and FAL_LIPSYNC_AUDIO_FIELD as keys (no literal 'audio_url' or 'image_url'). Both field names now env-driven. ✓",
+    "avatar_chat.py:894-932 — /fal-health admin-gated route exists, probes https://queue.fal.run/<endpoint>, returns {endpoint,image_field,audio_field,fal_key_present,model_exists,fal_status,fal_body,error}. ✓",
+    "avatar_chat.py:889 — /status exposes lipsync_audio_field. ✓",
+    "File length 1295 lines — exceeds the 700-line guideline. Consider splitting into avatar_chat_models.py / avatar_chat_routes.py / avatar_chat_lipsync.py modules in a future iteration. Non-blocking.",
+    "fal-health POSTs with json={} not just HEAD — fal returns 422 (model exists) or 404 (bad id). Comment in code says 'HEAD/GET' but implementation uses POST. Minor doc nit; behaviour is correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_avatar_fal_health_iter32.py (new — 5 integration tests for iter32 changes)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin krajapraveen@gmail.com / TestPass123!; User sr-tester@example.com / TestPass123! — both verified working via /api/auth/login on preview.",
+  "seed_data_creation": "None. Used existing seeded demo clone 'raja-demo' for the send/job preview test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend exposes new admin-only route GET /api/avatar-chat/fal-health that probes fal.ai to verify the configured FAL_LIPSYNC_ENDPOINT model ID exists. On preview (no FAL_KEY) it returns {fal_key_present:false, error:'FAL_KEY not set in env'}. Once FAL_KEY is set in production, the endpoint will return {fal_status:422, model_exists:true} for valid IDs and {fal_status:404, model_exists:false, fal_body:'Application X not found'} for invalid IDs — main agent should curl this from prod right after deploy to verify sadtalker is actually live before exercising user-facing send. Existing 3 unrelated failures in test_avatar_chat.py (subscription gate) are pre-existing and NOT touched by iter32. Job response shape is {job:{...}, message:{video_status,error_code,lipsync_debug,audio_url,...}} — error_code/lipsync_debug live on the message subdoc, not the job subdoc. Confirmed in preview: video_status='completed', error_code='PROVIDER_AUTH_FAILED', lipsync_debug='no_fal_key', audio_url populated.",
+  "rca of the issue": "iter31 fix was based on a guessed fal model ID (fal-ai/veed/lipsync) that doesn't exist in fal's catalog — fal returned HTTP 404 {'detail':'Application \"veed\" not found'}. iter32 replaces it with fal-ai/sadtalker (verified at https://fal.ai/models/fal-ai/sadtalker) with its schema fields source_image_url + driven_audio_url. Mitigation: (a) both field names are env-driven via FAL_LIPSYNC_IMAGE_FIELD and FAL_LIPSYNC_AUDIO_FIELD so future model swaps need no code change; (b) new GET /api/avatar-chat/fal-health admin route lets the user validate the configured model ID against fal's catalog from the browser before users hit the chat path."
+}

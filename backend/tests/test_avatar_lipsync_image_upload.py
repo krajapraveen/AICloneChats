@@ -211,17 +211,22 @@ def test_classify_generic_exception_falls_back():
 
 
 def test_lipsync_endpoint_env_override_is_used(monkeypatch):
-    """Env vars must be honoured (no hard-coded endpoint or field names)."""
+    """Env vars must be honoured (no hard-coded endpoint or field names).
+
+    Default endpoint is `fal-ai/sadtalker` (verified live in fal's official
+    catalog as the image-to-talking-avatar model). Default image field is
+    `source_image_url` and default audio field is `driven_audio_url` —
+    those are sadtalker's actual schema field names.
+    """
     import avatar_chat
     assert hasattr(avatar_chat, "FAL_LIPSYNC_ENDPOINT")
     assert hasattr(avatar_chat, "FAL_LIPSYNC_MODEL")
     assert hasattr(avatar_chat, "FAL_LIPSYNC_IMAGE_FIELD")
-    # Default endpoint is the image-native VEED model — eliminates the
-    # JPG→video transcode failure mode entirely.
-    assert avatar_chat.FAL_LIPSYNC_ENDPOINT == "fal-ai/veed/lipsync"
+    assert hasattr(avatar_chat, "FAL_LIPSYNC_AUDIO_FIELD")
+    assert avatar_chat.FAL_LIPSYNC_ENDPOINT == "fal-ai/sadtalker"
     assert avatar_chat.FAL_LIPSYNC_MODEL == ""
-    assert avatar_chat.FAL_LIPSYNC_IMAGE_FIELD == "image_url"
-    # sync_mode still defaults to "loop" but only sent for video endpoints.
+    assert avatar_chat.FAL_LIPSYNC_IMAGE_FIELD == "source_image_url"
+    assert avatar_chat.FAL_LIPSYNC_AUDIO_FIELD == "driven_audio_url"
     assert avatar_chat.FAL_LIPSYNC_SYNC_MODE == "loop"
 
 
@@ -379,11 +384,12 @@ def test_preflight_rejects_when_mp4_and_gif_both_fail(monkeypatch):
 
 
 def test_image_native_endpoint_skips_mp4_transcode(monkeypatch):
-    """With the default VEED endpoint, _image_bytes_to_mp4 must NEVER be called
-    and the original image bytes are uploaded as-is. This is the iter31 routing fix."""
+    """With the default sadtalker endpoint (source_image_url field name),
+    _image_bytes_to_mp4 must NEVER be called and the original image bytes are
+    uploaded as-is."""
     import avatar_chat
-    # Confirm default is image-native
-    assert avatar_chat.FAL_LIPSYNC_IMAGE_FIELD == "image_url"
+    # Confirm default is image-native (source_image_url contains "image")
+    assert "image" in avatar_chat.FAL_LIPSYNC_IMAGE_FIELD
     mp4_called = {"yes": False}
 
     def _spy(_b):
@@ -396,7 +402,6 @@ def test_image_native_endpoint_skips_mp4_transcode(monkeypatch):
         return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
     monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
 
-    # Patch fal_client at the IMPORT site so the real submit never runs.
     import sys
     fake_fal = type(sys)("fal_client")
 
@@ -411,20 +416,15 @@ def test_image_native_endpoint_skips_mp4_transcode(monkeypatch):
     url, code, dbg = asyncio.get_event_loop().run_until_complete(
         avatar_chat._generate_lipsync_video("https://example.com/avatar.jpg", b"\x00" * 100)
     )
-    # MP4 helper must NEVER have been invoked (image-native path).
     assert not mp4_called["yes"], "image-native endpoint should NOT call MP4 transcoder"
-    # The submit will error (blocked above) — what we care about here is that
-    # the routing took the image_native path BEFORE submit.
     assert url is None
-    # The dbg should mention image_native or the submit failure (RuntimeError).
-    # Either is acceptable; the key is mp4 wasn't called.
 
 
 def test_invalid_avatar_id_when_image_undecodable_on_image_native(monkeypatch):
     """Image-native endpoint: garbage bytes that PIL can't decode → return
-    INVALID_AVATAR_ID with magic_hex (the iter31 visibility fix)."""
+    INVALID_AVATAR_ID with magic_hex."""
     import avatar_chat
-    monkeypatch.setattr(avatar_chat, "FAL_LIPSYNC_IMAGE_FIELD", "image_url")
+    monkeypatch.setattr(avatar_chat, "FAL_LIPSYNC_IMAGE_FIELD", "source_image_url")
     monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
 
     async def _fake_fetch(url):
@@ -438,3 +438,40 @@ def test_invalid_avatar_id_when_image_undecodable_on_image_native(monkeypatch):
     assert code == avatar_chat.LIPSYNC_ERR_INVALID_AVATAR_ID
     assert "image_decode_failed" in dbg
     assert "magic_hex=" in dbg
+
+
+def test_submit_args_use_configurable_audio_field(monkeypatch):
+    """sadtalker requires `driven_audio_url`, not `audio_url`. The submit args
+    must use FAL_LIPSYNC_AUDIO_FIELD verbatim — this is the iter32 fix that
+    eliminates 'unknown field' errors on non-default endpoints."""
+    import avatar_chat, sys
+    captured = {"args": None, "endpoint": None}
+
+    fake_fal = type(sys)("fal_client")
+
+    def _spy_submit(endpoint, arguments=None, **_):
+        captured["endpoint"] = endpoint
+        captured["args"] = dict(arguments or {})
+        raise RuntimeError("ok_blocked_after_capture")
+    fake_fal.submit = _spy_submit
+    fake_fal.upload_file = lambda p: f"https://fake.fal/{p.rsplit('/', 1)[-1]}"
+    fake_fal.FalClientHTTPError = type("FalClientHTTPError", (Exception,), {})
+    fake_fal.FalClientTimeoutError = type("FalClientTimeoutError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "fal_client", fake_fal)
+    monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+
+    async def _fake_fetch(url):
+        return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
+    monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+    asyncio.get_event_loop().run_until_complete(
+        avatar_chat._generate_lipsync_video("https://example.com/a.jpg", b"\x00" * 100)
+    )
+    # Verify the submit was attempted with sadtalker's required field names
+    assert captured["endpoint"] == "fal-ai/sadtalker"
+    assert "source_image_url" in (captured["args"] or {})
+    assert "driven_audio_url" in (captured["args"] or {})
+    # Must NOT contain legacy field names
+    assert "image_url" not in (captured["args"] or {})
+    assert "audio_url" not in (captured["args"] or {})
+    assert "video_url" not in (captured["args"] or {})

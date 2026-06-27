@@ -58,18 +58,19 @@ MAX_AVATAR_VIDEO_RETRIES = int(os.environ.get("MAX_AVATAR_VIDEO_RETRIES", "3"))
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 FAL_KEY = os.environ.get("FAL_KEY", "")
 # Fal lipsync endpoint and optional model parameter.
-#   FAL_LIPSYNC_ENDPOINT  → default `fal-ai/veed/lipsync` (accepts both image_url
-#                           AND video as input — no image→video transcode needed).
-#                           Set to "fal-ai/sync-lipsync" for the legacy video-only
-#                           endpoint (image avatars will be MP4-transcoded first).
-#   FAL_LIPSYNC_MODEL     → if set, sent as the `model` arg.
-#   FAL_LIPSYNC_IMAGE_FIELD → schema field name for the avatar image input.
-#                             Default "image_url" (VEED). For sync-lipsync use
-#                             "video_url" (the avatar is then MP4-transcoded
-#                             before upload).
-FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/veed/lipsync").strip()
+#   FAL_LIPSYNC_ENDPOINT     → default `fal-ai/sadtalker` (image-to-talking-avatar,
+#                              verified live in fal's official catalog).
+#   FAL_LIPSYNC_MODEL        → if set, sent as the `model` arg (sadtalker ignores).
+#   FAL_LIPSYNC_IMAGE_FIELD  → schema key for the avatar image. Default
+#                              "source_image_url" (sadtalker). Use "video_url"
+#                              for sync-lipsync (will MP4-transcode upstream).
+#   FAL_LIPSYNC_AUDIO_FIELD  → schema key for the audio. Default
+#                              "driven_audio_url" (sadtalker). Other models
+#                              use "audio_url".
+FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/sadtalker").strip()
 FAL_LIPSYNC_MODEL = os.environ.get("FAL_LIPSYNC_MODEL", "").strip()  # empty = omit
-FAL_LIPSYNC_IMAGE_FIELD = os.environ.get("FAL_LIPSYNC_IMAGE_FIELD", "image_url").strip().lower()
+FAL_LIPSYNC_IMAGE_FIELD = os.environ.get("FAL_LIPSYNC_IMAGE_FIELD", "source_image_url").strip().lower()
+FAL_LIPSYNC_AUDIO_FIELD = os.environ.get("FAL_LIPSYNC_AUDIO_FIELD", "driven_audio_url").strip().lower()
 # sync_mode controls how fal handles audio/video duration mismatch. Only
 # meaningful for video endpoints (sync-lipsync); harmless on VEED.
 # Options: cut_off | loop | bounce | silence | remap (per fal docs).
@@ -416,13 +417,12 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
     logger.error("lipsync_image_fetched | bytes=%d ct=%s dbg=%s", len(image_bytes), image_ct, image_dbg)
 
     # --- Provider routing: image-native vs video-native fal model ---
-    # If the configured endpoint uses an `image_url` schema (default: VEED),
-    # we pass the avatar image bytes DIRECTLY to fal — no transcode needed.
-    # If it uses a `video_url` schema (sync-lipsync), we still MP4-transcode
-    # the still image so it passes ffprobe.
+    # If the configured image field name contains "image" (e.g. source_image_url
+    # for sadtalker, image_url for others), we pass the avatar bytes DIRECTLY.
+    # If it's a video field (e.g. video_url for sync-lipsync), we MP4-transcode.
     image_path_taken = "unknown"
     mp4_dbg = ""
-    endpoint_is_image_native = FAL_LIPSYNC_IMAGE_FIELD == "image_url"
+    endpoint_is_image_native = "image" in FAL_LIPSYNC_IMAGE_FIELD
 
     if endpoint_is_image_native:
         # Pass the original image bytes; sanity-check that PIL can decode it
@@ -521,9 +521,8 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
 
                 # --- Hard preflight: refuse to submit if the fal upload URL
                 # ends in an image extension AND the endpoint expects a video
-                # field. For image-native endpoints (VEED), an image URL is
-                # exactly what we want.
-                if FAL_LIPSYNC_IMAGE_FIELD != "image_url":
+                # field. Image-native endpoints WANT image URLs.
+                if not endpoint_is_image_native:
                     bad_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff")
                     lower = (fal_image_url or "").lower()
                     if any(lower.endswith(ext) or (ext + "?") in lower for ext in bad_exts):
@@ -532,23 +531,22 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                         return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
 
                 # --- Submit lipsync job ---
-                # Build args using the configurable image/video field name so
-                # we can route between image-native (VEED uses `image_url`)
-                # and video-native (sync-lipsync uses `video_url`) endpoints
-                # without code changes.
+                # Build args using the configurable image/audio field names so
+                # we can route between image-native (sadtalker: source_image_url
+                # + driven_audio_url) and video-native (sync-lipsync: video_url
+                # + audio_url) endpoints without code changes.
                 submit_args = {
                     FAL_LIPSYNC_IMAGE_FIELD: fal_image_url,
-                    "audio_url": fal_audio_url,
+                    FAL_LIPSYNC_AUDIO_FIELD: fal_audio_url,
                 }
                 # sync_mode is only meaningful for video endpoints (sync-lipsync).
-                # VEED ignores it — pass-through is harmless either way.
-                if FAL_LIPSYNC_SYNC_MODE and FAL_LIPSYNC_IMAGE_FIELD != "image_url":
+                if FAL_LIPSYNC_SYNC_MODE and not endpoint_is_image_native:
                     submit_args["sync_mode"] = FAL_LIPSYNC_SYNC_MODE
                 if FAL_LIPSYNC_MODEL:
                     submit_args["model"] = FAL_LIPSYNC_MODEL
-                logger.error("fal_submit_args | endpoint=%s keys=%s image_field=%s sync_mode=%s model=%s",
+                logger.error("fal_submit_args | endpoint=%s keys=%s image_field=%s audio_field=%s sync_mode=%s model=%s",
                              FAL_LIPSYNC_ENDPOINT, list(submit_args.keys()),
-                             FAL_LIPSYNC_IMAGE_FIELD,
+                             FAL_LIPSYNC_IMAGE_FIELD, FAL_LIPSYNC_AUDIO_FIELD,
                              FAL_LIPSYNC_SYNC_MODE or "<omitted>",
                              FAL_LIPSYNC_MODEL or "<omitted>")
                 # Build a payload context string we attach to every downstream
@@ -888,8 +886,52 @@ async def feature_status(user: Optional[dict] = Depends(get_optional_user)):
         "lipsync_endpoint": FAL_LIPSYNC_ENDPOINT,
         "lipsync_model": FAL_LIPSYNC_MODEL or None,
         "lipsync_image_field": FAL_LIPSYNC_IMAGE_FIELD,
+        "lipsync_audio_field": FAL_LIPSYNC_AUDIO_FIELD,
         "lipsync_sync_mode": FAL_LIPSYNC_SYNC_MODE or None,
     }
+
+
+@router.get("/fal-health")
+async def fal_health(user: dict = Depends(get_current_user)):
+    """Admin probe: validates the configured fal model ID actually exists on
+    fal's catalog BEFORE users hit the chat path. Returns 200 with diagnostic
+    fields the user can read in the browser.
+
+    The check is HEAD/GET on fal.ai's queue submit endpoint — fal returns
+    `Application "<bad>" not found` (404) for invalid model IDs and `Method
+    Not Allowed` (405) or a small 4xx for valid ones (because we don't send a
+    real payload). 405/422 ≡ model exists; 404 ≡ model id wrong.
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(403, "admin only")
+    out = {
+        "endpoint": FAL_LIPSYNC_ENDPOINT,
+        "image_field": FAL_LIPSYNC_IMAGE_FIELD,
+        "audio_field": FAL_LIPSYNC_AUDIO_FIELD,
+        "fal_key_present": bool(FAL_KEY),
+        "model_exists": None,
+        "fal_status": None,
+        "fal_body": None,
+        "error": None,
+    }
+    if not FAL_KEY:
+        out["error"] = "FAL_KEY not set in env"
+        return out
+    try:
+        import requests
+        # fal's queue submit URL. A POST with empty body returns 422 (model
+        # exists, args invalid) for valid models and 404 ('Application X not
+        # found') for invalid model IDs.
+        url = f"https://queue.fal.run/{FAL_LIPSYNC_ENDPOINT}"
+        r = requests.post(url, headers={"Authorization": f"Key {FAL_KEY}"}, json={}, timeout=10)
+        out["fal_status"] = r.status_code
+        out["fal_body"] = r.text[:500]
+        out["model_exists"] = r.status_code != 404
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}:{str(e)[:200]}"
+    return out
+
+
 
 
 @router.post("/send")
