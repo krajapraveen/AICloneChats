@@ -12,6 +12,7 @@ load_dotenv(ROOT_DIR / ".env")
 from db import client  # noqa: E402
 import auth  # noqa: E402
 import auth_apple  # noqa: E402
+import admin_avatars  # noqa: E402
 import clones  # noqa: E402
 import memories  # noqa: E402
 import chat  # noqa: E402
@@ -52,6 +53,7 @@ async def health():
 app.include_router(api_router)
 app.include_router(auth.router)
 app.include_router(auth_apple.router)
+app.include_router(admin_avatars.router)
 app.include_router(clones.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
