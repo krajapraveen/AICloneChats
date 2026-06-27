@@ -57,15 +57,16 @@ def test_messages_limit_endpoint_returns_200(auth_headers):
 
 
 def test_lipsync_short_circuits_without_fal_key():
-    """Without FAL_KEY the helper should return debug='no_fal_key' (no crash)."""
+    """Without FAL_KEY the helper must return PROVIDER_AUTH_FAILED + reason."""
     import avatar_chat
     orig = avatar_chat.FAL_KEY
     try:
         avatar_chat.FAL_KEY = ""
-        url, dbg = asyncio.get_event_loop().run_until_complete(
+        url, code, dbg = asyncio.get_event_loop().run_until_complete(
             avatar_chat._generate_lipsync_video("https://i.pravatar.cc/256", b"\x00\x01")
         )
         assert url is None
+        assert code == avatar_chat.LIPSYNC_ERR_PROVIDER_AUTH_FAILED
         assert dbg == "no_fal_key"
     finally:
         avatar_chat.FAL_KEY = orig
@@ -81,7 +82,6 @@ def test_fetch_image_bytes_http_ok():
     assert ct and "image" in ct
     assert dbg == "ok_http"
 
-
 def test_fetch_image_bytes_handles_missing_url():
     import avatar_chat
     blob, ct, dbg = asyncio.get_event_loop().run_until_complete(
@@ -89,3 +89,66 @@ def test_fetch_image_bytes_handles_missing_url():
     )
     assert blob is None
     assert dbg == "no_image_url"
+
+
+def test_lipsync_invalid_avatar_id_when_image_url_blank():
+    """Empty image URL → INVALID_AVATAR_ID (canonical code)."""
+    import avatar_chat
+    orig = avatar_chat.FAL_KEY
+    try:
+        avatar_chat.FAL_KEY = "fake_key_for_test"  # past the auth gate
+        url, code, dbg = asyncio.get_event_loop().run_until_complete(
+            avatar_chat._generate_lipsync_video("", b"\x00\x01")
+        )
+        assert url is None
+        assert code == avatar_chat.LIPSYNC_ERR_INVALID_AVATAR_ID
+        assert dbg == "no_image_url"
+    finally:
+        avatar_chat.FAL_KEY = orig
+
+
+def test_lipsync_video_not_started_when_audio_empty():
+    """Empty audio bytes → VIDEO_NOT_STARTED."""
+    import avatar_chat
+    orig = avatar_chat.FAL_KEY
+    try:
+        avatar_chat.FAL_KEY = "fake_key_for_test"
+        url, code, dbg = asyncio.get_event_loop().run_until_complete(
+            avatar_chat._generate_lipsync_video("https://i.pravatar.cc/64", b"")
+        )
+        assert url is None
+        assert code == avatar_chat.LIPSYNC_ERR_VIDEO_NOT_STARTED
+        assert dbg == "empty_audio_bytes"
+    finally:
+        avatar_chat.FAL_KEY = orig
+
+
+def test_lipsync_invalid_avatar_id_when_image_fetch_fails():
+    """Unreachable image URL → INVALID_AVATAR_ID with image_fetch_failed detail."""
+    import avatar_chat
+    orig = avatar_chat.FAL_KEY
+    try:
+        avatar_chat.FAL_KEY = "fake_key_for_test"
+        url, code, dbg = asyncio.get_event_loop().run_until_complete(
+            avatar_chat._generate_lipsync_video(
+                "https://nonexistent-domain-987654321.invalid/x.jpg",
+                b"\x00" * 100,
+            )
+        )
+        assert url is None
+        assert code == avatar_chat.LIPSYNC_ERR_INVALID_AVATAR_ID
+        assert dbg.startswith("image_fetch_failed:")
+    finally:
+        avatar_chat.FAL_KEY = orig
+
+
+def test_error_code_constants_exist():
+    """All 8 canonical error codes are exported as module constants."""
+    import avatar_chat
+    for c in [
+        "LIPSYNC_ERR_PROVIDER_AUTH_FAILED", "LIPSYNC_ERR_PROVIDER_422",
+        "LIPSYNC_ERR_INVALID_AVATAR_ID", "LIPSYNC_ERR_JOB_TIMEOUT",
+        "LIPSYNC_ERR_POLL_FAILED", "LIPSYNC_ERR_NO_VIDEO_URL",
+        "LIPSYNC_ERR_RENDER_EXCEPTION", "LIPSYNC_ERR_VIDEO_NOT_STARTED",
+    ]:
+        assert hasattr(avatar_chat, c), f"Missing constant: {c}"

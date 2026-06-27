@@ -1,0 +1,41 @@
+{
+  "summary": "Validated the canonical lipsync error-code refactor end-to-end. All 8 unit tests in test_avatar_lipsync_image_upload.py PASS + 2 new live e2e tests in test_avatar_error_code_e2e.py PASS (10/10 total). Frontend smoke on /video-avatar-chat as admin (krajapraveen@gmail.com) confirmed every required UI element: status pill 'fallback (text)', rose-colored PROVIDER_AUTH_FAILED chip, admin-only 'no_fal_key' debug chip, admin-only 'job:avj_…' chip, working audio player, and tooltip on the error chip matching lipsync_debug. No 'Cannot read properties of undefined' console errors. The old generic 'lipsync_unavailable' label is fully replaced by canonical codes on all new messages.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_avatar_lipsync_image_upload.py",
+    "/app/backend/tests/test_avatar_error_code_e2e.py",
+    "/app/test_reports/pytest/avatar_lipsync_image_upload.xml",
+    "/app/test_reports/pytest/avatar_error_code_e2e.xml"
+  ],
+  "action_items": [
+    "None — the refactor is fully verified in preview.",
+    "Production (https://aiclonechats.com) still needs the FAL_KEY env var to exercise the happy path; with that key set the e2e test will assert video_status=completed AND a real video_url, and the error_code path becomes a true exception surface for ops debugging.",
+    "Historical messages persisted before this refactor still carry the legacy error_code='lipsync_unavailable' string. Optional cleanup: a one-off Mongo migration to remap those rows to LIPSYNC_ERR_PROVIDER_AUTH_FAILED. The new test_messages_listing_exposes_error_code accepts either shape; it just asserts at least one canonical-code message is present."
+  ],
+  "critical_code_review_comments": [
+    "avatar_chat.py — _generate_lipsync_video now returns a clean 3-tuple (url, error_code, debug_detail). Every failure branch is mapped. Thread-based polling with wall-clock timeout fixes the prior indefinite-hang bug. Solid refactor.",
+    "avatar_chat.py:496 _run_pipeline — persists BOTH error_code (canonical) AND lipsync_debug (verbose) on avatar_chat_messages + avatar_generation_jobs. Public message shape (_public_message) surfaces both fields. Admin UI is the only consumer of lipsync_debug (gated by isAdmin); good separation of concerns.",
+    "VideoAvatarChat.jsx:60-82 MessageBubble — error_code chip is always shown (rose border, monospaced uppercase) with data-testid='avatar-error-code-<id>'; the verbose lipsync_debug + video_job_id chips are correctly gated behind isAdmin. Tooltip on the error chip surfaces the debug detail to non-admin viewers too — nice UX touch.",
+    "Suggest: add a small admin-only 'copy debug' button next to the chip so support engineers can paste request_id into a ticket without opening DevTools. Minor polish.",
+    "Suggest (P3): the legacy 'lipsync_unavailable' string still lives in old DB rows. A one-off migration to PROVIDER_AUTH_FAILED would keep the canonical set clean for grafana / alerting.",
+    "Suggest: surface the 8 canonical codes in /api/admin/avatar-chat (admin dashboard) as filter chips so ops can pivot on JOB_TIMEOUT vs POLL_FAILED vs PROVIDER_422 over a time range."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_avatar_error_code_e2e.py (new — 2 live e2e tests for send+poll + listing endpoint)"
+  ],
+  "success_rate": {"backend": "100% (10/10 — 8 unit + 2 e2e)", "frontend": "100% (6/6 spot-checks)"},
+  "test_credentials": "krajapraveen@gmail.com / TestPass123! (admin) — confirmed working. sr-tester@example.com / TestPass123! also valid for the unit-test path.",
+  "seed_data_creation": "Two real avatar messages produced by the live /send calls (one from the e2e test, one from the playwright smoke). Both went through the PROVIDER_AUTH_FAILED graceful-degrade path. No TEST_ prefix because they are artefacts of real user flows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Two regression suites cover Video Avatar Chat lipsync canonical error codes: (a) test_avatar_lipsync_image_upload.py — 8 unit tests covering all error-code branches (PROVIDER_AUTH_FAILED, INVALID_AVATAR_ID, VIDEO_NOT_STARTED, image fetch helper, constants). (b) test_avatar_error_code_e2e.py — 2 live e2e tests covering send+poll → PROVIDER_AUTH_FAILED + no_fal_key + audio_url + video_job_id and the /messages listing shape with canonical codes. Both pass in preview with NO FAL_KEY. Send endpoint payload key is 'message' (not 'text'); response wraps state in {message, job} — keep that in mind when expanding tests. Three pre-existing unrelated failures in test_avatar_chat.py (subscription gate) were NOT retried. UI smoke verified all five required chips with data-testid attributes on /video-avatar-chat as admin.",
+  "rca of the issue": "The original 'lipsync_unavailable' string was a single opaque label that masked 8 distinct failure modes (auth, 422, invalid image, timeout, poll exception, missing url, render error, audio-not-started). The refactor introduces canonical error_code constants and a verbose lipsync_debug detail field, then plumbs them through (a) avatar_chat_messages doc, (b) avatar_generation_jobs doc, (c) /messages + /job endpoint responses, (d) MessageBubble UI with isAdmin gating. With no FAL_KEY in preview the canonical code surfaces as PROVIDER_AUTH_FAILED with debug='no_fal_key' — exactly the ops-debuggable signal the user requested. Verified by 10/10 passing tests and a live playwright smoke."
+}

@@ -31,7 +31,7 @@ function StatusPill({ status, error }) {
   );
 }
 
-function MessageBubble({ msg, onRetry, onRetrySend }) {
+function MessageBubble({ msg, onRetry, onRetrySend, isAdmin }) {
   const isVideo = !!msg.video_url;
   const isAudio = !!msg.audio_url && !isVideo;
   const isText = !msg.audio_url && !msg.video_url;
@@ -55,9 +55,31 @@ function MessageBubble({ msg, onRetry, onRetrySend }) {
       <>
       <div className="text-[10px] font-mono uppercase tracking-widest text-muted">clone</div>
       <div className="brutal-card p-3 max-w-[85%] sm:max-w-[80%]">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
           <StatusPill status={msg.video_status} error={msg.error_code} />
-          {msg.error_code && <span className="text-[10px] text-muted font-mono">{msg.error_code}</span>}
+          {msg.error_code && (
+            <span
+              className="text-[10px] text-rose-300 font-mono px-1.5 py-0.5 rounded border border-rose-400/40 bg-rose-500/10"
+              data-testid={`avatar-error-code-${msg.message_id}`}
+              title={msg.lipsync_debug || msg.error_message || ""}
+            >
+              {msg.error_code}
+            </span>
+          )}
+          {isAdmin && msg.lipsync_debug && (
+            <span
+              className="text-[10px] text-muted font-mono truncate max-w-[260px]"
+              data-testid={`avatar-lipsync-debug-${msg.message_id}`}
+              title={msg.lipsync_debug}
+            >
+              {msg.lipsync_debug}
+            </span>
+          )}
+          {isAdmin && msg.video_job_id && (
+            <span className="text-[10px] text-muted/70 font-mono" data-testid={`avatar-job-id-${msg.message_id}`}>
+              job:{msg.video_job_id}
+            </span>
+          )}
         </div>
         {isVideo && (
           <video controls className="w-full rounded-md mb-2 max-h-[60vh]" data-testid={`avatar-video-${msg.message_id}`}>
@@ -280,7 +302,7 @@ export default function VideoAvatarChat() {
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pr-1" data-testid="avatar-message-list">
               {messages.length === 0 && <div className="text-muted text-sm font-mono">Send a message to see an avatar reply.</div>}
-              {messages.map((m) => <MessageBubble key={m.message_id} msg={m} onRetry={onRetry} onRetrySend={onRetrySend} />)}
+              {messages.map((m) => <MessageBubble key={m.message_id} msg={m} onRetry={onRetry} onRetrySend={onRetrySend} isAdmin={user?.role === "admin"} />)}
             </div>
 
             <div className="chat-form-sticky pt-3 mt-2 border-t border-ink/10 flex flex-col sm:flex-row gap-2">

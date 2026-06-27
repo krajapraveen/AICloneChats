@@ -184,13 +184,31 @@ def _ext_for_ct(content_type: str) -> str:
     return ".jpg"
 
 
-async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[Optional[str], str]:
-    """Returns (provider's MP4 URL, debug_reason).
+# Canonical lipsync error codes — surfaced via `error_code` so ops can grep.
+# Detail strings go into `lipsync_debug` (verbose, may contain provider text).
+LIPSYNC_ERR_PROVIDER_AUTH_FAILED = "PROVIDER_AUTH_FAILED"   # no FAL_KEY OR fal 401/403
+LIPSYNC_ERR_PROVIDER_422 = "PROVIDER_422"                   # fal 4xx unprocessable
+LIPSYNC_ERR_INVALID_AVATAR_ID = "INVALID_AVATAR_ID"         # no image url / fetch failed
+LIPSYNC_ERR_JOB_TIMEOUT = "JOB_TIMEOUT"                     # polling exceeded budget
+LIPSYNC_ERR_POLL_FAILED = "POLL_FAILED"                     # exception during poll
+LIPSYNC_ERR_NO_VIDEO_URL = "NO_VIDEO_URL"                   # fal returned but no video.url
+LIPSYNC_ERR_RENDER_EXCEPTION = "RENDER_EXCEPTION"           # catch-all
+LIPSYNC_ERR_VIDEO_NOT_STARTED = "VIDEO_NOT_STARTED"         # pipeline didn't reach lipsync
+
+# Max wall-clock seconds to wait on fal.ai sync-lipsync job. Beyond this we
+# return JOB_TIMEOUT (don't keep the request hanging forever).
+LIPSYNC_TIMEOUT_SEC = int(os.environ.get("LIPSYNC_TIMEOUT_SEC", "180"))
+
+
+async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[Optional[str], str, str]:
+    """Returns (provider's MP4 URL, error_code, debug_detail).
+
+    error_code is one of the LIPSYNC_ERR_* constants (or the literal "ok" on
+    success). debug_detail is a free-form string for logs / admin UI.
 
     Uploads BOTH audio bytes AND avatar image bytes to fal.ai's CDN, so the
     pipeline never depends on our backend URL being reachable from fal.ai's
-    egress network. This mirrors the audio fix and removes the last
-    production-only failure surface.
+    egress network.
     """
     logger.error(
         "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_bytes=%d",
@@ -199,26 +217,32 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
         len(audio_bytes or b""),
     )
     if not FAL_KEY:
-        return None, "no_fal_key"
+        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, "no_fal_key"
     if LIPSYNC_PROVIDER != "fal":
-        return None, f"wrong_provider:{LIPSYNC_PROVIDER}"
+        return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"wrong_provider:{LIPSYNC_PROVIDER}"
     if not image_url:
-        return None, "no_image_url"
+        return None, LIPSYNC_ERR_INVALID_AVATAR_ID, "no_image_url"
     if not audio_bytes:
-        return None, "empty_audio_bytes"
+        return None, LIPSYNC_ERR_VIDEO_NOT_STARTED, "empty_audio_bytes"
 
     # Fetch the image bytes ourselves so we can re-upload to fal's CDN.
     image_bytes, image_ct, image_dbg = await _fetch_image_bytes(image_url)
     if not image_bytes:
-        return None, f"image_fetch_failed:{image_dbg}"
+        return None, LIPSYNC_ERR_INVALID_AVATAR_ID, f"image_fetch_failed:{image_dbg}"
     logger.error("lipsync_image_fetched | bytes=%d ct=%s dbg=%s", len(image_bytes), image_ct, image_dbg)
 
     try:
         import fal_client  # type: ignore
         import tempfile
+        import time as _time
         os.environ["FAL_KEY"] = FAL_KEY
 
-        def _sync_call() -> tuple[Optional[str], str]:
+        def _sync_call() -> tuple[Optional[str], str, str]:
+            t0 = _time.time()
+            audio_tmp = None
+            image_tmp = None
+            fal_audio_url = None
+            fal_image_url = None
             try:
                 # --- Upload audio to fal CDN ---
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
@@ -226,12 +250,14 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                     audio_tmp = tf.name
                 try:
                     fal_audio_url = fal_client.upload_file(audio_tmp)
-                finally:
-                    try:
-                        os.unlink(audio_tmp)
-                    except OSError:
-                        pass
-                logger.error("fal_client_audio_uploaded | url=%s", fal_audio_url[:120])
+                except Exception as e_au:
+                    msg = f"{type(e_au).__name__}:{str(e_au)[:200]}"
+                    logger.exception("fal_audio_upload_failed")
+                    # 401/403 → auth; otherwise generic
+                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
+                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"audio_upload:{msg}"
+                    return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"audio_upload:{msg}"
+                logger.error("fal_client_audio_uploaded | url=%s", (fal_audio_url or "")[:120])
 
                 # --- Upload image to fal CDN ---
                 img_ext = _ext_for_ct(image_ct or "")
@@ -240,37 +266,90 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                     image_tmp = tf.name
                 try:
                     fal_image_url = fal_client.upload_file(image_tmp)
-                finally:
-                    try:
-                        os.unlink(image_tmp)
-                    except OSError:
-                        pass
-                logger.error("fal_client_image_uploaded | url=%s", fal_image_url[:120])
+                except Exception as e_im:
+                    msg = f"{type(e_im).__name__}:{str(e_im)[:200]}"
+                    logger.exception("fal_image_upload_failed")
+                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
+                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"image_upload:{msg}"
+                    return None, LIPSYNC_ERR_INVALID_AVATAR_ID, f"image_upload:{msg}"
+                logger.error("fal_client_image_uploaded | url=%s", (fal_image_url or "")[:120])
 
-                handler = fal_client.submit(
-                    "fal-ai/sync-lipsync",
-                    arguments={
-                        "video_url": fal_image_url,
-                        "audio_url": fal_audio_url,
-                        "model": "lipsync-1.9.0-beta",
-                    },
-                )
-                result = handler.get()
+                # --- Submit lipsync job ---
+                try:
+                    handler = fal_client.submit(
+                        "fal-ai/sync-lipsync",
+                        arguments={
+                            "video_url": fal_image_url,
+                            "audio_url": fal_audio_url,
+                            "model": "lipsync-1.9.0-beta",
+                        },
+                    )
+                except Exception as e_sub:
+                    msg = f"{type(e_sub).__name__}:{str(e_sub)[:200]}"
+                    logger.exception("fal_submit_failed")
+                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
+                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"submit:{msg}"
+                    if "422" in msg:
+                        return None, LIPSYNC_ERR_PROVIDER_422, f"submit:{msg}"
+                    return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"submit:{msg}"
+
+                request_id = getattr(handler, "request_id", None) or str(handler)[:80]
+                logger.error("fal_submit_ok | request_id=%s", request_id)
+
+                # --- Poll with timeout ---
+                # fal_client's handler.get() blocks until terminal state. We
+                # bound it with a real timeout via a worker thread so we never
+                # hang the pipeline indefinitely.
+                import threading
+                box: dict = {"result": None, "err": None}
+
+                def _await_result():
+                    try:
+                        box["result"] = handler.get()
+                    except Exception as e_g:
+                        box["err"] = e_g
+
+                t = threading.Thread(target=_await_result, daemon=True)
+                t.start()
+                t.join(timeout=LIPSYNC_TIMEOUT_SEC)
+                elapsed = round(_time.time() - t0, 1)
+                if t.is_alive():
+                    logger.error("fal_poll_timeout | request_id=%s elapsed=%ss", request_id, elapsed)
+                    return None, LIPSYNC_ERR_JOB_TIMEOUT, f"timeout:{LIPSYNC_TIMEOUT_SEC}s request_id={request_id}"
+                if box["err"] is not None:
+                    err = box["err"]
+                    msg = f"{type(err).__name__}:{str(err)[:200]}"
+                    logger.exception("fal_poll_failed")
+                    if "401" in msg or "403" in msg or "unauthor" in msg.lower():
+                        return None, LIPSYNC_ERR_PROVIDER_AUTH_FAILED, f"poll:{msg}"
+                    if "422" in msg:
+                        return None, LIPSYNC_ERR_PROVIDER_422, f"poll:{msg}"
+                    return None, LIPSYNC_ERR_POLL_FAILED, f"poll:{msg}"
+
+                result = box["result"]
                 if not isinstance(result, dict):
-                    return None, f"result_not_dict:{type(result).__name__}"
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"result_not_dict:{type(result).__name__}"
                 video_url = (result.get("video") or {}).get("url")
                 if not video_url:
-                    return None, f"no_video_in_result:{str(result)[:200]}"
-                return video_url, "ok"
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"missing_video_url:{str(result)[:200]}"
+                logger.error("fal_video_ready | request_id=%s elapsed=%ss url=%s", request_id, elapsed, video_url[:120])
+                return video_url, "ok", f"request_id={request_id} elapsed={elapsed}s"
             except Exception as inner:
-                logger.exception("fal_client_submit_failed")
-                return None, f"submit_exception:{type(inner).__name__}:{str(inner)[:200]}"
+                logger.exception("fal_client_unexpected")
+                return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"{type(inner).__name__}:{str(inner)[:200]}"
+            finally:
+                for p in (audio_tmp, image_tmp):
+                    if p:
+                        try:
+                            os.unlink(p)
+                        except OSError:
+                            pass
 
         return await asyncio.to_thread(_sync_call)
     except ImportError:
-        return None, "fal_client_not_installed"
+        return None, LIPSYNC_ERR_RENDER_EXCEPTION, "fal_client_not_installed"
     except Exception as e:
-        return None, f"unexpected:{type(e).__name__}:{str(e)[:200]}"
+        return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"{type(e).__name__}:{str(e)[:200]}"
 
 
 # ---- Analytics ----
@@ -384,17 +463,23 @@ async def _run_pipeline(message_id: str) -> None:
 
     # ---- Stage 2: Lipsync video ----
     if not avatar_image:
-        # No avatar image → audio-only bubble
+        # No avatar image → audio-only bubble with explicit error code
         logger.error("lipsync_skip_no_avatar_image | message_id=%s clone_id=%s", message_id, msg.get("clone_id"))
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
-            {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso()}},
+            {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
+                      "error_code": LIPSYNC_ERR_INVALID_AVATAR_ID,
+                      "error_message": "Clone has no avatar image. Audio-only reply.",
+                      "lipsync_debug": "no_avatar_image_on_clone"}},
         )
         await db.avatar_generation_jobs.update_one(
             {"job_id": job_id},
-            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso()}},
+            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100,
+                      "completed_at": now_iso(), "updated_at": now_iso(),
+                      "error_code": LIPSYNC_ERR_INVALID_AVATAR_ID,
+                      "lipsync_debug": "no_avatar_image_on_clone"}},
         )
-        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "no_avatar_image"})
+        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": LIPSYNC_ERR_INVALID_AVATAR_ID})
         return
 
     # We no longer need BACKEND_PUBLIC_URL — both audio and image bytes are
@@ -408,24 +493,28 @@ async def _run_pipeline(message_id: str) -> None:
     # Pass audio_bytes directly — we'll upload them to fal.ai's CDN inside the
     # helper so production's ephemeral disk (where our local audio file may
     # already be gone by the time fal tries to fetch it) doesn't matter.
-    video_provider_url, lipsync_debug = await _generate_lipsync_video(image_for_fal, audio_bytes)
+    video_provider_url, lipsync_error_code, lipsync_debug = await _generate_lipsync_video(image_for_fal, audio_bytes)
     if not video_provider_url:
-        logger.error("lipsync_completed_audio_only | message_id=%s reason=%s", message_id, lipsync_debug)
-        # Audio-only completion (graceful degrade) — persist the specific
-        # debug reason so the operator can `curl /api/avatar-chat/job/<id>`
-        # without needing log access.
+        logger.error("lipsync_completed_audio_only | message_id=%s code=%s detail=%s", message_id, lipsync_error_code, lipsync_debug)
+        # Audio-only completion (graceful degrade) — persist BOTH the
+        # canonical error_code (for filtering) AND the verbose lipsync_debug
+        # (for admin UI display).
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
-                      "error_code": "lipsync_unavailable", "error_message": "Lip-sync provider unavailable. Audio-only reply.",
+                      "error_code": lipsync_error_code,
+                      "error_message": f"Lip-sync failed ({lipsync_error_code}). Audio-only reply.",
                       "lipsync_debug": lipsync_debug}},
         )
         await db.avatar_generation_jobs.update_one(
             {"job_id": job_id},
-            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso(),
-                      "error_code": "lipsync_unavailable", "lipsync_debug": lipsync_debug}},
+            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100,
+                      "completed_at": now_iso(), "updated_at": now_iso(),
+                      "error_code": lipsync_error_code, "lipsync_debug": lipsync_debug}},
         )
-        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "lipsync_unavailable", "lipsync_debug": lipsync_debug})
+        await _emit("avatar_video_completed", message_id=message_id, metadata={
+            "audio_only": True, "reason": lipsync_error_code, "lipsync_debug": lipsync_debug,
+        })
         return
 
     # ---- Download MP4 from provider, persist to object store (db.files) ----
@@ -464,11 +553,14 @@ async def _run_pipeline(message_id: str) -> None:
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
-                      "error_code": "video_download_failed", "error_message": str(e)[:200]}},
+                      "error_code": LIPSYNC_ERR_RENDER_EXCEPTION,
+                      "error_message": "Video download/persist failed",
+                      "lipsync_debug": f"download_failed:{type(e).__name__}:{str(e)[:200]}"}},
         )
         await db.avatar_generation_jobs.update_one(
             {"job_id": job_id},
-            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso()}},
+            {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso(),
+                      "error_code": LIPSYNC_ERR_RENDER_EXCEPTION}},
         )
         return
 
