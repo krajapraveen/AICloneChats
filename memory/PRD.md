@@ -27,6 +27,17 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 
 
+
+- **2026-06-27 (P0 — Preflight guardrail: refuse to send image-as-video to fal + full payload context in admin UI)** — Even after iter29 (MP4 conversion), prod was still showing a `.jpg` upload URL → either prod hadn't pulled the new requirements.txt or the MP4 helper failed silently on prod and the GIF helper passed through to raw JPG bytes. Added belt-and-braces preflight rejection so this can NEVER silently happen again.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - New canonical code: `LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD = "INVALID_PROVIDER_PAYLOAD"`.
+    - Stage-1 preflight: after MP4/GIF conversion attempt, if the chosen content-type still starts with `image/` (means both helpers degraded to raw image bytes), return `INVALID_PROVIDER_PAYLOAD` with detail `image_as_video_blocked | path=<mp4|gif|passthrough_jpeg> ct=<...> mp4_dbg=<...> endpoint=<...>`. fal is never called.
+    - Stage-2 preflight: after fal upload, if the returned fal CDN URL ends in `.jpg/.jpeg/.png/.webp/.bmp/.tiff`, return `INVALID_PROVIDER_PAYLOAD`.
+    - New `payload_ctx` (`fal_model=<endpoint> payload_keys=[...] input_url_type=.<ext> image_path=<...>`) appended to lipsync_debug on every success and every failure path inside `_sync_call`.
+  - **Tests**: 2 new tests bringing the suite to 23/23: `test_invalid_provider_payload_constant_exists`, `test_preflight_rejects_when_mp4_and_gif_both_fail` (mocks both helpers to fail, asserts fal is never called).
+  - **Verified by testing_agent_v3_fork (iteration_30.json)**: 100% backend (23/23), 100% frontend, no critical/minor issues.
+  - **Production action**: Redeploy. Now even if MP4 generation silently fails on prod, the chat UI will show `INVALID_PROVIDER_PAYLOAD` with the exact path taken (`path=passthrough_jpeg` etc) and the mp4_dbg reason — no more opaque fal 422.
+
 - **2026-06-27 (P0 — REAL root cause fix: still-image → H.264 MP4 via portable ffmpeg)** — Production admin panel revealed: `poll:HTTP 422 body={"detail":[{"loc":["body","video_url"],"msg":"Failed to read video metadata. Ensure the video is valid.","input":"...tmpifchsuro.jpg"}]}`. fal-ai/sync-lipsync's ffprobe step rejects both still JPGs AND single-frame GIFs (iter28 GIF approach was insufficient — `.gif` is in the suffix allowlist but ffprobe still rejects single-frame GIFs for lacking video metadata).
   - **Backend** (`/app/backend/avatar_chat.py`)
     - New helper `_image_bytes_to_mp4()` uses `imageio` + `imageio-ffmpeg` (portable ffmpeg wheel binary, no system apt install needed) to encode a 2-second H.264 MP4 from the still image: 25fps × 50 frames, libx264, yuv420p, macro_block_size=1, RGBA flatten, auto-downscale >1024px, cropped to EVEN dimensions (H.264 requirement). Returns `None` on failure so the GIF fallback path runs.
