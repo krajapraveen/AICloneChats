@@ -139,8 +139,33 @@ async def _generate_lipsync_video(image_url: str, audio_url: str) -> Optional[st
     Requires FAL_KEY env var. Falls back to None which the caller handles
     by serving an audio-only bubble.
     """
-    if not FAL_KEY or LIPSYNC_PROVIDER != "fal":
-        logger.info("Lipsync skipped: provider=%s key_present=%s", LIPSYNC_PROVIDER, bool(FAL_KEY))
+    # Spec-pin which inputs we got, so prod logs let us trace each call.
+    logger.error(
+        "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_url_kind=%s image_len=%d audio_len=%d",
+        LIPSYNC_PROVIDER,
+        bool(FAL_KEY),
+        "abs" if (image_url or "").startswith("http") else "rel" if image_url else "empty",
+        "abs" if (audio_url or "").startswith("http") else "rel" if audio_url else "empty",
+        len(image_url or ""),
+        len(audio_url or ""),
+    )
+    if not FAL_KEY:
+        logger.error("lipsync_skip_no_fal_key")
+        return None
+    if LIPSYNC_PROVIDER != "fal":
+        logger.error("lipsync_skip_wrong_provider | provider=%s", LIPSYNC_PROVIDER)
+        return None
+    if not image_url:
+        logger.error("lipsync_skip_empty_image_url")
+        return None
+    if not audio_url:
+        logger.error("lipsync_skip_empty_audio_url")
+        return None
+    if not image_url.startswith("http"):
+        logger.error("lipsync_skip_relative_image_url | image_url=%s", image_url[:200])
+        return None
+    if not audio_url.startswith("http"):
+        logger.error("lipsync_skip_relative_audio_url | audio_url=%s", audio_url[:200])
         return None
     try:
         # Lazy import — fal_client is optional. If it's not installed, degrade.
@@ -149,22 +174,32 @@ async def _generate_lipsync_video(image_url: str, audio_url: str) -> Optional[st
 
         def _sync_call() -> Optional[str]:
             try:
+                logger.error("fal_client_submit_attempt | image=%s audio=%s", image_url[:120], audio_url[:120])
                 handler = fal_client.submit(
                     "fal-ai/sync-lipsync",
                     arguments={"video_url": image_url, "audio_url": audio_url, "model": "lipsync-1.9.0-beta"},
                 )
+                logger.error("fal_client_submit_handle_obtained | type=%s", type(handler).__name__)
                 result = handler.get()
-                return (result or {}).get("video", {}).get("url") if isinstance(result, dict) else None
-            except Exception as inner:
-                logger.warning("fal_client call failed: %s", inner)
+                logger.error("fal_client_result | keys=%s", list(result.keys()) if isinstance(result, dict) else "non-dict")
+                if not isinstance(result, dict):
+                    logger.error("fal_client_skip_result_not_dict | type=%s", type(result).__name__)
+                    return None
+                video_url = (result.get("video") or {}).get("url")
+                if not video_url:
+                    logger.error("fal_client_skip_no_video_url_in_result | result_snippet=%s", str(result)[:400])
+                    return None
+                return video_url
+            except Exception:
+                logger.exception("fal_client_submit_failed")
                 return None
 
         return await asyncio.to_thread(_sync_call)
     except ImportError:
-        logger.warning("fal_client not installed; lipsync unavailable")
+        logger.exception("lipsync_skip_fal_client_not_installed")
         return None
-    except Exception as e:
-        logger.warning("Lipsync generation failed: %s", e)
+    except Exception:
+        logger.exception("lipsync_skip_unexpected_exception")
         return None
 
 
@@ -252,6 +287,7 @@ async def _run_pipeline(message_id: str) -> None:
     # ---- Stage 2: Lipsync video ----
     if not avatar_image:
         # No avatar image → audio-only bubble
+        logger.error("lipsync_skip_no_avatar_image | message_id=%s clone_id=%s", message_id, msg.get("clone_id"))
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso()}},
@@ -260,14 +296,14 @@ async def _run_pipeline(message_id: str) -> None:
             {"job_id": job_id},
             {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso()}},
         )
-        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True})
+        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "no_avatar_image"})
         return
 
     # Need a publicly fetchable audio URL for fal.ai. Use BACKEND_PUBLIC_URL or fall back.
     public_base = os.environ.get("BACKEND_PUBLIC_URL", "").rstrip("/")
     if not public_base:
         # Skip lipsync — audio-only fallback
-        logger.info("BACKEND_PUBLIC_URL not set; lipsync skipped (audio-only fallback)")
+        logger.error("lipsync_skip_no_backend_public_url | message_id=%s avatar_image=%s", message_id, (avatar_image or "")[:200])
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso()}},
@@ -281,9 +317,11 @@ async def _run_pipeline(message_id: str) -> None:
 
     audio_public = f"{public_base}{audio_url}"
     image_public = avatar_image if avatar_image.startswith("http") else f"{public_base}{avatar_image}"
+    logger.error("lipsync_resolved_urls | message_id=%s image_public=%s audio_public=%s", message_id, image_public[:200], audio_public[:200])
 
     video_provider_url = await _generate_lipsync_video(image_public, audio_public)
     if not video_provider_url:
+        logger.error("lipsync_completed_audio_only | message_id=%s reason=lipsync_unavailable", message_id)
         # Audio-only completion (graceful degrade)
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
