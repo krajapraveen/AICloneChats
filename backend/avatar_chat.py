@@ -67,9 +67,9 @@ FAL_KEY = os.environ.get("FAL_KEY", "")
 #                             Default "image_url" (VEED). For sync-lipsync use
 #                             "video_url" (the avatar is then MP4-transcoded
 #                             before upload).
-FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/veed/lipsync")
-FAL_LIPSYNC_MODEL = os.environ.get("FAL_LIPSYNC_MODEL", "")  # empty = omit
-FAL_LIPSYNC_IMAGE_FIELD = os.environ.get("FAL_LIPSYNC_IMAGE_FIELD", "image_url")
+FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/veed/lipsync").strip()
+FAL_LIPSYNC_MODEL = os.environ.get("FAL_LIPSYNC_MODEL", "").strip()  # empty = omit
+FAL_LIPSYNC_IMAGE_FIELD = os.environ.get("FAL_LIPSYNC_IMAGE_FIELD", "image_url").strip().lower()
 # sync_mode controls how fal handles audio/video duration mismatch. Only
 # meaningful for video endpoints (sync-lipsync); harmless on VEED.
 # Options: cut_off | loop | bounce | silence | remap (per fal docs).

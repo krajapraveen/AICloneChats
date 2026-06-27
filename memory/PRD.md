@@ -28,6 +28,20 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 
 
+
+- **2026-06-27 (P0 — Provider routing: image-native fal model + HEIC support)** — iter30 surfaced the REAL underlying cause: `mp4_dbg=UnidentifiedImageError:cannot identify image file ... bytes=30168` — PIL couldn't decode the user's avatar (almost certainly an iPhone HEIC). The user demanded the architectural fix: stop force-fitting images into the video-only `sync-lipsync` endpoint; use an image-native fal model instead.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - **Default fal endpoint switched** from `fal-ai/sync-lipsync` (video-only) to `fal-ai/veed/lipsync` (accepts `image_url` + `audio_url` natively — no transcode needed).
+    - **New env var `FAL_LIPSYNC_IMAGE_FIELD`** (default `image_url`). Controls which schema field name carries the avatar URL — `image_url` for VEED, `video_url` for sync-lipsync (legacy path with MP4 transcode kept intact).
+    - **Provider routing**: when endpoint is image-native, `_image_bytes_to_mp4` is NEVER called. PIL `Image.verify()` validates the bytes, on failure return `INVALID_AVATAR_ID` with `image_decode_failed:<err> magic_hex=<first16hex>` so admin can see the actual byte format.
+    - **`sync_mode`** only added to submit_args for video endpoints (VEED ignores it).
+    - **`pillow-heif==1.4.0`** installed + `register_heif_opener()` called at module import. iPhone .heic uploads now decode via PIL automatically.
+    - `/api/avatar-chat/status` now exposes `lipsync_image_field`.
+    - Env reads `.strip().lower()` so trailing-space typos can't silently break routing.
+  - **Tests**: 3 new (HEIC registered, image-native skips MP4, undecodable bytes → INVALID_AVATAR_ID with magic_hex). 26/26 passing.
+  - **Verified by testing_agent_v3_fork (iteration_31.json)**: 100% backend (26/26), 100% frontend, no critical/minor issues.
+  - **Production action**: Redeploy (pulls new requirements with `pillow-heif`). Default behaviour now routes to VEED which accepts image_url natively → video should render. Operator can switch back to legacy via `FAL_LIPSYNC_ENDPOINT=fal-ai/sync-lipsync` + `FAL_LIPSYNC_IMAGE_FIELD=video_url`.
+
 - **2026-06-27 (P0 — Preflight guardrail: refuse to send image-as-video to fal + full payload context in admin UI)** — Even after iter29 (MP4 conversion), prod was still showing a `.jpg` upload URL → either prod hadn't pulled the new requirements.txt or the MP4 helper failed silently on prod and the GIF helper passed through to raw JPG bytes. Added belt-and-braces preflight rejection so this can NEVER silently happen again.
   - **Backend** (`/app/backend/avatar_chat.py`)
     - New canonical code: `LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD = "INVALID_PROVIDER_PAYLOAD"`.
