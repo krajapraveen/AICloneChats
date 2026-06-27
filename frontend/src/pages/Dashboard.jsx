@@ -262,6 +262,16 @@ export default function Dashboard() {
               body="The clone remembers what mattered in your conversations — tasks, decisions, follow-ups, summaries. Pull-only. No reminders, no nudges, no chasing."
               primary={{ to: "/conversation-memory", label: "Open memory" }}
             />
+            <WorkspaceCard
+              testId="workspace-card-video-avatar-chat"
+              tone="tag-amber"
+              kicker="VIDEO-FIRST"
+              icon="▶"
+              title="Video Avatar Chat"
+              body="Talk to your clone and watch it talk back. The AI generates a synced video reply — face, voice, and words — from your clone's avatar image. Powered by fal.ai."
+              primary={{ to: "/video-avatar-chat", label: "Open video chat" }}
+              secondary={{ to: "/video-avatar-chat/profiles", label: "Avatar profiles" }}
+            />
           </div>
         </section>
 
