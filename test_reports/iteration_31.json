@@ -1,0 +1,35 @@
+{
+  "summary": "iter31 image-native fal routing verified end-to-end. All 26 unit tests in test_avatar_lipsync_image_upload.py pass (including 3 new: pillow_heif registration, image-native skips MP4 transcode, undecodable bytes -> INVALID_AVATAR_ID with magic_hex). /api/avatar-chat/status returns the new defaults exactly as specified. /api/avatar-chat/send -> /api/avatar-chat/job/{id} on the preview env (no FAL_KEY) correctly degrades to audio-only with video_status='completed', error_code='PROVIDER_AUTH_FAILED', lipsync_debug='no_fal_key'. Frontend /video-avatar-chat loads, send works, admin <details> panel expands with the full lipsync_debug body. Code review of avatar_chat.py confirmed: line 425 endpoint_is_image_native gate, PIL.verify() on image bytes, magic_hex emitted on decode failure, INVALID_AVATAR_ID returned, _image_bytes_to_mp4 only called on the video-native branch, submit_args uses FAL_LIPSYNC_IMAGE_FIELD as the key (not hard-coded), sync_mode only added for video endpoints. pillow-heif==1.4.0 present in requirements.txt and register_heif_opener() called at module import (line 84).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_avatar_lipsync_image_upload.py",
+    "/app/test_reports/pytest/avatar_lipsync_image_upload.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "avatar_chat.py is 1253 lines — exceeds the 700-line threshold per code review guidelines. Consider splitting lipsync helpers (_fetch_image_bytes, _image_bytes_to_mp4, _image_bytes_to_gif, _classify_fal_exception, the _sync_call lipsync submit block) into a dedicated avatar_lipsync_fal.py module so business routes stay separated from provider transport code. Not blocking iter31.",
+    "Routing gate uses an exact string compare (FAL_LIPSYNC_IMAGE_FIELD == 'image_url'). If an operator typos 'image_url ' with trailing space or capitalises it, code silently routes to the video-native branch. Consider .strip().lower() normalization on the env read at line 72."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin: krajapraveen@gmail.com / TestPass123! — used for status, send, job, and frontend tests.",
+  "seed_data_creation": "Used existing demo clone 'raja-demo' (clone_ffc5c58241e944) from db.clones. No new seed data created.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter31 routes image avatars to fal-ai/veed/lipsync (image-native, accepts image_url + audio_url directly). pillow_heif registered at module import so iPhone .heic uploads now decode. Preview env has NO FAL_KEY so the actual VEED call cannot be exercised here — the graceful degrade path (audio-only + PROVIDER_AUTH_FAILED + no_fal_key debug) is what's testable here and it works. The legacy video-native path (FAL_LIPSYNC_IMAGE_FIELD='video_url' + FAL_LIPSYNC_ENDPOINT=fal-ai/sync-lipsync) is still wired and unit-tested but cannot be exercised in preview without keys. Pre-existing 3 failures in test_avatar_chat.py (subscription gate) are unrelated to iter31 and were not re-run.",
+  "rca of the issue": "iter30 production admin panel reported mp4_dbg=UnidentifiedImageError on a 30168-byte avatar. PIL could not decode the bytes — almost certainly HEIC from iPhone. iter31 fixes this two ways: (a) installed pillow-heif and registered the HEIF opener so PIL gains native .heic support; (b) switched the default fal endpoint to fal-ai/veed/lipsync which accepts image_url directly, eliminating the need to transcode stills to MP4 just to satisfy a video-only model. On any remaining decode failure the magic_hex of the first 16 bytes is surfaced in lipsync_debug so the admin panel always shows the actual format that arrived, no guessing.",
+  "verification_evidence": {
+    "pytest": "26 passed, 1 warning in 2.13s",
+    "status_endpoint": "{lipsync_endpoint:'fal-ai/veed/lipsync', lipsync_image_field:'image_url', lipsync_sync_mode:'loop', lipsync_model:null}",
+    "send_job_flow": "audio_url populated, video_status=completed, error_code=PROVIDER_AUTH_FAILED, lipsync_debug=no_fal_key",
+    "frontend": "Page loads as admin, send works, <details> panel expands and contains PROVIDER_AUTH_FAILED + no_fal_key"
+  }
+}

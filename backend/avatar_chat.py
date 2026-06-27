@@ -57,21 +57,33 @@ LIPSYNC_PROVIDER = os.environ.get("LIPSYNC_PROVIDER", "fal")  # only "fal" imple
 MAX_AVATAR_VIDEO_RETRIES = int(os.environ.get("MAX_AVATAR_VIDEO_RETRIES", "3"))
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 FAL_KEY = os.environ.get("FAL_KEY", "")
-# Fal lipsync endpoint and optional model parameter. The default
-# `fal-ai/sync-lipsync` no longer accepts a `model` argument in its current
-# schema (it returns 422 with Pydantic validation errors). To keep the
-# integration future-proof:
-#   FAL_LIPSYNC_ENDPOINT  → e.g. "fal-ai/sync-lipsync" (default), or
-#                           "fal-ai/sync-lipsync-2" for the v2 model.
-#   FAL_LIPSYNC_MODEL     → if set, sent as the `model` arg. Leave UNSET to
-#                           omit it (this is the safe default for v1/v2).
-FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/sync-lipsync")
+# Fal lipsync endpoint and optional model parameter.
+#   FAL_LIPSYNC_ENDPOINT  → default `fal-ai/veed/lipsync` (accepts both image_url
+#                           AND video as input — no image→video transcode needed).
+#                           Set to "fal-ai/sync-lipsync" for the legacy video-only
+#                           endpoint (image avatars will be MP4-transcoded first).
+#   FAL_LIPSYNC_MODEL     → if set, sent as the `model` arg.
+#   FAL_LIPSYNC_IMAGE_FIELD → schema field name for the avatar image input.
+#                             Default "image_url" (VEED). For sync-lipsync use
+#                             "video_url" (the avatar is then MP4-transcoded
+#                             before upload).
+FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/veed/lipsync")
 FAL_LIPSYNC_MODEL = os.environ.get("FAL_LIPSYNC_MODEL", "")  # empty = omit
-# sync_mode controls how fal-ai/sync-lipsync handles audio/video duration
-# mismatch. We feed a 1-frame GIF as the "video", so the audio is almost
-# always longer → use "loop" to repeat the still frame across the full audio.
+FAL_LIPSYNC_IMAGE_FIELD = os.environ.get("FAL_LIPSYNC_IMAGE_FIELD", "image_url")
+# sync_mode controls how fal handles audio/video duration mismatch. Only
+# meaningful for video endpoints (sync-lipsync); harmless on VEED.
 # Options: cut_off | loop | bounce | silence | remap (per fal docs).
 FAL_LIPSYNC_SYNC_MODE = os.environ.get("FAL_LIPSYNC_SYNC_MODE", "loop")
+
+# Register HEIF/HEIC opener so Pillow can decode iPhone photos. Avatar
+# uploads commonly arrive as .heic from iOS — without this PIL raises
+# UnidentifiedImageError and the MP4 transcode silently fails (which is
+# exactly the production bug iter30 surfaced via mp4_dbg=UnidentifiedImageError).
+try:
+    import pillow_heif  # type: ignore
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
 
 STORAGE_ROOT = Path(__file__).parent / "storage"
 AUDIO_DIR = STORAGE_ROOT / "avatar_audio"
@@ -403,43 +415,68 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
         return None, LIPSYNC_ERR_INVALID_AVATAR_ID, f"image_fetch_failed:{image_dbg}"
     logger.error("lipsync_image_fetched | bytes=%d ct=%s dbg=%s", len(image_bytes), image_ct, image_dbg)
 
-    # fal-ai/sync-lipsync requires `video_url` to be a real VIDEO with valid
-    # codec metadata. A 1-frame GIF satisfies the file-suffix allowlist but
-    # fal's ffprobe step rejects it ("Failed to read video metadata"). We
-    # build a short H.264 MP4 from the still image via imageio + bundled
-    # ffmpeg binary (no system ffmpeg required) and feed that as video_url.
-    # Pair with `sync_mode: "loop"` so fal repeats the short clip across the
-    # full audio duration.
-    mp4_bytes, mp4_dbg = _image_bytes_to_mp4(image_bytes)
+    # --- Provider routing: image-native vs video-native fal model ---
+    # If the configured endpoint uses an `image_url` schema (default: VEED),
+    # we pass the avatar image bytes DIRECTLY to fal — no transcode needed.
+    # If it uses a `video_url` schema (sync-lipsync), we still MP4-transcode
+    # the still image so it passes ffprobe.
     image_path_taken = "unknown"
-    if mp4_bytes:
-        image_bytes_for_upload = mp4_bytes
-        image_ct_for_upload = "video/mp4"
-        image_path_taken = "mp4"
-        logger.error("lipsync_image_as_mp4 | bytes=%d", len(mp4_bytes))
-    else:
-        # Fallback to GIF (legacy path). If GIF helper falls back further to
-        # the original image bytes (e.g. PIL failure), we'll detect that with
-        # the preflight reject below and surface INVALID_PROVIDER_PAYLOAD
-        # with the exact reason instead of letting fal return its opaque 422.
-        gif_bytes, gif_ct = _image_bytes_to_gif(image_bytes)
-        image_bytes_for_upload = gif_bytes
-        image_ct_for_upload = gif_ct
-        image_path_taken = "gif" if gif_ct == "image/gif" else "passthrough_jpeg"
-        logger.error("lipsync_image_mp4_fallback_to_gif | mp4_dbg=%s gif_bytes=%d ct=%s path=%s",
-                     mp4_dbg, len(gif_bytes), gif_ct, image_path_taken)
+    mp4_dbg = ""
+    endpoint_is_image_native = FAL_LIPSYNC_IMAGE_FIELD == "image_url"
 
-    # --- Preflight reject ---
-    # Refuse to submit an image as `video_url`. This is what the user asked
-    # for: never let prod silently fall through to fal's 422 again.
-    if image_ct_for_upload.startswith("image/"):
-        detail = (
-            f"image_as_video_blocked | path={image_path_taken} ct={image_ct_for_upload} "
-            f"mp4_dbg={mp4_dbg} bytes={len(image_bytes_for_upload)} "
-            f"endpoint={FAL_LIPSYNC_ENDPOINT}"
-        )
-        logger.error("lipsync_preflight_reject | %s", detail)
-        return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
+    if endpoint_is_image_native:
+        # Pass the original image bytes; sanity-check that PIL can decode it
+        # (so we don't upload garbage). Log the magic bytes on failure so we
+        # always know what arrived.
+        try:
+            from PIL import Image
+            import io as _io
+            Image.open(_io.BytesIO(image_bytes)).verify()
+            image_bytes_for_upload = image_bytes
+            image_ct_for_upload = image_ct or "image/jpeg"
+            image_path_taken = "image_native"
+            logger.error("lipsync_image_native | bytes=%d ct=%s endpoint=%s",
+                         len(image_bytes), image_ct_for_upload, FAL_LIPSYNC_ENDPOINT)
+        except Exception as e_pil:
+            magic = image_bytes[:16].hex() if image_bytes else ""
+            detail = (
+                f"image_decode_failed:{type(e_pil).__name__}:{str(e_pil)[:150]} "
+                f"magic_hex={magic} bytes={len(image_bytes)} ct={image_ct} "
+                f"endpoint={FAL_LIPSYNC_ENDPOINT}"
+            )
+            logger.error("lipsync_image_decode_failed | %s", detail)
+            return None, LIPSYNC_ERR_INVALID_AVATAR_ID, detail
+    else:
+        # Video-native endpoint (sync-lipsync): transcode image → H.264 MP4
+        # so fal's ffprobe accepts it.
+        mp4_bytes, mp4_dbg = _image_bytes_to_mp4(image_bytes)
+        if mp4_bytes:
+            image_bytes_for_upload = mp4_bytes
+            image_ct_for_upload = "video/mp4"
+            image_path_taken = "mp4"
+            logger.error("lipsync_image_as_mp4 | bytes=%d", len(mp4_bytes))
+        else:
+            # Fallback to GIF. If GIF helper passes through to raw image
+            # bytes (PIL failure), the preflight below catches it.
+            gif_bytes, gif_ct = _image_bytes_to_gif(image_bytes)
+            image_bytes_for_upload = gif_bytes
+            image_ct_for_upload = gif_ct
+            image_path_taken = "gif" if gif_ct == "image/gif" else "passthrough_jpeg"
+            logger.error("lipsync_image_mp4_fallback_to_gif | mp4_dbg=%s gif_bytes=%d ct=%s path=%s",
+                         mp4_dbg, len(gif_bytes), gif_ct, image_path_taken)
+
+        # Preflight reject for the video-native path only — image-native
+        # endpoints WANT image/* so we'd skip this.
+        if image_ct_for_upload.startswith("image/"):
+            magic = image_bytes[:16].hex() if image_bytes else ""
+            detail = (
+                f"image_as_video_blocked | path={image_path_taken} "
+                f"ct={image_ct_for_upload} mp4_dbg={mp4_dbg} "
+                f"magic_hex={magic} bytes={len(image_bytes_for_upload)} "
+                f"endpoint={FAL_LIPSYNC_ENDPOINT}"
+            )
+            logger.error("lipsync_preflight_reject | %s", detail)
+            return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
 
     try:
         import fal_client  # type: ignore
@@ -483,32 +520,35 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                 logger.error("fal_client_image_uploaded | url=%s ct=%s", (fal_image_url or "")[:120], image_ct_for_upload)
 
                 # --- Hard preflight: refuse to submit if the fal upload URL
-                # somehow ends in an image extension. This belt-and-braces
-                # check catches any future regression where the local file
-                # gets the wrong suffix.
-                bad_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff")
-                lower = (fal_image_url or "").lower()
-                if any(lower.endswith(ext) or (ext + "?") in lower for ext in bad_exts):
-                    detail = f"upload_url_is_image:{fal_image_url[:200]} ct={image_ct_for_upload} path={image_path_taken}"
-                    logger.error("lipsync_preflight_reject_uploaded | %s", detail)
-                    return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
+                # ends in an image extension AND the endpoint expects a video
+                # field. For image-native endpoints (VEED), an image URL is
+                # exactly what we want.
+                if FAL_LIPSYNC_IMAGE_FIELD != "image_url":
+                    bad_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff")
+                    lower = (fal_image_url or "").lower()
+                    if any(lower.endswith(ext) or (ext + "?") in lower for ext in bad_exts):
+                        detail = f"upload_url_is_image:{fal_image_url[:200]} ct={image_ct_for_upload} path={image_path_taken}"
+                        logger.error("lipsync_preflight_reject_uploaded | %s", detail)
+                        return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
 
                 # --- Submit lipsync job ---
-                # Build args. Some fal endpoints (e.g. fal-ai/sync-lipsync v1
-                # latest schema) reject `model` with a 422 — we now omit it
-                # unless FAL_LIPSYNC_MODEL is set. We pass `sync_mode: "loop"`
-                # because we feed a 1-frame GIF (still avatar image) so fal
-                # must loop it across the audio duration.
+                # Build args using the configurable image/video field name so
+                # we can route between image-native (VEED uses `image_url`)
+                # and video-native (sync-lipsync uses `video_url`) endpoints
+                # without code changes.
                 submit_args = {
-                    "video_url": fal_image_url,
+                    FAL_LIPSYNC_IMAGE_FIELD: fal_image_url,
                     "audio_url": fal_audio_url,
                 }
-                if FAL_LIPSYNC_SYNC_MODE:
+                # sync_mode is only meaningful for video endpoints (sync-lipsync).
+                # VEED ignores it — pass-through is harmless either way.
+                if FAL_LIPSYNC_SYNC_MODE and FAL_LIPSYNC_IMAGE_FIELD != "image_url":
                     submit_args["sync_mode"] = FAL_LIPSYNC_SYNC_MODE
                 if FAL_LIPSYNC_MODEL:
                     submit_args["model"] = FAL_LIPSYNC_MODEL
-                logger.error("fal_submit_args | endpoint=%s keys=%s sync_mode=%s model=%s",
+                logger.error("fal_submit_args | endpoint=%s keys=%s image_field=%s sync_mode=%s model=%s",
                              FAL_LIPSYNC_ENDPOINT, list(submit_args.keys()),
+                             FAL_LIPSYNC_IMAGE_FIELD,
                              FAL_LIPSYNC_SYNC_MODE or "<omitted>",
                              FAL_LIPSYNC_MODEL or "<omitted>")
                 # Build a payload context string we attach to every downstream
@@ -847,6 +887,7 @@ async def feature_status(user: Optional[dict] = Depends(get_optional_user)):
         "lipsync_provider": LIPSYNC_PROVIDER,
         "lipsync_endpoint": FAL_LIPSYNC_ENDPOINT,
         "lipsync_model": FAL_LIPSYNC_MODEL or None,
+        "lipsync_image_field": FAL_LIPSYNC_IMAGE_FIELD,
         "lipsync_sync_mode": FAL_LIPSYNC_SYNC_MODE or None,
     }
 

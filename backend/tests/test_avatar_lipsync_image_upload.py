@@ -211,19 +211,26 @@ def test_classify_generic_exception_falls_back():
 
 
 def test_lipsync_endpoint_env_override_is_used(monkeypatch):
-    """FAL_LIPSYNC_ENDPOINT env var must be honoured (no hard-coded endpoint)."""
+    """Env vars must be honoured (no hard-coded endpoint or field names)."""
     import avatar_chat
-    # Reading the module-level constant is enough — the var is consulted at
-    # import time; we only assert the var is referenced inside submit.
     assert hasattr(avatar_chat, "FAL_LIPSYNC_ENDPOINT")
     assert hasattr(avatar_chat, "FAL_LIPSYNC_MODEL")
-    # Default should be fal-ai/sync-lipsync (matches what we shipped).
-    assert avatar_chat.FAL_LIPSYNC_ENDPOINT == "fal-ai/sync-lipsync"
-    # Default model is empty (omit from args) — this is the fix for prod 422.
+    assert hasattr(avatar_chat, "FAL_LIPSYNC_IMAGE_FIELD")
+    # Default endpoint is the image-native VEED model — eliminates the
+    # JPG→video transcode failure mode entirely.
+    assert avatar_chat.FAL_LIPSYNC_ENDPOINT == "fal-ai/veed/lipsync"
     assert avatar_chat.FAL_LIPSYNC_MODEL == ""
-    # sync_mode defaults to "loop" so still images (1-frame GIFs) get looped
-    # across the full audio.
+    assert avatar_chat.FAL_LIPSYNC_IMAGE_FIELD == "image_url"
+    # sync_mode still defaults to "loop" but only sent for video endpoints.
     assert avatar_chat.FAL_LIPSYNC_SYNC_MODE == "loop"
+
+
+def test_pillow_heif_registered():
+    """HEIF/HEIC opener must be registered so iPhone photos decode without
+    UnidentifiedImageError (the prod bug in iter30 screenshot)."""
+    from PIL import Image
+    exts = set(Image.registered_extensions().keys())
+    assert ".heic" in exts or ".heif" in exts, "pillow-heif not registered — iPhone photos will fail"
 
 
 # --- GIF conversion (the fix for the JPG → 422 schema mismatch) ---
@@ -345,17 +352,17 @@ def test_invalid_provider_payload_constant_exists():
 
 
 def test_preflight_rejects_when_mp4_and_gif_both_fail(monkeypatch):
-    """If MP4 fails AND GIF passthroughs to image/jpeg, the helper must refuse to
-    submit and return INVALID_PROVIDER_PAYLOAD — never let prod silently send a
-    .jpg as video_url to fal again."""
+    """If MP4 fails AND GIF passthroughs to image/jpeg (on the legacy video
+    endpoint), the helper must refuse to submit and return INVALID_PROVIDER_PAYLOAD."""
     import avatar_chat
+    # Force the legacy video-native endpoint so the MP4/GIF path runs.
+    monkeypatch.setattr(avatar_chat, "FAL_LIPSYNC_IMAGE_FIELD", "video_url")
+    monkeypatch.setattr(avatar_chat, "FAL_LIPSYNC_ENDPOINT", "fal-ai/sync-lipsync")
     # Patch the MP4 helper to fail.
     monkeypatch.setattr(avatar_chat, "_image_bytes_to_mp4", lambda b: (None, "mp4_simulated_failure"))
     # Patch the GIF helper to also fail (returns original bytes as image/jpeg).
     monkeypatch.setattr(avatar_chat, "_image_bytes_to_gif", lambda b: (b, "image/jpeg"))
-    # Patch FAL_KEY so we get past the auth gate.
     monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
-    # Stub the image fetch so we don't actually hit the network.
 
     async def _fake_fetch(url):
         return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
@@ -366,7 +373,68 @@ def test_preflight_rejects_when_mp4_and_gif_both_fail(monkeypatch):
     )
     assert url is None
     assert code == avatar_chat.LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, f"expected preflight reject, got {code}"
-    # Detail must mention the path and content type so ops can read why
     assert "image_as_video_blocked" in dbg
     assert "image/jpeg" in dbg
     assert "passthrough_jpeg" in dbg or "path=" in dbg
+
+
+def test_image_native_endpoint_skips_mp4_transcode(monkeypatch):
+    """With the default VEED endpoint, _image_bytes_to_mp4 must NEVER be called
+    and the original image bytes are uploaded as-is. This is the iter31 routing fix."""
+    import avatar_chat
+    # Confirm default is image-native
+    assert avatar_chat.FAL_LIPSYNC_IMAGE_FIELD == "image_url"
+    mp4_called = {"yes": False}
+
+    def _spy(_b):
+        mp4_called["yes"] = True
+        return None, "should_not_be_called"
+    monkeypatch.setattr(avatar_chat, "_image_bytes_to_mp4", _spy)
+    monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+
+    async def _fake_fetch(url):
+        return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
+    monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+    # Patch fal_client at the IMPORT site so the real submit never runs.
+    import sys
+    fake_fal = type(sys)("fal_client")
+
+    def _bad_submit(*a, **kw):
+        raise RuntimeError("submit_intentionally_blocked_for_test")
+    fake_fal.submit = _bad_submit
+    fake_fal.upload_file = lambda p: f"https://fake.fal/{p.rsplit('/',1)[-1]}"
+    fake_fal.FalClientHTTPError = type("FalClientHTTPError", (Exception,), {})
+    fake_fal.FalClientTimeoutError = type("FalClientTimeoutError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "fal_client", fake_fal)
+
+    url, code, dbg = asyncio.get_event_loop().run_until_complete(
+        avatar_chat._generate_lipsync_video("https://example.com/avatar.jpg", b"\x00" * 100)
+    )
+    # MP4 helper must NEVER have been invoked (image-native path).
+    assert not mp4_called["yes"], "image-native endpoint should NOT call MP4 transcoder"
+    # The submit will error (blocked above) — what we care about here is that
+    # the routing took the image_native path BEFORE submit.
+    assert url is None
+    # The dbg should mention image_native or the submit failure (RuntimeError).
+    # Either is acceptable; the key is mp4 wasn't called.
+
+
+def test_invalid_avatar_id_when_image_undecodable_on_image_native(monkeypatch):
+    """Image-native endpoint: garbage bytes that PIL can't decode → return
+    INVALID_AVATAR_ID with magic_hex (the iter31 visibility fix)."""
+    import avatar_chat
+    monkeypatch.setattr(avatar_chat, "FAL_LIPSYNC_IMAGE_FIELD", "image_url")
+    monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+
+    async def _fake_fetch(url):
+        return b"NOT_AN_IMAGE_HEADER_BYTES", "image/jpeg", "ok_test"
+    monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+    url, code, dbg = asyncio.get_event_loop().run_until_complete(
+        avatar_chat._generate_lipsync_video("https://example.com/x.jpg", b"\x00" * 100)
+    )
+    assert url is None
+    assert code == avatar_chat.LIPSYNC_ERR_INVALID_AVATAR_ID
+    assert "image_decode_failed" in dbg
+    assert "magic_hex=" in dbg
