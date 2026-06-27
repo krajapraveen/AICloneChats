@@ -71,6 +71,25 @@ function MessageBubble({ msg, onRetry, onRetrySend, isAdmin }) {
               job:{msg.video_job_id}
             </span>
           )}
+          {isAdmin && msg.provider_status && (
+            <span
+              className="text-[10px] text-amber-200/80 font-mono px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-500/10"
+              data-testid={`avatar-provider-status-${msg.message_id}`}
+              title={`request_id: ${msg.provider_request_id || '?'}`}
+            >
+              {msg.provider_status}
+              {msg.poll_attempts ? ` ×${msg.poll_attempts}` : ""}
+            </span>
+          )}
+          {isAdmin && msg.provider_request_id && (
+            <span
+              className="text-[10px] text-muted/60 font-mono truncate max-w-[180px]"
+              data-testid={`avatar-provider-req-${msg.message_id}`}
+              title={msg.provider_request_id}
+            >
+              req:{String(msg.provider_request_id).slice(0, 8)}
+            </span>
+          )}
         </div>
         {isAdmin && msg.lipsync_debug && (
           <details className="mb-2" data-testid={`avatar-lipsync-debug-panel-${msg.message_id}`}>

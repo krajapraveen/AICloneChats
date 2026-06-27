@@ -323,8 +323,12 @@ LIPSYNC_ERR_RENDER_EXCEPTION = "RENDER_EXCEPTION"           # catch-all
 LIPSYNC_ERR_VIDEO_NOT_STARTED = "VIDEO_NOT_STARTED"         # pipeline didn't reach lipsync
 
 # Max wall-clock seconds to wait on fal.ai sync-lipsync job. Beyond this we
-# return JOB_TIMEOUT (don't keep the request hanging forever).
-LIPSYNC_TIMEOUT_SEC = int(os.environ.get("LIPSYNC_TIMEOUT_SEC", "180"))
+# return JOB_TIMEOUT. sadtalker can take 60-180s for a short clip; 300s is
+# a safe upper bound that doesn't keep the background pipeline hanging.
+LIPSYNC_TIMEOUT_SEC = int(os.environ.get("LIPSYNC_TIMEOUT_SEC", "300"))
+# How often we poll fal's queue status URL (and persist progress to the
+# message doc). Lower → more responsive UI, higher → fewer fal API calls.
+LIPSYNC_POLL_INTERVAL_SEC = float(os.environ.get("LIPSYNC_POLL_INTERVAL_SEC", "5"))
 
 
 def _classify_fal_exception(err: Exception, *, stage: str, request_id: Optional[str] = None) -> tuple[str, str]:
@@ -385,15 +389,26 @@ def _classify_fal_exception(err: Exception, *, stage: str, request_id: Optional[
     return (LIPSYNC_ERR_POLL_FAILED if stage == "poll" else LIPSYNC_ERR_RENDER_EXCEPTION), f"{stage}:{msg}{rid}"
 
 
-async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[Optional[str], str, str]:
+async def _generate_lipsync_video(
+    image_url: str,
+    audio_bytes: bytes,
+    *,
+    progress: Optional[dict] = None,
+) -> tuple[Optional[str], str, str]:
     """Returns (provider's MP4 URL, error_code, debug_detail).
 
     error_code is one of the LIPSYNC_ERR_* constants (or the literal "ok" on
     success). debug_detail is a free-form string for logs / admin UI.
 
-    Uploads BOTH audio bytes AND avatar image bytes to fal.ai's CDN, so the
-    pipeline never depends on our backend URL being reachable from fal.ai's
-    egress network.
+    If `progress` (a mutable dict) is supplied, the helper writes the
+    following keys into it as polling progresses, so the async caller can
+    persist them to MongoDB for admin/UI visibility:
+      - provider_request_id : fal's job ID (e.g. "abc-1234-def")
+      - fal_endpoint        : the configured model ID being called
+      - provider_status     : "Queued" | "InProgress" | "Completed"
+      - poll_attempts       : count of status() calls made so far
+      - last_poll_at        : ISO timestamp of most recent poll
+      - final_result_keys   : top-level keys returned by fal (on completion)
     """
     logger.error(
         "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_bytes=%d",
@@ -568,41 +583,102 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
 
                 request_id = getattr(handler, "request_id", None) or str(handler)[:80]
                 logger.error("fal_submit_ok | request_id=%s endpoint=%s", request_id, FAL_LIPSYNC_ENDPOINT)
+                # Stash the request_id in the shared progress dict so the
+                # async caller (and admin UI) can see it before polling ends.
+                if progress is not None:
+                    progress["provider_request_id"] = request_id
+                    progress["fal_endpoint"] = FAL_LIPSYNC_ENDPOINT
 
-                # --- Poll with timeout ---
-                # fal_client's handler.get() blocks until terminal state. We
-                # bound it with a real timeout via a worker thread so we never
-                # hang the pipeline indefinitely.
-                import threading
-                box: dict = {"result": None, "err": None}
-
-                def _await_result():
+                # --- Explicit polling with progress visibility ---
+                # We poll handler.status() every LIPSYNC_POLL_INTERVAL_SEC and
+                # write provider_status / poll_attempts / last_poll_at into
+                # the shared `progress` dict so the async caller can persist
+                # progress to MongoDB (and thus the admin UI sees it live).
+                import time as _t
+                poll_attempts = 0
+                status_history: list[str] = []
+                final_status_obj = None
+                deadline = t0 + LIPSYNC_TIMEOUT_SEC
+                while _t.time() < deadline:
+                    poll_attempts += 1
                     try:
-                        box["result"] = handler.get()
-                    except Exception as e_g:
-                        box["err"] = e_g
+                        st = handler.status()
+                    except Exception as e_st:
+                        code, dbg = _classify_fal_exception(e_st, stage="poll", request_id=request_id)
+                        logger.exception("fal_status_call_failed")
+                        return None, code, f"{dbg} attempts={poll_attempts} | {payload_ctx}"
+                    st_name = type(st).__name__  # "Queued" | "InProgress" | "Completed"
+                    status_history.append(st_name)
+                    if progress is not None:
+                        progress["provider_status"] = st_name
+                        progress["poll_attempts"] = poll_attempts
+                        progress["last_poll_at"] = now_iso()
+                    if st_name == "Completed":
+                        final_status_obj = st
+                        break
+                    _t.sleep(LIPSYNC_POLL_INTERVAL_SEC)
+                else:
+                    # Loop exited without break = timed out
+                    elapsed = round(_t.time() - t0, 1)
+                    logger.error("fal_poll_timeout | request_id=%s elapsed=%ss attempts=%d last=%s",
+                                 request_id, elapsed, poll_attempts, status_history[-1] if status_history else "?")
+                    return None, LIPSYNC_ERR_JOB_TIMEOUT, (
+                        f"timeout:{LIPSYNC_TIMEOUT_SEC}s request_id={request_id} "
+                        f"attempts={poll_attempts} last_status={status_history[-1] if status_history else '?'} "
+                        f"history={','.join(status_history[-5:])} | {payload_ctx}"
+                    )
 
-                t = threading.Thread(target=_await_result, daemon=True)
-                t.start()
-                t.join(timeout=LIPSYNC_TIMEOUT_SEC)
-                elapsed = round(_time.time() - t0, 1)
-                if t.is_alive():
-                    logger.error("fal_poll_timeout | request_id=%s elapsed=%ss", request_id, elapsed)
-                    return None, LIPSYNC_ERR_JOB_TIMEOUT, f"timeout:{LIPSYNC_TIMEOUT_SEC}s request_id={request_id} | {payload_ctx}"
-                if box["err"] is not None:
-                    err = box["err"]
-                    code, dbg = _classify_fal_exception(err, stage="poll", request_id=request_id)
-                    logger.exception("fal_poll_failed")
-                    return None, code, f"{dbg} | {payload_ctx}"
+                elapsed = round(_t.time() - t0, 1)
+                # `Completed` status carries `error`/`error_type` fields. If
+                # fal completed the job with an error (very common with
+                # sadtalker — face detection fails etc), surface it cleanly.
+                completed_err = getattr(final_status_obj, "error", None)
+                completed_err_type = getattr(final_status_obj, "error_type", None)
+                if completed_err:
+                    detail = (
+                        f"provider_completed_with_error:{completed_err_type or '?'}:{str(completed_err)[:300]} "
+                        f"request_id={request_id} attempts={poll_attempts} elapsed={elapsed}s | {payload_ctx}"
+                    )
+                    logger.error("fal_completed_with_error | %s", detail)
+                    return None, LIPSYNC_ERR_RENDER_EXCEPTION, detail
 
-                result = box["result"]
+                # Fetch the result body.
+                try:
+                    result = handler.get()
+                except Exception as e_g:
+                    code, dbg = _classify_fal_exception(e_g, stage="result", request_id=request_id)
+                    logger.exception("fal_get_result_failed")
+                    return None, code, f"{dbg} attempts={poll_attempts} | {payload_ctx}"
+
                 if not isinstance(result, dict):
-                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"result_not_dict:{type(result).__name__} request_id={request_id} | {payload_ctx}"
-                video_url = (result.get("video") or {}).get("url")
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, (
+                        f"result_not_dict:{type(result).__name__} request_id={request_id} attempts={poll_attempts} | {payload_ctx}"
+                    )
+                # Capture which top-level keys fal returned so admins can see
+                # the shape on failure (e.g. {"video": {...}} vs {"output_video": ...}).
+                result_keys = list(result.keys())
+                if progress is not None:
+                    progress["final_result_keys"] = result_keys
+                # Try the documented sadtalker output shape first, then fall back
+                # to other common shapes for sync-lipsync / VEED.
+                video_url = None
+                if isinstance(result.get("video"), dict):
+                    video_url = result["video"].get("url")
+                if not video_url and isinstance(result.get("video"), str):
+                    video_url = result["video"]
                 if not video_url:
-                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"missing_video_url:{str(result)[:300]} request_id={request_id} | {payload_ctx}"
-                logger.error("fal_video_ready | request_id=%s elapsed=%ss url=%s", request_id, elapsed, video_url[:120])
-                return video_url, "ok", f"request_id={request_id} elapsed={elapsed}s | {payload_ctx}"
+                    video_url = result.get("video_url") or result.get("output_video_url")
+                if not video_url:
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, (
+                        f"missing_video_url result_keys={result_keys} body={str(result)[:300]} "
+                        f"request_id={request_id} attempts={poll_attempts} | {payload_ctx}"
+                    )
+                logger.error("fal_video_ready | request_id=%s elapsed=%ss attempts=%d url=%s",
+                             request_id, elapsed, poll_attempts, video_url[:120])
+                return video_url, "ok", (
+                    f"request_id={request_id} elapsed={elapsed}s attempts={poll_attempts} "
+                    f"result_keys={result_keys} | {payload_ctx}"
+                )
             except Exception as inner:
                 logger.exception("fal_client_unexpected")
                 return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"{type(inner).__name__}:{str(inner)[:200]}"
@@ -762,7 +838,45 @@ async def _run_pipeline(message_id: str) -> None:
     # Pass audio_bytes directly — we'll upload them to fal.ai's CDN inside the
     # helper so production's ephemeral disk (where our local audio file may
     # already be gone by the time fal tries to fetch it) doesn't matter.
-    video_provider_url, lipsync_error_code, lipsync_debug = await _generate_lipsync_video(image_for_fal, audio_bytes)
+    #
+    # We run two concurrent tasks:
+    # 1) The lipsync helper (writes into a shared `progress` dict as it polls).
+    # 2) A "persister" coroutine that copies `progress` → MongoDB every few
+    #    seconds so admins / the frontend see real-time `provider_status`,
+    #    `poll_attempts`, `last_poll_at`, `provider_request_id`.
+    progress: dict = {}
+
+    async def _persist_progress():
+        last_snapshot: dict = {}
+        while True:
+            await asyncio.sleep(2)
+            snap = {k: progress.get(k) for k in (
+                "provider_request_id", "provider_status", "poll_attempts",
+                "last_poll_at", "fal_endpoint", "final_result_keys",
+            ) if progress.get(k) is not None}
+            if snap != last_snapshot and snap:
+                await db.avatar_chat_messages.update_one(
+                    {"message_id": message_id}, {"$set": snap}
+                )
+                last_snapshot = dict(snap)
+
+    persister = asyncio.create_task(_persist_progress())
+    try:
+        video_provider_url, lipsync_error_code, lipsync_debug = await _generate_lipsync_video(
+            image_for_fal, audio_bytes, progress=progress,
+        )
+    finally:
+        persister.cancel()
+        # Final flush of whatever progress made it before the helper returned.
+        final_snap = {k: progress.get(k) for k in (
+            "provider_request_id", "provider_status", "poll_attempts",
+            "last_poll_at", "fal_endpoint", "final_result_keys",
+        ) if progress.get(k) is not None}
+        if final_snap:
+            await db.avatar_chat_messages.update_one(
+                {"message_id": message_id}, {"$set": final_snap}
+            )
+
     if not video_provider_url:
         logger.error("lipsync_completed_audio_only | message_id=%s code=%s detail=%s", message_id, lipsync_error_code, lipsync_debug)
         # Audio-only completion (graceful degrade) — persist BOTH the
@@ -773,7 +887,9 @@ async def _run_pipeline(message_id: str) -> None:
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
                       "error_code": lipsync_error_code,
                       "error_message": f"Lip-sync failed ({lipsync_error_code}). Audio-only reply.",
-                      "lipsync_debug": lipsync_debug}},
+                      "lipsync_debug": lipsync_debug,
+                      "failure_reason": lipsync_error_code,
+                      "video_url_present": False}},
         )
         await db.avatar_generation_jobs.update_one(
             {"job_id": job_id},
@@ -835,7 +951,11 @@ async def _run_pipeline(message_id: str) -> None:
 
     await db.avatar_chat_messages.update_one(
         {"message_id": message_id},
-        {"$set": {"video_url": video_url, "video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso()}},
+        {"$set": {"video_url": video_url, "video_status": "completed",
+                  "completed_at": now_iso(), "updated_at": now_iso(),
+                  "video_url_present": True,
+                  "lipsync_debug": lipsync_debug,
+                  "failure_reason": None}},
     )
     await db.avatar_generation_jobs.update_one(
         {"job_id": job_id},
@@ -857,12 +977,21 @@ def _public_message(m: dict) -> dict:
         "response_mode": m.get("response_mode") or "avatar_video",
         "audio_url": m.get("audio_url"),
         "video_url": m.get("video_url"),
+        "video_url_present": bool(m.get("video_url")),
         "video_status": m.get("video_status") or "queued",
         "video_job_id": job_id,
+        # --- Provider diagnostics (iter33: live polling visibility) ---
+        "provider_request_id": m.get("provider_request_id"),
+        "provider_status": m.get("provider_status"),
+        "poll_attempts": m.get("poll_attempts"),
+        "last_poll_at": m.get("last_poll_at"),
+        "fal_endpoint": m.get("fal_endpoint"),
+        "final_result_keys": m.get("final_result_keys"),
+        "failure_reason": m.get("failure_reason") or m.get("error_code"),
+        "completed_at": m.get("completed_at"),
+        # ---
         "error_code": m.get("error_code"),
         "error_message": m.get("error_message"),
-        # Detailed lipsync failure reason — operator-facing, surfaced so we can
-        # diagnose production fal.ai issues without log access.
         "lipsync_debug": m.get("lipsync_debug"),
         "duration_seconds": m.get("duration_seconds"),
         "avatar_image_url": m.get("avatar_image_url"),

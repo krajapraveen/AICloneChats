@@ -475,3 +475,168 @@ def test_submit_args_use_configurable_audio_field(monkeypatch):
     assert "image_url" not in (captured["args"] or {})
     assert "audio_url" not in (captured["args"] or {})
     assert "video_url" not in (captured["args"] or {})
+
+
+# --- iter33: progress polling + diagnostic fields ---
+
+def test_progress_dict_populated_on_completed(monkeypatch):
+    """The helper must write provider_request_id, provider_status, poll_attempts,
+    last_poll_at, fal_endpoint, final_result_keys into the shared `progress`
+    dict so the async caller can persist them to MongoDB for admin UI."""
+    import avatar_chat, sys
+
+    class _FakeQueued:
+        position = 1
+
+    class _FakeCompleted:
+        logs = []
+        metrics = {}
+        error = None
+        error_type = None
+
+    class _FakeHandler:
+        request_id = "fake-req-abc-123"
+
+        def __init__(self):
+            self._calls = 0
+
+        def status(self, *, with_logs=False):
+            self._calls += 1
+            # First poll returns Queued, second returns Completed
+            return _FakeQueued() if self._calls == 1 else _FakeCompleted()
+
+        def get(self):
+            return {"video": {"url": "https://fal.cdn/output/abc.mp4"}}
+
+    h = _FakeHandler()
+    # Make _FakeQueued / _FakeCompleted look like fal_client.Queued / Completed
+    # by matching the class name (the helper checks type(st).__name__).
+    _FakeQueued.__name__ = "Queued"
+    _FakeCompleted.__name__ = "Completed"
+
+    fake_fal = type(sys)("fal_client")
+    fake_fal.submit = lambda endpoint, arguments=None, **_: h
+    fake_fal.upload_file = lambda p: f"https://fake.fal/{p.rsplit('/', 1)[-1]}"
+    fake_fal.FalClientHTTPError = type("FalClientHTTPError", (Exception,), {})
+    fake_fal.FalClientTimeoutError = type("FalClientTimeoutError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "fal_client", fake_fal)
+    monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+    # Speed up: drop poll interval to ~0 so the test runs fast.
+    monkeypatch.setattr(avatar_chat, "LIPSYNC_POLL_INTERVAL_SEC", 0.01)
+
+    async def _fake_fetch(url):
+        return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
+    monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+    progress: dict = {}
+    url, code, dbg = asyncio.get_event_loop().run_until_complete(
+        avatar_chat._generate_lipsync_video(
+            "https://example.com/a.jpg", b"\x00" * 100, progress=progress,
+        )
+    )
+    assert url == "https://fal.cdn/output/abc.mp4", f"unexpected url: {url}"
+    assert code == "ok"
+    # Verify progress dict was populated with all required diagnostic fields
+    assert progress.get("provider_request_id") == "fake-req-abc-123"
+    assert progress.get("provider_status") == "Completed"
+    assert progress.get("poll_attempts") >= 2
+    assert progress.get("last_poll_at")  # ISO timestamp string
+    assert progress.get("fal_endpoint") == avatar_chat.FAL_LIPSYNC_ENDPOINT
+    assert progress.get("final_result_keys") == ["video"]
+    # dbg should include the attempt count and request_id
+    assert "attempts=" in dbg
+    assert "fake-req-abc-123" in dbg
+
+
+def test_completed_with_error_returns_render_exception(monkeypatch):
+    """If fal's Completed status carries `error`/`error_type` (common with
+    sadtalker face-detection failures), we must surface that as
+    LIPSYNC_ERR_RENDER_EXCEPTION with the error type + message."""
+    import avatar_chat, sys
+
+    class _FakeCompletedWithErr:
+        logs = []
+        metrics = {}
+        error = "No face detected in source image"
+        error_type = "FaceDetectionError"
+
+    _FakeCompletedWithErr.__name__ = "Completed"
+
+    class _FakeHandler:
+        request_id = "rid-err-7"
+
+        def status(self, *, with_logs=False):
+            return _FakeCompletedWithErr()
+
+        def get(self):
+            raise AssertionError("get() must NOT be called when status has error")
+
+    fake_fal = type(sys)("fal_client")
+    fake_fal.submit = lambda endpoint, arguments=None, **_: _FakeHandler()
+    fake_fal.upload_file = lambda p: f"https://fake.fal/{p.rsplit('/', 1)[-1]}"
+    fake_fal.FalClientHTTPError = type("FalClientHTTPError", (Exception,), {})
+    fake_fal.FalClientTimeoutError = type("FalClientTimeoutError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "fal_client", fake_fal)
+    monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+    monkeypatch.setattr(avatar_chat, "LIPSYNC_POLL_INTERVAL_SEC", 0.01)
+
+    async def _fake_fetch(url):
+        return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
+    monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+    url, code, dbg = asyncio.get_event_loop().run_until_complete(
+        avatar_chat._generate_lipsync_video("https://example.com/a.jpg", b"\x00" * 100)
+    )
+    assert url is None
+    assert code == avatar_chat.LIPSYNC_ERR_RENDER_EXCEPTION
+    assert "FaceDetectionError" in dbg
+    assert "No face detected" in dbg
+
+
+def test_result_alternative_video_url_shapes(monkeypatch):
+    """fal models return the video URL under different keys (sadtalker uses
+    {video:{url}}, sync-lipsync uses {video:url string}, VEED uses
+    {video_url}). The helper must accept all three shapes."""
+    import avatar_chat, sys
+
+    for shape in ({"video": {"url": "https://x/1.mp4"}},
+                  {"video": "https://x/2.mp4"},
+                  {"video_url": "https://x/3.mp4"},
+                  {"output_video_url": "https://x/4.mp4"}):
+
+        class _FakeCompleted:
+            logs = []
+            metrics = {}
+            error = None
+            error_type = None
+        _FakeCompleted.__name__ = "Completed"
+
+        class _FakeHandler:
+            request_id = "rid"
+
+            def __init__(self, shape):
+                self._shape = shape
+            def status(self, *, with_logs=False):
+                return _FakeCompleted()
+            def get(self):
+                return self._shape
+
+        fake_fal = type(sys)("fal_client")
+        captured_shape = dict(shape)  # close over loop var
+        fake_fal.submit = (lambda s: (lambda endpoint, arguments=None, **_: _FakeHandler(s)))(captured_shape)
+        fake_fal.upload_file = lambda p: f"https://fake.fal/{p.rsplit('/', 1)[-1]}"
+        fake_fal.FalClientHTTPError = type("FalClientHTTPError", (Exception,), {})
+        fake_fal.FalClientTimeoutError = type("FalClientTimeoutError", (Exception,), {})
+        monkeypatch.setitem(sys.modules, "fal_client", fake_fal)
+        monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+        monkeypatch.setattr(avatar_chat, "LIPSYNC_POLL_INTERVAL_SEC", 0.01)
+
+        async def _fake_fetch(url):
+            return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
+        monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+        url, code, dbg = asyncio.get_event_loop().run_until_complete(
+            avatar_chat._generate_lipsync_video("https://x/a.jpg", b"\x00" * 100)
+        )
+        assert code == "ok", f"shape {shape} failed: code={code} dbg={dbg}"
+        assert url and url.endswith(".mp4"), f"shape {shape} returned bad url: {url}"
