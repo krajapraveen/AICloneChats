@@ -24,6 +24,17 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 ## Changelog (most recent first)
 
 
+
+- **2026-06-27 (P0 — Fix prod FAL 422 by removing hard-coded `model` arg + capture full HTTP body)** — The prod `POLL_FAILED` with `FalClientHTTPError: [{'loc': ['body', ...` was a Pydantic-422: fal's current `sync-lipsync` schema does NOT accept the `model: "lipsync-1.9.0-beta"` arg we were sending, and the previous handler truncated `str(err)[:200]` so the actual rejection was hidden.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - New helper `_classify_fal_exception(err, stage, request_id)`: when err is `FalClientHTTPError`, pulls `.status_code` + `.response.text` (full body, capped 2000ch) instead of truncating `str(err)`. Maps 401/403 → `PROVIDER_AUTH_FAILED`, 422 → `PROVIDER_422`, 408/5xx → `POLL_FAILED`/`RENDER_EXCEPTION` by stage; `FalClientTimeoutError` → `JOB_TIMEOUT`. Generic fallback preserves 500ch (up from 200ch).
+    - All 4 fal call-sites (audio upload, image upload, submit, poll) now use the unified classifier — no more `str(err)[:200]` losing the validation body.
+    - Endpoint + model are now env-driven: `FAL_LIPSYNC_ENDPOINT` (default `fal-ai/sync-lipsync`) and `FAL_LIPSYNC_MODEL` (default empty = OMIT from args). Hard-coded `"lipsync-1.9.0-beta"` removed.
+    - `/api/avatar-chat/status` now exposes `lipsync_endpoint` and `lipsync_model` so admins can verify deployed config.
+  - **Tests**: 5 new classifier tests added (full 13 in `test_avatar_lipsync_image_upload.py`), all 21 lipsync-related backend tests passing.
+  - **Verified by testing_agent_v3_fork (iteration_27.json)**: 100% backend (21/21), 100% frontend, no critical/minor issues. RCA confirmed.
+  - **Production action**: redeploy. The chip will now read `PROVIDER_422` with the FULL Pydantic body in admin detail, OR — much more likely — the submit will succeed and video will render because the offending `model` field is gone. If a 422 still appears, the body now contains the exact `loc`/`msg` so we can fix it in one round-trip.
+
 - **2026-06-27 (P0 — Canonical lipsync error codes + admin-only UI debug visibility)** — Replaced the opaque `lipsync_unavailable` label with 8 canonical error codes so ops can debug production fal.ai failures without log access.
   - **Backend** (`/app/backend/avatar_chat.py`)
     - 8 new constants: `LIPSYNC_ERR_PROVIDER_AUTH_FAILED`, `_PROVIDER_422`, `_INVALID_AVATAR_ID`, `_JOB_TIMEOUT`, `_POLL_FAILED`, `_NO_VIDEO_URL`, `_RENDER_EXCEPTION`, `_VIDEO_NOT_STARTED`.
