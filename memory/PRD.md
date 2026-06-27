@@ -26,6 +26,17 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 
 
+
+- **2026-06-27 (P0 — REAL root cause fix: still-image → H.264 MP4 via portable ffmpeg)** — Production admin panel revealed: `poll:HTTP 422 body={"detail":[{"loc":["body","video_url"],"msg":"Failed to read video metadata. Ensure the video is valid.","input":"...tmpifchsuro.jpg"}]}`. fal-ai/sync-lipsync's ffprobe step rejects both still JPGs AND single-frame GIFs (iter28 GIF approach was insufficient — `.gif` is in the suffix allowlist but ffprobe still rejects single-frame GIFs for lacking video metadata).
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - New helper `_image_bytes_to_mp4()` uses `imageio` + `imageio-ffmpeg` (portable ffmpeg wheel binary, no system apt install needed) to encode a 2-second H.264 MP4 from the still image: 25fps × 50 frames, libx264, yuv420p, macro_block_size=1, RGBA flatten, auto-downscale >1024px, cropped to EVEN dimensions (H.264 requirement). Returns `None` on failure so the GIF fallback path runs.
+    - `_ext_for_ct` now maps `video/mp4` → `.mp4`.
+    - Pipeline now picks MP4 first; GIF kept as fallback only.
+  - **Dependencies**: `imageio==2.37.3`, `imageio-ffmpeg==0.6.0` added to `requirements.txt`. The ffmpeg binary is bundled at `/root/.venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-aarch64-v7.0.2`.
+  - **Tests**: 4 new MP4 tests (valid `ftyp` box, RGBA flatten, odd-dim cropping, garbage-fallthrough). 21/21 lipsync tests passing.
+  - **Verified by testing_agent_v3_fork (iteration_29.json)**: 100% backend (21/21), 100% frontend, no critical/minor issues, RCA confirmed by binary inspection of generated MP4 (valid `ftyp` magic at bytes 4-8).
+  - **Production action**: Redeploy (this pulls the new requirements.txt). Expected outcome: video renders successfully because the upload is now a real muxed H.264 MP4 that passes fal's ffprobe.
+
 - **2026-06-27 (P0 — RCA + fix for prod PROVIDER_422: still-image → GIF conversion + full-body admin UI)** — The production `FALLBACK (TEXT) PROVIDER_422 poll:HTTP 422 body={"detail":[{"loc":["bod...` was confirmed as a Pydantic schema mismatch: `fal-ai/sync-lipsync` requires `video_url` to be a **video** (mp4/mov/webm/m4v/gif); we were passing a JPG.
   - **Backend** (`/app/backend/avatar_chat.py`)
     - New helper `_image_bytes_to_gif()` (Pillow) converts the avatar still image into a 1-frame GIF (a supported sync-lipsync video format). Handles RGBA flatten, downscales >1024px, falls back to original bytes on PIL failure.
