@@ -30,6 +30,24 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 
 
+
+- **2026-06-27 (P0 — Live polling visibility: provider_status / poll_attempts / final_result_keys + alt result shapes + Completed-with-error)** — iter32 fixed the model ID but rendering jobs were stuck on "RENDERING VIDEO…" with zero visibility. Replaced the blocking `handler.get()` with explicit polling + DB-persisted progress so admins see fal's job state tick up in real time.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - `LIPSYNC_TIMEOUT_SEC` bumped from 180→300 (sadtalker often takes 60-180s; was timing out near the edge).
+    - New env `LIPSYNC_POLL_INTERVAL_SEC` (default 5s).
+    - `_generate_lipsync_video()` signature now takes `*, progress: Optional[dict] = None`. The helper writes `provider_request_id`, `provider_status`, `poll_attempts`, `last_poll_at`, `fal_endpoint`, `final_result_keys` into the dict on every poll.
+    - New `_persist_progress()` coroutine runs concurrently in `_run_pipeline()`, snapshotting the progress dict into `db.avatar_chat_messages` every 2s. Cancelled + final-flushed after helper returns.
+    - **Completed-with-error path** added — fal's `Completed` status carries `error`/`error_type` (sadtalker face-detection failures); now surfaced as `RENDER_EXCEPTION` with detail.
+    - **Alternate result shapes** accepted: `{video:{url}}` (sadtalker), `{video: '<url>'}`, `{video_url: '<url>'}`, `{output_video_url: '<url>'}`.
+    - Success path sets `video_url_present: true`, `failure_reason: null`. Failure path sets `failure_reason: <error_code>`, `video_url_present: false`.
+    - `_public_message()` now exposes 8 new diagnostic fields surfaced via /send and /job/{id}.
+  - **Frontend** (`/app/frontend/src/pages/VideoAvatarChat.jsx`)
+    - Admin-only amber chip `provider_status ×N` (Queued/InProgress/Completed + poll count) with `request_id` in tooltip.
+    - Admin-only muted chip `req:<first 8 chars of request_id>`.
+  - **Tests**: 30 unit (3 new: progress dict population, Completed-with-error, alternate URL shapes) + 3 live integration = 33/33 passing.
+  - **Verified by testing_agent_v3_fork (iteration_33.json)**: 100% backend, 100% frontend, no critical/minor issues.
+  - **Production action**: Redeploy. On next chat send, admin will see the new chips ticking up in real-time (`Queued ×1` → `InProgress ×3` → `Completed ×14`). When done, the bubble flips to the video player or shows `RENDER_EXCEPTION` with sadtalker's specific failure (e.g. `No face detected`).
+
 - **2026-06-27 (P0 — Corrected fal model ID: sadtalker + new /fal-health admin probe)** — iter31's `fal-ai/veed/lipsync` was a guessed ID that doesn't exist (fal returned 404 `Application "veed" not found`). Replaced with the verified-live `fal-ai/sadtalker` model whose actual schema is `source_image_url` + `driven_audio_url`.
   - **Backend** (`/app/backend/avatar_chat.py`)
     - Default `FAL_LIPSYNC_ENDPOINT` → `fal-ai/sadtalker` (verified at https://fal.ai/models/fal-ai/sadtalker).
