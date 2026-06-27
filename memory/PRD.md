@@ -25,6 +25,19 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 
 
+
+- **2026-06-27 (P0 — RCA + fix for prod PROVIDER_422: still-image → GIF conversion + full-body admin UI)** — The production `FALLBACK (TEXT) PROVIDER_422 poll:HTTP 422 body={"detail":[{"loc":["bod...` was confirmed as a Pydantic schema mismatch: `fal-ai/sync-lipsync` requires `video_url` to be a **video** (mp4/mov/webm/m4v/gif); we were passing a JPG.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - New helper `_image_bytes_to_gif()` (Pillow) converts the avatar still image into a 1-frame GIF (a supported sync-lipsync video format). Handles RGBA flatten, downscales >1024px, falls back to original bytes on PIL failure.
+    - Conversion runs before fal upload so the asset uploaded is always a GIF on the sync-lipsync path.
+    - `sync_mode: "loop"` added to submit args so fal repeats the still frame for the full audio duration. Env-overridable via `FAL_LIPSYNC_SYNC_MODE` (default `"loop"`; `cut_off` / `bounce` / `silence` / `remap` accepted).
+    - `/api/avatar-chat/status` now also returns `lipsync_sync_mode`.
+  - **Frontend** (`/app/frontend/src/pages/VideoAvatarChat.jsx`)
+    - Replaced the CSS-truncated `lipsync_debug` chip with an admin-only `<details>` panel: summary `show provider response ▾`, scrollable `<pre>` showing the **full 2000-char body**, plus a `copy` button. Non-admins never see it.
+  - **Tests**: 4 new GIF conversion tests (JPG→GIF / PNG-alpha→GIF / 4000px downscale / garbage fallback). 17/17 lipsync tests pass.
+  - **Verified by testing_agent_v3_fork (iteration_28.json)**: 100% backend (17/17), 100% frontend, no critical/minor issues. RCA confirmed.
+  - **Production action**: Redeploy. Expected outcome: video renders successfully because the JPG is now a GIF and the schema validates. If a different 422 still appears, click `show provider response ▾` to see the full Pydantic body — paste it and we fix in one round-trip.
+
 - **2026-06-27 (P0 — Fix prod FAL 422 by removing hard-coded `model` arg + capture full HTTP body)** — The prod `POLL_FAILED` with `FalClientHTTPError: [{'loc': ['body', ...` was a Pydantic-422: fal's current `sync-lipsync` schema does NOT accept the `model: "lipsync-1.9.0-beta"` arg we were sending, and the previous handler truncated `str(err)[:200]` so the actual rejection was hidden.
   - **Backend** (`/app/backend/avatar_chat.py`)
     - New helper `_classify_fal_exception(err, stage, request_id)`: when err is `FalClientHTTPError`, pulls `.status_code` + `.response.text` (full body, capped 2000ch) instead of truncating `str(err)`. Maps 401/403 → `PROVIDER_AUTH_FAILED`, 422 → `PROVIDER_422`, 408/5xx → `POLL_FAILED`/`RENDER_EXCEPTION` by stage; `FalClientTimeoutError` → `JOB_TIMEOUT`. Generic fallback preserves 500ch (up from 200ch).
