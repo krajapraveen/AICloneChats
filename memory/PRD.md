@@ -29,6 +29,19 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 
 
+
+- **2026-06-27 (P0 — Corrected fal model ID: sadtalker + new /fal-health admin probe)** — iter31's `fal-ai/veed/lipsync` was a guessed ID that doesn't exist (fal returned 404 `Application "veed" not found`). Replaced with the verified-live `fal-ai/sadtalker` model whose actual schema is `source_image_url` + `driven_audio_url`.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - Default `FAL_LIPSYNC_ENDPOINT` → `fal-ai/sadtalker` (verified at https://fal.ai/models/fal-ai/sadtalker).
+    - Default `FAL_LIPSYNC_IMAGE_FIELD` → `source_image_url` (sadtalker schema).
+    - **New env var `FAL_LIPSYNC_AUDIO_FIELD`** → default `driven_audio_url` (sadtalker schema). Submit args now use BOTH configurable field names, so future model swaps are one env var with zero code change.
+    - **Routing gate generalised**: `endpoint_is_image_native = "image" in FAL_LIPSYNC_IMAGE_FIELD` (matches both `image_url` and `source_image_url`).
+    - **New admin-only route `GET /api/avatar-chat/fal-health`** probes `https://queue.fal.run/<endpoint>` with empty POST. Returns `{endpoint, image_field, audio_field, fal_key_present, model_exists, fal_status, fal_body, error}` — operators verify the configured fal model exists from the browser before users hit chat. Invalid model IDs return 404 + `Application X not found`; valid IDs return 422 (empty args).
+    - `/api/avatar-chat/status` now also exposes `lipsync_audio_field`.
+  - **Tests**: 27 unit + 5 integration = 32/32 passing. New tests cover: defaults assertion, submit_args use configurable audio field, /fal-health admin/non-admin/unauth gates.
+  - **Verified by testing_agent_v3_fork (iteration_32.json)**: 100% backend, 100% frontend, no critical/minor issues. RCA confirmed.
+  - **Production action**: Redeploy. Then curl `/api/avatar-chat/fal-health` as admin to verify `model_exists:true` and `fal_status:422` BEFORE sending a chat message. Then send "Hello" on /video-avatar-chat — sadtalker accepts `source_image_url` + `driven_audio_url` natively, video should render.
+
 - **2026-06-27 (P0 — Provider routing: image-native fal model + HEIC support)** — iter30 surfaced the REAL underlying cause: `mp4_dbg=UnidentifiedImageError:cannot identify image file ... bytes=30168` — PIL couldn't decode the user's avatar (almost certainly an iPhone HEIC). The user demanded the architectural fix: stop force-fitting images into the video-only `sync-lipsync` endpoint; use an image-native fal model instead.
   - **Backend** (`/app/backend/avatar_chat.py`)
     - **Default fal endpoint switched** from `fal-ai/sync-lipsync` (video-only) to `fal-ai/veed/lipsync` (accepts `image_url` + `audio_url` natively — no transcode needed).
