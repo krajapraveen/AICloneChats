@@ -23,6 +23,23 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+- **2026-06-27 (P0 — Fix Video Avatar Chat fal.ai lipsync + frontend polling 404s)** — Eliminated the production `lipsync_unavailable` failure and the related console errors.
+  - **Root cause**: fal.ai's egress could not reach our backend URL to fetch the avatar image (same class of bug as the earlier audio fix).
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - New helper `_fetch_image_bytes(url)` resolves both `http(s)://` and internal `/api/storage/files/<path>` URLs (db.files lookup), returning bytes + content-type + debug reason.
+    - `_generate_lipsync_video()` now uploads BOTH audio AND image to fal.ai's CDN via `fal_client.upload_file()`. No more dependency on backend reachability.
+    - Removed the `BACKEND_PUBLIC_URL` requirement in `_run_pipeline()`.
+    - Final MP4 from fal.ai is now persisted to `db.files` via `storage._put` (survives container restarts; `/api/storage/files/<path>` URL).
+    - `_public_message()` now exposes `video_job_id` (sourced from `job_id` written into the message doc by `_run_pipeline`) and a `reply_text` alias of `ai_response_text` for newer clients.
+    - New endpoint `GET /api/avatar-chat/messages?limit=N` returning the current user's most recent avatar messages (newest first). Previously this URL was 404.
+  - **Frontend** (`/app/frontend/src/pages/VideoAvatarChat.jsx`)
+    - `refreshJobs` now skips optimistic `temp_*` IDs and `_pending/_failed` rows, eliminating the `/job/<id> 404` polling spam.
+    - `onSend` defensively checks `m && m.message_id` to prevent "Cannot read properties of undefined" crashes.
+  - **Tests**: 4 new helper tests in `test_avatar_lipsync_image_upload.py` + 4 e2e tests in `test_avatar_chat_lipsync_e2e.py` (8/8 passing). Frontend smoke is clean.
+  - **Verified by testing_agent_v3_fork (iteration_25.json)**: 100% backend (8/8), 100% frontend (7/7 spot-checks), no critical/minor issues, no regressions.
+  - **Production action required**: redeploy with FAL_KEY set to verify end-to-end video output (preview cannot exercise fal.ai itself).
+
+
 - **2026-06-19 (P1 — "Continue with Apple" on Login + Register)** — Full server-side Sign in with Apple integrated. Code-side ready; awaits operator's Apple Developer credentials.
   - **Backend** (`/app/backend/auth_apple.py`)
     - `GET /api/auth/apple/config` → `{configured: bool}` for the frontend to gate the button.
