@@ -265,10 +265,25 @@ async def _run_pipeline(message_id: str) -> None:
         await _emit("avatar_video_failed", message_id=message_id, metadata={"stage": "audio"})
         return
 
-    # Save audio locally
+    # Save audio locally (best-effort; container disk may be ephemeral) AND
+    # to persistent object storage so playback survives container restarts
+    # and so fal.ai has a guaranteed-reachable URL.
     audio_path = AUDIO_DIR / f"{message_id}.mp3"
-    audio_path.write_bytes(audio_bytes)
-    audio_url = f"/api/avatar-chat/files/{message_id}/audio"
+    try:
+        audio_path.write_bytes(audio_bytes)
+    except OSError:
+        pass  # local-disk write is purely a fast-path optimisation
+    # Persist to the same object store that successfully hosts avatar images.
+    try:
+        from urllib.parse import quote as _quote
+        import storage as _storage
+        storage_path = f"cloneme/audio/{message_id}.mp3"
+        _storage._put(storage_path, audio_bytes, "audio/mpeg")
+        audio_url = f"/api/storage/files/{_quote(storage_path, safe='')}"
+        logger.info("audio_persisted_to_objstore | message_id=%s url=%s", message_id, audio_url)
+    except Exception:
+        logger.exception("audio_persist_to_objstore_failed; falling back to local-disk url")
+        audio_url = f"/api/avatar-chat/files/{message_id}/audio"
 
     await db.avatar_chat_messages.update_one(
         {"message_id": message_id},
