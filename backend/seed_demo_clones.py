@@ -267,7 +267,6 @@ async def _seed_clone(p: dict, rng: random.Random) -> dict:
         "slug": p["slug"],
         "display_name": p["name"],
         "bio": p["bio"],
-        "avatar_url": "",
         "default_language": "en",
         "visibility": "public",
         "status": "ready",
@@ -276,10 +275,21 @@ async def _seed_clone(p: dict, rng: random.Random) -> dict:
         "personality": _personality_for(p),
         "is_demo": True,
         "demo_category": p["category"],
-        "created_at": created_at,
         "updated_at": created_at,
     }
-    await db.clones.update_one({"slug": p["slug"]}, {"$set": clone_doc}, upsert=True)
+    # `created_at` and `avatar_url` are write-once fields — set on insert only
+    # so reseeds don't reset them. avatar_url is in particular the field that
+    # the avatar-chat lipsync pipeline reads; operators backfill it via
+    # /api/admin/avatars/backfill-clones and that fill must survive every
+    # subsequent startup-seed.
+    await db.clones.update_one(
+        {"slug": p["slug"]},
+        {
+            "$set": clone_doc,
+            "$setOnInsert": {"avatar_url": "", "created_at": created_at},
+        },
+        upsert=True,
+    )
 
     # ── Idempotent events: only insert if missing or under target ───────────
     # Shares
