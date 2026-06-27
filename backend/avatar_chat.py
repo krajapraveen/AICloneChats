@@ -132,47 +132,40 @@ async def _generate_tts(text: str, voice: str = "alloy") -> Optional[bytes]:
         return None
 
 
-async def _generate_lipsync_video(image_url: str, audio_url: str) -> Optional[str]:
-    """Returns provider's MP4 URL or None on failure / missing key.
+async def _generate_lipsync_video(image_url: str, audio_url: str) -> tuple[Optional[str], str]:
+    """Returns (provider's MP4 URL, debug_reason).
+
+    - On success: (mp4_url, "ok")
+    - On failure: (None, "<specific_reason>") — the reason is also written to
+      the message's `lipsync_debug` field so operators can read it without
+      needing log access.
 
     fal.ai sync-lipsync model (https://fal.ai/models/fal-ai/sync-lipsync).
-    Requires FAL_KEY env var. Falls back to None which the caller handles
-    by serving an audio-only bubble.
     """
-    # Spec-pin which inputs we got, so prod logs let us trace each call.
     logger.error(
-        "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_url_kind=%s image_len=%d audio_len=%d",
-        LIPSYNC_PROVIDER,
-        bool(FAL_KEY),
+        "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_url_kind=%s",
+        LIPSYNC_PROVIDER, bool(FAL_KEY),
         "abs" if (image_url or "").startswith("http") else "rel" if image_url else "empty",
         "abs" if (audio_url or "").startswith("http") else "rel" if audio_url else "empty",
-        len(image_url or ""),
-        len(audio_url or ""),
     )
     if not FAL_KEY:
         logger.error("lipsync_skip_no_fal_key")
-        return None
+        return None, "no_fal_key"
     if LIPSYNC_PROVIDER != "fal":
-        logger.error("lipsync_skip_wrong_provider | provider=%s", LIPSYNC_PROVIDER)
-        return None
+        return None, f"wrong_provider:{LIPSYNC_PROVIDER}"
     if not image_url:
-        logger.error("lipsync_skip_empty_image_url")
-        return None
+        return None, "empty_image_url"
     if not audio_url:
-        logger.error("lipsync_skip_empty_audio_url")
-        return None
+        return None, "empty_audio_url"
     if not image_url.startswith("http"):
-        logger.error("lipsync_skip_relative_image_url | image_url=%s", image_url[:200])
-        return None
+        return None, f"relative_image_url:{image_url[:80]}"
     if not audio_url.startswith("http"):
-        logger.error("lipsync_skip_relative_audio_url | audio_url=%s", audio_url[:200])
-        return None
+        return None, f"relative_audio_url:{audio_url[:80]}"
     try:
-        # Lazy import — fal_client is optional. If it's not installed, degrade.
         import fal_client  # type: ignore
-        os.environ["FAL_KEY"] = FAL_KEY  # fal_client reads from env
+        os.environ["FAL_KEY"] = FAL_KEY
 
-        def _sync_call() -> Optional[str]:
+        def _sync_call() -> tuple[Optional[str], str]:
             try:
                 logger.error("fal_client_submit_attempt | image=%s audio=%s", image_url[:120], audio_url[:120])
                 handler = fal_client.submit(
@@ -183,24 +176,23 @@ async def _generate_lipsync_video(image_url: str, audio_url: str) -> Optional[st
                 result = handler.get()
                 logger.error("fal_client_result | keys=%s", list(result.keys()) if isinstance(result, dict) else "non-dict")
                 if not isinstance(result, dict):
-                    logger.error("fal_client_skip_result_not_dict | type=%s", type(result).__name__)
-                    return None
+                    return None, f"result_not_dict:{type(result).__name__}"
                 video_url = (result.get("video") or {}).get("url")
                 if not video_url:
-                    logger.error("fal_client_skip_no_video_url_in_result | result_snippet=%s", str(result)[:400])
-                    return None
-                return video_url
-            except Exception:
+                    return None, f"no_video_in_result:{str(result)[:200]}"
+                return video_url, "ok"
+            except Exception as inner:
                 logger.exception("fal_client_submit_failed")
-                return None
+                # Capture exception class + message — this is gold for debugging.
+                return None, f"submit_exception:{type(inner).__name__}:{str(inner)[:200]}"
 
         return await asyncio.to_thread(_sync_call)
     except ImportError:
         logger.exception("lipsync_skip_fal_client_not_installed")
-        return None
-    except Exception:
+        return None, "fal_client_not_installed"
+    except Exception as e:
         logger.exception("lipsync_skip_unexpected_exception")
-        return None
+        return None, f"unexpected:{type(e).__name__}:{str(e)[:200]}"
 
 
 # ---- Analytics ----
@@ -319,21 +311,24 @@ async def _run_pipeline(message_id: str) -> None:
     image_public = avatar_image if avatar_image.startswith("http") else f"{public_base}{avatar_image}"
     logger.error("lipsync_resolved_urls | message_id=%s image_public=%s audio_public=%s", message_id, image_public[:200], audio_public[:200])
 
-    video_provider_url = await _generate_lipsync_video(image_public, audio_public)
+    video_provider_url, lipsync_debug = await _generate_lipsync_video(image_public, audio_public)
     if not video_provider_url:
-        logger.error("lipsync_completed_audio_only | message_id=%s reason=lipsync_unavailable", message_id)
-        # Audio-only completion (graceful degrade)
+        logger.error("lipsync_completed_audio_only | message_id=%s reason=%s", message_id, lipsync_debug)
+        # Audio-only completion (graceful degrade) — persist the specific
+        # debug reason so the operator can `curl /api/avatar-chat/job/<id>`
+        # without needing log access.
         await db.avatar_chat_messages.update_one(
             {"message_id": message_id},
             {"$set": {"video_status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
-                      "error_code": "lipsync_unavailable", "error_message": "Lip-sync provider unavailable. Audio-only reply."}},
+                      "error_code": "lipsync_unavailable", "error_message": "Lip-sync provider unavailable. Audio-only reply.",
+                      "lipsync_debug": lipsync_debug}},
         )
         await db.avatar_generation_jobs.update_one(
             {"job_id": job_id},
             {"$set": {"status": "completed", "stage": "audio_only", "progress_percent": 100, "completed_at": now_iso(), "updated_at": now_iso(),
-                      "error_code": "lipsync_unavailable"}},
+                      "error_code": "lipsync_unavailable", "lipsync_debug": lipsync_debug}},
         )
-        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "lipsync_unavailable"})
+        await _emit("avatar_video_completed", message_id=message_id, metadata={"audio_only": True, "reason": "lipsync_unavailable", "lipsync_debug": lipsync_debug})
         return
 
     # ---- Download MP4 from provider, store locally ----
@@ -381,6 +376,9 @@ def _public_message(m: dict) -> dict:
         "video_status": m.get("video_status") or "queued",
         "error_code": m.get("error_code"),
         "error_message": m.get("error_message"),
+        # Detailed lipsync failure reason — operator-facing, surfaced so we can
+        # diagnose production fal.ai issues without log access.
+        "lipsync_debug": m.get("lipsync_debug"),
         "duration_seconds": m.get("duration_seconds"),
         "avatar_image_url": m.get("avatar_image_url"),
         "voice_id": m.get("voice_id"),
