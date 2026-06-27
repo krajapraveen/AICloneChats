@@ -23,6 +23,20 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
+
+- **2026-06-27 (P0 — Canonical lipsync error codes + admin-only UI debug visibility)** — Replaced the opaque `lipsync_unavailable` label with 8 canonical error codes so ops can debug production fal.ai failures without log access.
+  - **Backend** (`/app/backend/avatar_chat.py`)
+    - 8 new constants: `LIPSYNC_ERR_PROVIDER_AUTH_FAILED`, `_PROVIDER_422`, `_INVALID_AVATAR_ID`, `_JOB_TIMEOUT`, `_POLL_FAILED`, `_NO_VIDEO_URL`, `_RENDER_EXCEPTION`, `_VIDEO_NOT_STARTED`.
+    - `_generate_lipsync_video()` now returns a 3-tuple `(video_url, error_code, debug_detail)`. Every failure branch maps to a canonical code (auth/4xx/timeout/poll/missing-url/render).
+    - Polling uses a worker thread with a wall-clock timeout (`LIPSYNC_TIMEOUT_SEC`, default 180s) — no more indefinite hangs on `handler.get()`.
+    - `_run_pipeline()` persists both `error_code` (canonical) and `lipsync_debug` (verbose, contains request_id + elapsed + provider text) on the message + job docs.
+  - **Frontend** (`/app/frontend/src/pages/VideoAvatarChat.jsx`)
+    - `MessageBubble` now shows a rose-bordered chip with the canonical `error_code` for all users (with tooltip = lipsync_debug).
+    - When `isAdmin` is true, two additional chips appear: the verbose `lipsync_debug` detail and the `video_job_id`.
+  - **Tests**: 8 unit + 2 live e2e tests (10/10 passing).
+  - **Verified by testing_agent_v3_fork (iteration_26.json)**: 100% backend (10/10), 100% frontend (6/6 spot-checks), no critical/minor issues.
+  - **Production action**: confirm `FAL_KEY` is set on https://aiclonechats.com. On next failure the chat UI will show the precise canonical code (e.g. `PROVIDER_422`, `JOB_TIMEOUT`, `NO_VIDEO_URL`) instead of the generic `lipsync_unavailable`.
+
 - **2026-06-27 (P0 — Fix Video Avatar Chat fal.ai lipsync + frontend polling 404s)** — Eliminated the production `lipsync_unavailable` failure and the related console errors.
   - **Root cause**: fal.ai's egress could not reach our backend URL to fetch the avatar image (same class of bug as the earlier audio fix).
   - **Backend** (`/app/backend/avatar_chat.py`)
