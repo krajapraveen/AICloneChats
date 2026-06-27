@@ -66,21 +66,33 @@ function MessageBubble({ msg, onRetry, onRetrySend, isAdmin }) {
               {msg.error_code}
             </span>
           )}
-          {isAdmin && msg.lipsync_debug && (
-            <span
-              className="text-[10px] text-muted font-mono truncate max-w-[260px]"
-              data-testid={`avatar-lipsync-debug-${msg.message_id}`}
-              title={msg.lipsync_debug}
-            >
-              {msg.lipsync_debug}
-            </span>
-          )}
           {isAdmin && msg.video_job_id && (
             <span className="text-[10px] text-muted/70 font-mono" data-testid={`avatar-job-id-${msg.message_id}`}>
               job:{msg.video_job_id}
             </span>
           )}
         </div>
+        {isAdmin && msg.lipsync_debug && (
+          <details className="mb-2" data-testid={`avatar-lipsync-debug-panel-${msg.message_id}`}>
+            <summary className="text-[10px] text-rose-300 font-mono cursor-pointer hover:text-rose-200 select-none">
+              show provider response ▾
+            </summary>
+            <pre
+              className="mt-1 text-[10px] font-mono whitespace-pre-wrap break-all bg-rose-500/5 border border-rose-400/20 rounded p-2 max-h-60 overflow-auto text-rose-200/90"
+              data-testid={`avatar-lipsync-debug-${msg.message_id}`}
+            >
+              {msg.lipsync_debug}
+            </pre>
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText(msg.lipsync_debug || "")}
+              className="text-[10px] text-muted hover:text-ink font-mono mt-1 underline"
+              data-testid={`avatar-lipsync-debug-copy-${msg.message_id}`}
+            >
+              copy
+            </button>
+          </details>
+        )}
         {isVideo && (
           <video controls className="w-full rounded-md mb-2 max-h-[60vh]" data-testid={`avatar-video-${msg.message_id}`}>
             <source src={`${process.env.REACT_APP_BACKEND_URL}${msg.video_url}`} type="video/mp4" />

@@ -67,6 +67,11 @@ FAL_KEY = os.environ.get("FAL_KEY", "")
 #                           omit it (this is the safe default for v1/v2).
 FAL_LIPSYNC_ENDPOINT = os.environ.get("FAL_LIPSYNC_ENDPOINT", "fal-ai/sync-lipsync")
 FAL_LIPSYNC_MODEL = os.environ.get("FAL_LIPSYNC_MODEL", "")  # empty = omit
+# sync_mode controls how fal-ai/sync-lipsync handles audio/video duration
+# mismatch. We feed a 1-frame GIF as the "video", so the audio is almost
+# always longer → use "loop" to repeat the still frame across the full audio.
+# Options: cut_off | loop | bounce | silence | remap (per fal docs).
+FAL_LIPSYNC_SYNC_MODE = os.environ.get("FAL_LIPSYNC_SYNC_MODE", "loop")
 
 STORAGE_ROOT = Path(__file__).parent / "storage"
 AUDIO_DIR = STORAGE_ROOT / "avatar_audio"
@@ -194,6 +199,40 @@ def _ext_for_ct(content_type: str) -> str:
     return ".jpg"
 
 
+def _image_bytes_to_gif(image_bytes: bytes) -> tuple[bytes, str]:
+    """Convert a still image (JPG/PNG/WEBP) to a 1-frame GIF.
+
+    fal-ai/sync-lipsync requires `video_url` to be a VIDEO (mp4/mov/webm/m4v/gif).
+    Passing a JPG returns HTTP 422 with a Pydantic validation error. A static
+    1-frame GIF satisfies the schema; we then pass `sync_mode: "loop"` so the
+    provider repeats the frame to match the audio duration.
+
+    Returns (gif_bytes, content_type). Falls back to the original bytes on
+    PIL failure (best-effort — caller can still try the upload).
+    """
+    try:
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(image_bytes))
+        # Convert to RGB then to P (palette) for GIF.
+        if img.mode in ("RGBA", "LA"):
+            bg = Image.new("RGB", img.size, (0, 0, 0))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        # Downscale very large avatars — fal happily accepts ≤1024px and we
+        # avoid >10MB uploads for static avatars.
+        if max(img.size) > 1024:
+            img.thumbnail((1024, 1024))
+        buf = _io.BytesIO()
+        img.save(buf, format="GIF", optimize=True)
+        return buf.getvalue(), "image/gif"
+    except Exception as e:
+        logger.warning("image_to_gif_failed | will_pass_original | err=%s", e)
+        return image_bytes, "image/jpeg"
+
+
 # Canonical lipsync error codes — surfaced via `error_code` so ops can grep.
 # Detail strings go into `lipsync_debug` (verbose, may contain provider text).
 LIPSYNC_ERR_PROVIDER_AUTH_FAILED = "PROVIDER_AUTH_FAILED"   # no FAL_KEY OR fal 401/403
@@ -299,6 +338,16 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
         return None, LIPSYNC_ERR_INVALID_AVATAR_ID, f"image_fetch_failed:{image_dbg}"
     logger.error("lipsync_image_fetched | bytes=%d ct=%s dbg=%s", len(image_bytes), image_ct, image_dbg)
 
+    # fal-ai/sync-lipsync requires `video_url` to be a VIDEO (mp4/mov/gif/etc).
+    # Convert the still avatar image to a 1-frame GIF so it satisfies the
+    # schema. We pair this with `sync_mode: "loop"` so fal repeats the frame
+    # to match the audio duration (instead of cropping to a single-frame video).
+    gif_bytes, gif_ct = _image_bytes_to_gif(image_bytes)
+    logger.error("lipsync_image_as_gif | bytes=%d ct=%s", len(gif_bytes), gif_ct)
+    # Override the upload bytes with the GIF version (sync-lipsync wants a video).
+    image_bytes_for_upload = gif_bytes
+    image_ct_for_upload = gif_ct
+
     try:
         import fal_client  # type: ignore
         import tempfile
@@ -324,10 +373,10 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                     return None, code, dbg
                 logger.error("fal_client_audio_uploaded | url=%s", (fal_audio_url or "")[:120])
 
-                # --- Upload image to fal CDN ---
-                img_ext = _ext_for_ct(image_ct or "")
+                # --- Upload image to fal CDN (as GIF for sync-lipsync) ---
+                img_ext = _ext_for_ct(image_ct_for_upload or "")
                 with tempfile.NamedTemporaryFile(suffix=img_ext, delete=False) as tf:
-                    tf.write(image_bytes)
+                    tf.write(image_bytes_for_upload)
                     image_tmp = tf.name
                 try:
                     fal_image_url = fal_client.upload_file(image_tmp)
@@ -338,20 +387,25 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                     if code not in (LIPSYNC_ERR_PROVIDER_AUTH_FAILED, LIPSYNC_ERR_JOB_TIMEOUT):
                         code = LIPSYNC_ERR_INVALID_AVATAR_ID
                     return None, code, dbg
-                logger.error("fal_client_image_uploaded | url=%s", (fal_image_url or "")[:120])
+                logger.error("fal_client_image_uploaded | url=%s ct=%s", (fal_image_url or "")[:120], image_ct_for_upload)
 
                 # --- Submit lipsync job ---
                 # Build args. Some fal endpoints (e.g. fal-ai/sync-lipsync v1
                 # latest schema) reject `model` with a 422 — we now omit it
-                # unless FAL_LIPSYNC_MODEL is set.
+                # unless FAL_LIPSYNC_MODEL is set. We pass `sync_mode: "loop"`
+                # because we feed a 1-frame GIF (still avatar image) so fal
+                # must loop it across the audio duration.
                 submit_args = {
                     "video_url": fal_image_url,
                     "audio_url": fal_audio_url,
                 }
+                if FAL_LIPSYNC_SYNC_MODE:
+                    submit_args["sync_mode"] = FAL_LIPSYNC_SYNC_MODE
                 if FAL_LIPSYNC_MODEL:
                     submit_args["model"] = FAL_LIPSYNC_MODEL
-                logger.error("fal_submit_args | endpoint=%s keys=%s model=%s",
+                logger.error("fal_submit_args | endpoint=%s keys=%s sync_mode=%s model=%s",
                              FAL_LIPSYNC_ENDPOINT, list(submit_args.keys()),
+                             FAL_LIPSYNC_SYNC_MODE or "<omitted>",
                              FAL_LIPSYNC_MODEL or "<omitted>")
                 try:
                     handler = fal_client.submit(FAL_LIPSYNC_ENDPOINT, arguments=submit_args)
@@ -679,6 +733,7 @@ async def feature_status(user: Optional[dict] = Depends(get_optional_user)):
         "lipsync_provider": LIPSYNC_PROVIDER,
         "lipsync_endpoint": FAL_LIPSYNC_ENDPOINT,
         "lipsync_model": FAL_LIPSYNC_MODEL or None,
+        "lipsync_sync_mode": FAL_LIPSYNC_SYNC_MODE or None,
     }
 
 

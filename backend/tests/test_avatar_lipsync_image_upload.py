@@ -221,3 +221,63 @@ def test_lipsync_endpoint_env_override_is_used(monkeypatch):
     assert avatar_chat.FAL_LIPSYNC_ENDPOINT == "fal-ai/sync-lipsync"
     # Default model is empty (omit from args) — this is the fix for prod 422.
     assert avatar_chat.FAL_LIPSYNC_MODEL == ""
+    # sync_mode defaults to "loop" so still images (1-frame GIFs) get looped
+    # across the full audio.
+    assert avatar_chat.FAL_LIPSYNC_SYNC_MODE == "loop"
+
+
+# --- GIF conversion (the fix for the JPG → 422 schema mismatch) ---
+
+def _make_test_jpg_bytes() -> bytes:
+    """Generate a tiny in-memory JPG for tests."""
+    from PIL import Image
+    import io as _io
+    img = Image.new("RGB", (64, 64), (200, 120, 60))
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_image_bytes_to_gif_jpg_input():
+    """JPG bytes must convert to valid GIF bytes (header = b'GIF8')."""
+    import avatar_chat
+    jpg = _make_test_jpg_bytes()
+    gif, ct = avatar_chat._image_bytes_to_gif(jpg)
+    assert ct == "image/gif"
+    assert gif.startswith(b"GIF87a") or gif.startswith(b"GIF89a"), f"not a GIF header: {gif[:6]!r}"
+
+
+def test_image_bytes_to_gif_png_with_alpha():
+    """PNG with alpha must flatten to RGB and produce a GIF."""
+    from PIL import Image
+    import io as _io
+    img = Image.new("RGBA", (40, 40), (10, 200, 10, 128))
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    import avatar_chat
+    gif, ct = avatar_chat._image_bytes_to_gif(buf.getvalue())
+    assert ct == "image/gif"
+    assert gif.startswith(b"GIF87a") or gif.startswith(b"GIF89a")
+
+
+def test_image_bytes_to_gif_downscales_huge_image():
+    """A 4000x4000 image must downscale to ≤1024 in the output GIF."""
+    from PIL import Image
+    import io as _io
+    big = Image.new("RGB", (4000, 4000), (50, 50, 50))
+    buf = _io.BytesIO()
+    big.save(buf, format="JPEG", quality=70)
+    import avatar_chat
+    gif, _ = avatar_chat._image_bytes_to_gif(buf.getvalue())
+    # Open the GIF and verify dimensions
+    out = Image.open(_io.BytesIO(gif))
+    assert max(out.size) <= 1024, f"not downscaled: {out.size}"
+
+
+def test_image_bytes_to_gif_fallback_on_bad_input():
+    """Garbage bytes → falls back to original bytes (no crash, content_type=image/jpeg)."""
+    import avatar_chat
+    junk = b"not an image at all"
+    out, ct = avatar_chat._image_bytes_to_gif(junk)
+    assert out == junk
+    assert ct == "image/jpeg"
