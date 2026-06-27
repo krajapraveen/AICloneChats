@@ -277,8 +277,21 @@ async def _run_pipeline(message_id: str) -> None:
     try:
         from urllib.parse import quote as _quote
         import storage as _storage
+        import uuid as _uuid
         storage_path = f"cloneme/audio/{message_id}.mp3"
         _storage._put(storage_path, audio_bytes, "audio/mpeg")
+        # CRITICAL: serve_file() at /api/storage/files/{path} only returns
+        # bytes when there's a matching row in db.files. Without this insert
+        # the path 404s even though the object exists.
+        await db.files.insert_one({
+            "file_id": _uuid.uuid4().hex,
+            "user_id": msg.get("user_id") or "",
+            "storage_path": storage_path,
+            "content_type": "audio/mpeg",
+            "size": len(audio_bytes),
+            "purpose": "avatar_chat_audio",
+            "is_deleted": False,
+        })
         audio_url = f"/api/storage/files/{_quote(storage_path, safe='')}"
         logger.info("audio_persisted_to_objstore | message_id=%s url=%s", message_id, audio_url)
     except Exception:
