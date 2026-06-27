@@ -174,7 +174,7 @@ export default function Dashboard() {
           <div className="flex items-end justify-between gap-3 mb-4">
             <div>
               <p className="label-brutal mb-1">Tools in your workspace</p>
-              <h2 className="heading-display text-2xl sm:text-3xl">Nine ways to talk to AI.</h2>
+              <h2 className="heading-display text-2xl sm:text-3xl">Ten ways to talk to AI.</h2>
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
