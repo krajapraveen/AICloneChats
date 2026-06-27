@@ -1,0 +1,28 @@
+{
+  "summary": "Iter30 preflight guardrail + admin payload visibility verified end-to-end. All 23/23 unit tests in test_avatar_lipsync_image_upload.py pass (including the 2 new tests: test_invalid_provider_payload_constant_exists, test_preflight_rejects_when_mp4_and_gif_both_fail). Code review confirms both preflight blocks (image content-type check at line 435, fal upload URL extension check at line 491) and payload_ctx (built at line 518) appended to ALL failure outcomes (submit_fail, poll_timeout, poll_fail, no_video_url, missing_video_url) AND on success. Backend e2e on preview: admin send + job poll returns video_status='completed', error_code='PROVIDER_AUTH_FAILED', lipsync_debug='no_fal_key', audio_url populated. Frontend smoke: /video-avatar-chat loads, send works, FALLBACK (TEXT) and PROVIDER_AUTH_FAILED badges visible, 'show provider response' admin <details> panel present, no critical JS console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_avatar_lipsync_image_upload.py",
+    "/app/test_reports/pytest/avatar_lipsync_image_upload.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "avatar_chat.py is now 1212 lines (grew from 1172 in iter29) - well past the 700-line refactor threshold. Strongly recommend extracting _image_bytes_to_mp4, _image_bytes_to_gif, _fetch_image_bytes, _ext_for_ct, _classify_fal_exception, and the two preflight guard blocks into /app/backend/avatar_chat_helpers.py to keep _generate_lipsync_video() readable.",
+    "Iter30 preflight is correct, minimal and defensive: stage-1 content-type check catches MP4+GIF-both-failed silent passthrough; stage-2 URL extension check catches any future regression where temp file gets wrong suffix. Both surface INVALID_PROVIDER_PAYLOAD with full diagnostic detail (image_path, content_type, mp4_dbg, bytes, endpoint).",
+    "payload_ctx string (fal_model + payload_keys + input_url_type + image_path) consistently appended to every return path inside _sync_call() - excellent admin observability. Confirmed at lines 529, 553, 558, 562, 565, 567.",
+    "Preview cannot exercise the preflight code path (no FAL_KEY -> short-circuits at no_fal_key gate before MP4/GIF helpers run). Preflight behavior is verified ONLY via the new unit test that mocks both helpers to fail. Production validation will require a real send call with FAL_KEY set and a broken/missing ffmpeg binary scenario, OR temporarily forcing _image_bytes_to_mp4 to return None in prod via a feature flag."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin krajapraveen@gmail.com / TestPass123! - verified working via /api/auth/login on preview.",
+  "seed_data_creation": "None - reused existing 'companion' clone slug and admin account.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter30 preflight is in place. The /api/avatar-chat/send endpoint accepts {clone_id_or_slug, message} (NOT clone_slug). Poll endpoint /api/avatar-chat/job/{message_id} returns wrapped response: {message: {...fields...}, job: {...fields...}} - check message.video_status / message.error_code / message.lipsync_debug, NOT top-level. Preview short-circuits at no_fal_key before any MP4/GIF/preflight code runs, so prod-only behavior must be validated via unit-test mocks (done) or via a real FAL_KEY env. The 3 pre-existing failures in test_avatar_chat.py (subscription gate) are unrelated and out of scope for this iteration.",
+  "rca of the issue": "Original prod 422 'Failed to read video metadata' on .jpg upload URL persisted after iter29 because either (i) prod redeploy hadn't pulled the new requirements.txt with imageio-ffmpeg yet, or (ii) _image_bytes_to_mp4() failed silently on prod (arch/binary mismatch) and the GIF helper's fallback path returned raw JPG bytes labeled image/jpeg. Iter30 adds two belt-and-braces preflight guards in _generate_lipsync_video(): (1) after the MP4/GIF attempt, if content_type still starts with 'image/' (meaning both helpers degraded to raw image bytes), return INVALID_PROVIDER_PAYLOAD with full diagnostic detail before any fal_client call is made; (2) after fal upload, if the returned fal CDN URL ends in .jpg/.jpeg/.png/.webp/.bmp/.tiff, return INVALID_PROVIDER_PAYLOAD. Additionally, payload_ctx (fal_model, payload_keys, input_url_type, image_path) is now appended to lipsync_debug on every success and failure path, giving admins zero-DevTools visibility into what was actually submitted. Mitigation: deploy iter30 to prod - even if MP4 still silently fails, the preflight will block submit and surface the exact path taken (mp4/gif/passthrough_jpeg) and content-type, allowing root-cause without further iteration. Unit-tested via test_preflight_rejects_when_mp4_and_gif_both_fail which mocks both helpers to fail and asserts fal_client.submit is never called and INVALID_PROVIDER_PAYLOAD is returned with the expected detail substrings."
+}

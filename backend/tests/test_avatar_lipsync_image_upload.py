@@ -333,3 +333,40 @@ def test_image_bytes_to_mp4_fallback_on_garbage():
     mp4, dbg = avatar_chat._image_bytes_to_mp4(b"definitely not an image")
     assert mp4 is None
     assert isinstance(dbg, str) and len(dbg) > 0
+
+
+# --- Preflight reject (iter6/iter30) ---
+
+def test_invalid_provider_payload_constant_exists():
+    """The new canonical code must be exported."""
+    import avatar_chat
+    assert hasattr(avatar_chat, "LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD")
+    assert avatar_chat.LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD == "INVALID_PROVIDER_PAYLOAD"
+
+
+def test_preflight_rejects_when_mp4_and_gif_both_fail(monkeypatch):
+    """If MP4 fails AND GIF passthroughs to image/jpeg, the helper must refuse to
+    submit and return INVALID_PROVIDER_PAYLOAD — never let prod silently send a
+    .jpg as video_url to fal again."""
+    import avatar_chat
+    # Patch the MP4 helper to fail.
+    monkeypatch.setattr(avatar_chat, "_image_bytes_to_mp4", lambda b: (None, "mp4_simulated_failure"))
+    # Patch the GIF helper to also fail (returns original bytes as image/jpeg).
+    monkeypatch.setattr(avatar_chat, "_image_bytes_to_gif", lambda b: (b, "image/jpeg"))
+    # Patch FAL_KEY so we get past the auth gate.
+    monkeypatch.setattr(avatar_chat, "FAL_KEY", "fake_key_for_test")
+    # Stub the image fetch so we don't actually hit the network.
+
+    async def _fake_fetch(url):
+        return _make_test_jpg_bytes(), "image/jpeg", "ok_test"
+    monkeypatch.setattr(avatar_chat, "_fetch_image_bytes", _fake_fetch)
+
+    url, code, dbg = asyncio.get_event_loop().run_until_complete(
+        avatar_chat._generate_lipsync_video("https://example.com/a.jpg", b"\x00" * 100)
+    )
+    assert url is None
+    assert code == avatar_chat.LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, f"expected preflight reject, got {code}"
+    # Detail must mention the path and content type so ops can read why
+    assert "image_as_video_blocked" in dbg
+    assert "image/jpeg" in dbg
+    assert "passthrough_jpeg" in dbg or "path=" in dbg

@@ -298,6 +298,7 @@ def _image_bytes_to_mp4(image_bytes: bytes, *, fps: int = 25, duration_sec: floa
 
 
 # Canonical lipsync error codes — surfaced via `error_code` so ops can grep.
+LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD = "INVALID_PROVIDER_PAYLOAD"  # preflight: we'd be sending image-as-video
 # Detail strings go into `lipsync_debug` (verbose, may contain provider text).
 LIPSYNC_ERR_PROVIDER_AUTH_FAILED = "PROVIDER_AUTH_FAILED"   # no FAL_KEY OR fal 401/403
 LIPSYNC_ERR_PROVIDER_422 = "PROVIDER_422"                   # fal 4xx unprocessable
@@ -410,17 +411,35 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
     # Pair with `sync_mode: "loop"` so fal repeats the short clip across the
     # full audio duration.
     mp4_bytes, mp4_dbg = _image_bytes_to_mp4(image_bytes)
+    image_path_taken = "unknown"
     if mp4_bytes:
         image_bytes_for_upload = mp4_bytes
         image_ct_for_upload = "video/mp4"
+        image_path_taken = "mp4"
         logger.error("lipsync_image_as_mp4 | bytes=%d", len(mp4_bytes))
     else:
-        # Fallback to GIF (legacy path). At worst we get the same 422 we had
-        # before, which surfaces in the admin UI as before.
+        # Fallback to GIF (legacy path). If GIF helper falls back further to
+        # the original image bytes (e.g. PIL failure), we'll detect that with
+        # the preflight reject below and surface INVALID_PROVIDER_PAYLOAD
+        # with the exact reason instead of letting fal return its opaque 422.
         gif_bytes, gif_ct = _image_bytes_to_gif(image_bytes)
         image_bytes_for_upload = gif_bytes
         image_ct_for_upload = gif_ct
-        logger.error("lipsync_image_mp4_fallback_to_gif | mp4_dbg=%s gif_bytes=%d", mp4_dbg, len(gif_bytes))
+        image_path_taken = "gif" if gif_ct == "image/gif" else "passthrough_jpeg"
+        logger.error("lipsync_image_mp4_fallback_to_gif | mp4_dbg=%s gif_bytes=%d ct=%s path=%s",
+                     mp4_dbg, len(gif_bytes), gif_ct, image_path_taken)
+
+    # --- Preflight reject ---
+    # Refuse to submit an image as `video_url`. This is what the user asked
+    # for: never let prod silently fall through to fal's 422 again.
+    if image_ct_for_upload.startswith("image/"):
+        detail = (
+            f"image_as_video_blocked | path={image_path_taken} ct={image_ct_for_upload} "
+            f"mp4_dbg={mp4_dbg} bytes={len(image_bytes_for_upload)} "
+            f"endpoint={FAL_LIPSYNC_ENDPOINT}"
+        )
+        logger.error("lipsync_preflight_reject | %s", detail)
+        return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
 
     try:
         import fal_client  # type: ignore
@@ -463,6 +482,17 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                     return None, code, dbg
                 logger.error("fal_client_image_uploaded | url=%s ct=%s", (fal_image_url or "")[:120], image_ct_for_upload)
 
+                # --- Hard preflight: refuse to submit if the fal upload URL
+                # somehow ends in an image extension. This belt-and-braces
+                # check catches any future regression where the local file
+                # gets the wrong suffix.
+                bad_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff")
+                lower = (fal_image_url or "").lower()
+                if any(lower.endswith(ext) or (ext + "?") in lower for ext in bad_exts):
+                    detail = f"upload_url_is_image:{fal_image_url[:200]} ct={image_ct_for_upload} path={image_path_taken}"
+                    logger.error("lipsync_preflight_reject_uploaded | %s", detail)
+                    return None, LIPSYNC_ERR_INVALID_PROVIDER_PAYLOAD, detail
+
                 # --- Submit lipsync job ---
                 # Build args. Some fal endpoints (e.g. fal-ai/sync-lipsync v1
                 # latest schema) reject `model` with a 422 — we now omit it
@@ -481,12 +511,22 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                              FAL_LIPSYNC_ENDPOINT, list(submit_args.keys()),
                              FAL_LIPSYNC_SYNC_MODE or "<omitted>",
                              FAL_LIPSYNC_MODEL or "<omitted>")
+                # Build a payload context string we attach to every downstream
+                # debug detail so admins can see exactly what we submitted
+                # without DevTools (fal_model, payload_keys, input_url_type).
+                input_url_ext = (fal_image_url or "").rsplit(".", 1)[-1].split("?")[0][:8]
+                payload_ctx = (
+                    f"fal_model={FAL_LIPSYNC_ENDPOINT}"
+                    f" payload_keys={list(submit_args.keys())}"
+                    f" input_url_type=.{input_url_ext}"
+                    f" image_path={image_path_taken}"
+                )
                 try:
                     handler = fal_client.submit(FAL_LIPSYNC_ENDPOINT, arguments=submit_args)
                 except Exception as e_sub:
                     code, dbg = _classify_fal_exception(e_sub, stage="submit")
                     logger.exception("fal_submit_failed")
-                    return None, code, dbg
+                    return None, code, f"{dbg} | {payload_ctx}"
 
                 request_id = getattr(handler, "request_id", None) or str(handler)[:80]
                 logger.error("fal_submit_ok | request_id=%s endpoint=%s", request_id, FAL_LIPSYNC_ENDPOINT)
@@ -510,21 +550,21 @@ async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[O
                 elapsed = round(_time.time() - t0, 1)
                 if t.is_alive():
                     logger.error("fal_poll_timeout | request_id=%s elapsed=%ss", request_id, elapsed)
-                    return None, LIPSYNC_ERR_JOB_TIMEOUT, f"timeout:{LIPSYNC_TIMEOUT_SEC}s request_id={request_id}"
+                    return None, LIPSYNC_ERR_JOB_TIMEOUT, f"timeout:{LIPSYNC_TIMEOUT_SEC}s request_id={request_id} | {payload_ctx}"
                 if box["err"] is not None:
                     err = box["err"]
                     code, dbg = _classify_fal_exception(err, stage="poll", request_id=request_id)
                     logger.exception("fal_poll_failed")
-                    return None, code, dbg
+                    return None, code, f"{dbg} | {payload_ctx}"
 
                 result = box["result"]
                 if not isinstance(result, dict):
-                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"result_not_dict:{type(result).__name__} request_id={request_id}"
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"result_not_dict:{type(result).__name__} request_id={request_id} | {payload_ctx}"
                 video_url = (result.get("video") or {}).get("url")
                 if not video_url:
-                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"missing_video_url:{str(result)[:300]} request_id={request_id}"
+                    return None, LIPSYNC_ERR_NO_VIDEO_URL, f"missing_video_url:{str(result)[:300]} request_id={request_id} | {payload_ctx}"
                 logger.error("fal_video_ready | request_id=%s elapsed=%ss url=%s", request_id, elapsed, video_url[:120])
-                return video_url, "ok", f"request_id={request_id} elapsed={elapsed}s"
+                return video_url, "ok", f"request_id={request_id} elapsed={elapsed}s | {payload_ctx}"
             except Exception as inner:
                 logger.exception("fal_client_unexpected")
                 return None, LIPSYNC_ERR_RENDER_EXCEPTION, f"{type(inner).__name__}:{str(inner)[:200]}"
