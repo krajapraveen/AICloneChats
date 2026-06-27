@@ -132,49 +132,56 @@ async def _generate_tts(text: str, voice: str = "alloy") -> Optional[bytes]:
         return None
 
 
-async def _generate_lipsync_video(image_url: str, audio_url: str) -> tuple[Optional[str], str]:
+async def _generate_lipsync_video(image_url: str, audio_bytes: bytes) -> tuple[Optional[str], str]:
     """Returns (provider's MP4 URL, debug_reason).
 
-    - On success: (mp4_url, "ok")
-    - On failure: (None, "<specific_reason>") — the reason is also written to
-      the message's `lipsync_debug` field so operators can read it without
-      needing log access.
+    Uploads `audio_bytes` to fal.ai's CDN (so production's ephemeral disk
+    doesn't matter — fal serves the file itself), then submits sync-lipsync.
 
-    fal.ai sync-lipsync model (https://fal.ai/models/fal-ai/sync-lipsync).
+    Image is passed by URL because clones' avatar images already live on a
+    persistent storage CDN (/api/storage/files/) that fal CAN reach.
     """
     logger.error(
-        "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_url_kind=%s",
+        "lipsync_attempt | provider=%s key_present=%s image_url_kind=%s audio_bytes=%d",
         LIPSYNC_PROVIDER, bool(FAL_KEY),
         "abs" if (image_url or "").startswith("http") else "rel" if image_url else "empty",
-        "abs" if (audio_url or "").startswith("http") else "rel" if audio_url else "empty",
+        len(audio_bytes or b""),
     )
     if not FAL_KEY:
-        logger.error("lipsync_skip_no_fal_key")
         return None, "no_fal_key"
     if LIPSYNC_PROVIDER != "fal":
         return None, f"wrong_provider:{LIPSYNC_PROVIDER}"
-    if not image_url:
-        return None, "empty_image_url"
-    if not audio_url:
-        return None, "empty_audio_url"
-    if not image_url.startswith("http"):
-        return None, f"relative_image_url:{image_url[:80]}"
-    if not audio_url.startswith("http"):
-        return None, f"relative_audio_url:{audio_url[:80]}"
+    if not image_url or not image_url.startswith("http"):
+        return None, f"bad_image_url:{(image_url or '')[:80]}"
+    if not audio_bytes:
+        return None, "empty_audio_bytes"
     try:
         import fal_client  # type: ignore
+        import tempfile
         os.environ["FAL_KEY"] = FAL_KEY
 
         def _sync_call() -> tuple[Optional[str], str]:
             try:
-                logger.error("fal_client_submit_attempt | image=%s audio=%s", image_url[:120], audio_url[:120])
+                # Write the audio bytes to a tempfile and upload to fal.ai's
+                # CDN. fal_client.upload_file expects a path (the SDK doesn't
+                # have an `upload_bytes` helper as of v1.0). The tempfile is
+                # auto-cleaned when the `with` block exits.
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
+                    tf.write(audio_bytes)
+                    tmp_path = tf.name
+                try:
+                    fal_audio_url = fal_client.upload_file(tmp_path)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                logger.error("fal_client_audio_uploaded | url=%s", fal_audio_url[:120])
                 handler = fal_client.submit(
                     "fal-ai/sync-lipsync",
-                    arguments={"video_url": image_url, "audio_url": audio_url, "model": "lipsync-1.9.0-beta"},
+                    arguments={"video_url": image_url, "audio_url": fal_audio_url, "model": "lipsync-1.9.0-beta"},
                 )
-                logger.error("fal_client_submit_handle_obtained | type=%s", type(handler).__name__)
                 result = handler.get()
-                logger.error("fal_client_result | keys=%s", list(result.keys()) if isinstance(result, dict) else "non-dict")
                 if not isinstance(result, dict):
                     return None, f"result_not_dict:{type(result).__name__}"
                 video_url = (result.get("video") or {}).get("url")
@@ -183,15 +190,12 @@ async def _generate_lipsync_video(image_url: str, audio_url: str) -> tuple[Optio
                 return video_url, "ok"
             except Exception as inner:
                 logger.exception("fal_client_submit_failed")
-                # Capture exception class + message — this is gold for debugging.
                 return None, f"submit_exception:{type(inner).__name__}:{str(inner)[:200]}"
 
         return await asyncio.to_thread(_sync_call)
     except ImportError:
-        logger.exception("lipsync_skip_fal_client_not_installed")
         return None, "fal_client_not_installed"
     except Exception as e:
-        logger.exception("lipsync_skip_unexpected_exception")
         return None, f"unexpected:{type(e).__name__}:{str(e)[:200]}"
 
 
@@ -311,7 +315,10 @@ async def _run_pipeline(message_id: str) -> None:
     image_public = avatar_image if avatar_image.startswith("http") else f"{public_base}{avatar_image}"
     logger.error("lipsync_resolved_urls | message_id=%s image_public=%s audio_public=%s", message_id, image_public[:200], audio_public[:200])
 
-    video_provider_url, lipsync_debug = await _generate_lipsync_video(image_public, audio_public)
+    # Pass audio_bytes directly — we'll upload them to fal.ai's CDN inside the
+    # helper so production's ephemeral disk (where our local audio file may
+    # already be gone by the time fal tries to fetch it) doesn't matter.
+    video_provider_url, lipsync_debug = await _generate_lipsync_video(image_public, audio_bytes)
     if not video_provider_url:
         logger.error("lipsync_completed_audio_only | message_id=%s reason=%s", message_id, lipsync_debug)
         # Audio-only completion (graceful degrade) — persist the specific
