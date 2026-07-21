@@ -1078,6 +1078,22 @@ async def send_avatar_message(payload: AvatarSendRequest, user: dict = Depends(g
 
     clone_id = clone["clone_id"]
 
+    # Face-detection preflight guard. If the clone avatar has been audited
+    # and confirmed faceless (`face_detected: false`), sadtalker will throw
+    # `RENDER_EXCEPTION: No face detected` — reject early, before charging
+    # credits, with a clear message so the user updates the avatar first.
+    # `face_detected` missing / null means "not yet audited" and we do NOT
+    # block, keeping existing clones functional until admin runs the sweep.
+    if clone.get("face_detected") is False:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_face_in_avatar",
+                "message": "This clone's avatar doesn't have a detectable face. Video chat needs a clear headshot. Update the avatar and try again.",
+                "clone_id": clone_id,
+            },
+        )
+
     # Safety pre-flight on user input
     in_check = moderate_user_input(payload.message)
     if in_check["action"] == "block":

@@ -27,6 +27,7 @@ export default function CloneEditor() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [faceCheck, setFaceCheck] = useState(null);
   const fileRef = useRef(null);
 
   const [form, setForm] = useState({
@@ -89,7 +90,13 @@ export default function CloneEditor() {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setForm((f) => ({ ...f, avatar_url: data.avatar_url }));
-      toast.success("Avatar uploaded");
+      const check = data.face_check || null;
+      setFaceCheck(check);
+      if (check && check.has_face === false) {
+        toast.warning("No face detected — Video Avatar Chat may not work with this image.");
+      } else {
+        toast.success("Avatar uploaded");
+      }
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
@@ -177,6 +184,20 @@ export default function CloneEditor() {
               <p className="text-xs text-muted mt-2">PNG / JPG / WebP, max 5MB</p>
             </div>
           </div>
+
+          {faceCheck && faceCheck.has_face === false && (
+            <div
+              className="mb-5 rounded-md border border-amber/40 bg-amber/10 px-4 py-3 text-xs"
+              data-testid="avatar-no-face-warning"
+            >
+              <div className="font-bold text-amber mb-1">Heads up — no face detected</div>
+              <div className="text-muted leading-relaxed">
+                Video Avatar Chat needs a clear, front-facing headshot. Your avatar was saved,
+                but video responses may fail for this clone. Try a closer, well-lit photo of the
+                face for best results.
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

@@ -1,0 +1,33 @@
+{
+  "summary": "Face-Detection Preflight (OpenCV Haar + hybrid 1c + audit 2b) tested end-to-end. All 13 backend tests pass (9 in existing test_face_detect_preflight.py + 1 skip for network-dependent pravatar sample, plus 4 new tests in test_face_detect_upload_and_audit.py covering upload face_check payload, auth guard, real-run audit persistence, unauth validate-avatar). Frontend flows verified via Playwright: (1) CloneEditor blank PNG upload shows 'Heads up — no face detected' banner (data-testid=avatar-no-face-warning) and avatar still saves; (2) VideoAvatarChat with faceless clone (face_detected=false forced via Mongo) shows 'Video chat unavailable — no face in avatar' banner (data-testid=avatar-face-block-banner) and send button (data-testid=avatar-send-btn) is disabled with text 'No face — blocked'; (3) Clone with unset face_detected has no block banner and send button behaves normally. Verified in code that 422 no_face_in_avatar is raised in avatar_chat.py:1087 BEFORE charge_credits_or_402() at line 1105, so credits are not consumed on rejection.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_face_detect_preflight.py",
+    "/app/backend/tests/test_face_detect_upload_and_audit.py",
+    "/app/test_reports/pytest/face_detect_1784626419.xml",
+    "/app/test_reports/pytest/face_upload_audit_1784626464.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "avatar_chat.py:1087 correctly raises 422 BEFORE charge_credits_or_402 (line 1105), so credits are guaranteed intact on no_face_in_avatar rejection. Guard uses strict `is False` check so un-audited clones (None) still work — matches PRD choice 1c/2b.",
+    "storage.py:118-123 wraps detect_face in try/except with `detector_error` fallback — good: face-check never blocks upload even if OpenCV fails.",
+    "VideoAvatarChat.jsx:312 uses `cloneInfo.face_detected === false` (strict) so null/undefined does not block — consistent with backend guard semantics."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_face_detect_upload_and_audit.py (new — 4 additional coverage tests)"
+  ],
+  "success_rate": {"backend": "100% (13/13 executed, 1 network-dep skip)", "frontend": "100% (3/3 flows)"},
+  "test_credentials": "Ephemeral registrations via /api/auth/register (email fe_<hex>@example.com / TestPass123!). Admin token minted from krajapraveen@gmail.com via _mint_admin_token in tests.",
+  "seed_data_creation": "Ephemeral test users + clones per test (prefixed random hex). One clone forced to face_detected=false via direct Mongo update for FE face-block test (slug fe-face-952a34).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Face-detection preflight is fully working: upload returns face_check but never blocks; validate-avatar file/persist modes work; audit-faces dry-run+real-run both work; /avatar-chat/send returns 422 with code=no_face_in_avatar for face_detected=false clones BEFORE charging credits; frontend banners on CloneEditor and VideoAvatarChat show correctly with data-testids as spec'd. Pravatar-based positive-detection unit test remains a soft skip because OpenCV Haar is lenient on stylised photos — acceptable per PRD."
+}

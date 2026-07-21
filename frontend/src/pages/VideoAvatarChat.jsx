@@ -148,6 +148,7 @@ export default function VideoAvatarChat() {
   const [sending, setSending] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState("");
+  const [cloneInfo, setCloneInfo] = useState(null);
   const pollRef = useRef(null);
   const scrollRef = useRef(null);
 
@@ -165,12 +166,30 @@ export default function VideoAvatarChat() {
     } catch { /* noop */ }
   }, []);
 
+  // Fetch the target clone so we can hard-gate video sends when its avatar
+  // has been audited and confirmed faceless (`face_detected === false`).
+  const refreshCloneInfo = useCallback(async (slug) => {
+    if (!slug) { setCloneInfo(null); return; }
+    try {
+      const r = await api.get(`/clones/by-slug/${encodeURIComponent(slug)}`);
+      setCloneInfo(r.data || null);
+    } catch {
+      setCloneInfo(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!authLoading && !user) { navigate("/login?redirect=/video-avatar-chat"); return; }
     if (!user) return;
     refreshStatus();
     refreshProfiles();
   }, [user, authLoading, navigate, refreshStatus, refreshProfiles]);
+
+  // Re-fetch clone info whenever the target slug changes.
+  useEffect(() => {
+    if (!user) return;
+    refreshCloneInfo(cloneSlug);
+  }, [user, cloneSlug, refreshCloneInfo]);
 
   // Poll job status for any in-flight message every 2s
   const refreshJobs = useCallback(async () => {
@@ -290,6 +309,7 @@ export default function VideoAvatarChat() {
   const featureNotAvailable = status && !status.available_for_user;
   const ttsNote = status && !status.tts_configured ? "TTS not configured (EMERGENT_LLM_KEY missing) — text-only replies." : null;
   const lipsyncNote = status && !status.lipsync_configured ? "Lip-sync not configured (FAL_KEY missing) — audio-only replies." : null;
+  const cloneFacelessBlocked = cloneInfo && cloneInfo.face_detected === false;
 
   if (authLoading || !user) return <div className="page-bg min-h-screen flex items-center justify-center"><div className="text-muted font-mono text-sm">loading…</div></div>;
 
@@ -331,6 +351,31 @@ export default function VideoAvatarChat() {
               </div>
             )}
 
+            {cloneFacelessBlocked && (
+              <div
+                className="brutal-card p-4 mb-3 border-amber/40 bg-amber-500/5"
+                data-testid="avatar-face-block-banner"
+              >
+                <div className="font-mono text-xs uppercase tracking-widest text-amber">
+                  Video chat unavailable · no face in avatar
+                </div>
+                <div className="text-sm mt-1 leading-relaxed">
+                  <span className="font-bold">{cloneInfo?.display_name || cloneSlug}</span>{" "}
+                  has an avatar without a detectable face, so video responses would fail.
+                  Update this clone's avatar to a clear front-facing headshot and try again.
+                </div>
+                {cloneInfo?.clone_id && cloneInfo?.user_id === user?.user_id && (
+                  <Link
+                    to={`/clones/${cloneInfo.clone_id}/edit`}
+                    className="btn-ghost text-xs mt-2 inline-block"
+                    data-testid="avatar-face-block-edit-link"
+                  >
+                    Update avatar →
+                  </Link>
+                )}
+              </div>
+            )}
+
             <div ref={scrollRef} className="flex-1 overflow-y-auto pr-1" data-testid="avatar-message-list">
               {messages.length === 0 && <div className="text-muted text-sm font-mono">Send a message to see an avatar reply.</div>}
               {messages.map((m) => <MessageBubble key={m.message_id} msg={m} onRetry={onRetry} onRetrySend={onRetrySend} isAdmin={user?.role === "admin"} />)}
@@ -338,8 +383,8 @@ export default function VideoAvatarChat() {
 
             <div className="chat-form-sticky pt-3 mt-2 border-t border-ink/10 flex flex-col sm:flex-row gap-2">
               <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Say something to your clone…" rows={2} className="input-brutal text-sm flex-1" data-testid="avatar-input" maxLength={2000} />
-              <button onClick={onSend} disabled={!draft.trim() || sending} className="btn-brutal disabled:opacity-50 self-end sm:self-auto" data-testid="avatar-send-btn">
-                {sending ? "Sending…" : "Send →"}
+              <button onClick={onSend} disabled={!draft.trim() || sending || cloneFacelessBlocked} className="btn-brutal disabled:opacity-50 self-end sm:self-auto" data-testid="avatar-send-btn">
+                {sending ? "Sending…" : cloneFacelessBlocked ? "No face — blocked" : "Send →"}
               </button>
             </div>
           </>

@@ -1,7 +1,7 @@
 import re
 import uuid
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from typing import List, Optional
 
 from db import db
@@ -195,6 +195,70 @@ async def update_clone(clone_id: str, payload: CloneUpdate, user: dict = Depends
     await db.clones.update_one({"clone_id": clone_id}, {"$set": update})
     updated = await db.clones.find_one({"clone_id": clone_id}, {"_id": 0})
     return updated
+
+
+@router.post("/{clone_id}/validate-avatar")
+async def validate_clone_avatar(
+    clone_id: str,
+    request: Request,
+    file: Optional[UploadFile] = File(default=None),
+    user: dict = Depends(get_current_user),
+):
+    """Face-detection preflight for a clone avatar.
+
+    Two modes:
+      1. `file=<image>` — validate a candidate image before the user saves
+         it. Does NOT persist to clone. Returns detection result only.
+      2. no file — re-validate the clone's currently-saved `avatar_url` and
+         persist `face_detected` + `face_check` on the clone document. This
+         is what the admin audit sweep uses and what the UI calls when the
+         user reopens a clone editor to refresh the flag.
+
+    Returns:
+      {ok, has_face, face_count, largest_face_ratio, image_width,
+       image_height, detector, reason, persisted: bool}
+    """
+    clone = await db.clones.find_one({"clone_id": clone_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not clone:
+        raise HTTPException(status_code=404, detail="Clone not found")
+
+    from face_detect import detect_face, detect_face_from_url
+
+    persisted = False
+    if file is not None:
+        # Mode 1 — validate uploaded candidate. Non-persistent.
+        if file.content_type and not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Only image uploads allowed")
+        data = await file.read()
+        if len(data) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+        if len(data) > 8 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 8MB)")
+        check = detect_face(data)
+    else:
+        # Mode 2 — re-check the persisted avatar_url and store the result.
+        avatar_url = (clone.get("avatar_url") or "").strip()
+        if not avatar_url:
+            raise HTTPException(status_code=400, detail="Clone has no avatar_url to validate")
+        # Local `/api/storage/files/...` paths need the backend origin
+        # bolted on so `requests.get` can reach them from our own process.
+        fetch_url = avatar_url
+        if fetch_url.startswith("/"):
+            import os as _os
+            base = _os.environ.get("BACKEND_PUBLIC_URL") or _os.environ.get("REACT_APP_BACKEND_URL", "")
+            fetch_url = f"{base.rstrip('/')}{avatar_url}" if base else avatar_url
+        check = detect_face_from_url(fetch_url)
+        await db.clones.update_one(
+            {"clone_id": clone_id},
+            {"$set": {
+                "face_detected": bool(check.get("has_face")),
+                "face_check": check,
+                "face_checked_at": now_iso(),
+            }},
+        )
+        persisted = True
+
+    return {"ok": True, "persisted": persisted, **check}
 
 
 @router.delete("/{clone_id}")

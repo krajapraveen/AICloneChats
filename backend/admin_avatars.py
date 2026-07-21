@@ -164,3 +164,101 @@ async def backfill_clone_avatars(
         "sample": eligible[:30],
         "praveen_url": PRAVEEN_AVATAR_URL,
     }
+
+
+@router.post("/audit-faces")
+async def audit_clone_faces(
+    dry_run: bool = Query(default=False),
+    only_missing: bool = Query(
+        default=True,
+        description="When True, skip clones that already have a face_check recorded.",
+    ),
+    _admin: dict = Depends(_require_admin),
+):
+    """Sweep every clone's `avatar_url`, run OpenCV face detection on it,
+    and persist `face_detected` + `face_check` on the clone document.
+
+    Downstream, VideoAvatarChat uses `face_detected` to hard-gate rendering
+    (and the UI hides / disables the video button for faceless clones).
+
+    Query params:
+      dry_run: report only, do not write.
+      only_missing: skip clones that already have face_check stored.
+
+    Response:
+      {ok, scanned, checked, has_face, no_face, unreadable, updated,
+       sample: [{clone_id, slug, avatar_url, has_face, reason}]}
+    """
+    from face_detect import detect_face_from_url
+    import os as _os
+
+    scanned = 0
+    checked = 0
+    has_face = 0
+    no_face = 0
+    unreadable = 0
+    updated = 0
+    sample: list[dict] = []
+    backend_base = (_os.environ.get("BACKEND_PUBLIC_URL") or _os.environ.get("REACT_APP_BACKEND_URL", "")).rstrip("/")
+
+    cursor = db.clones.find(
+        {},
+        {"_id": 0, "clone_id": 1, "slug": 1, "display_name": 1, "avatar_url": 1, "face_check": 1, "face_detected": 1},
+    )
+    async for c in cursor:
+        scanned += 1
+        avatar = (c.get("avatar_url") or "").strip()
+        if not avatar:
+            continue
+        if only_missing and c.get("face_check") is not None:
+            continue
+        fetch_url = avatar
+        if fetch_url.startswith("/") and backend_base:
+            fetch_url = f"{backend_base}{avatar}"
+        check = detect_face_from_url(fetch_url)
+        checked += 1
+        if check.get("has_face"):
+            has_face += 1
+        elif check.get("reason") in ("unreadable_image",) or (check.get("reason") or "").startswith("fetch_failed"):
+            unreadable += 1
+        else:
+            no_face += 1
+        row = {
+            "clone_id": c["clone_id"],
+            "slug": c.get("slug"),
+            "display_name": c.get("display_name"),
+            "avatar_url": avatar,
+            "has_face": bool(check.get("has_face")),
+            "reason": check.get("reason"),
+        }
+        if len(sample) < 50:
+            sample.append(row)
+        if not dry_run:
+            r = await db.clones.update_one(
+                {"clone_id": c["clone_id"]},
+                {"$set": {
+                    "face_detected": bool(check.get("has_face")),
+                    "face_check": check,
+                    "face_checked_at": now_iso(),
+                }},
+            )
+            if r.modified_count > 0:
+                updated += 1
+
+    if not dry_run:
+        logger.info(
+            "avatars_face_audit: scanned=%d checked=%d has_face=%d no_face=%d unreadable=%d updated=%d actor=%s",
+            scanned, checked, has_face, no_face, unreadable, updated, _admin.get("email"),
+        )
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "only_missing": only_missing,
+        "scanned": scanned,
+        "checked": checked,
+        "has_face": has_face,
+        "no_face": no_face,
+        "unreadable": unreadable,
+        "updated": updated,
+        "sample": sample,
+    }

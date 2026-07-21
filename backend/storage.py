@@ -112,6 +112,16 @@ async def upload_avatar(request: Request, file: UploadFile = File(...), user: di
 
     storage_path = result.get("path", path)
 
+    # Face-detection preflight (soft, non-blocking). Callers use this to
+    # show a warning banner and to disable Video Avatar Chat downstream.
+    # Detection failure is not fatal — the upload succeeds either way.
+    try:
+        from face_detect import detect_face
+        face_info = detect_face(data)
+    except Exception as e:
+        logger.warning("face_detect on upload-avatar failed: %s", e)
+        face_info = {"has_face": False, "reason": "detector_error", "face_count": 0}
+
     await db.files.insert_one({
         "file_id": uuid.uuid4().hex,
         "user_id": user["user_id"],
@@ -120,10 +130,12 @@ async def upload_avatar(request: Request, file: UploadFile = File(...), user: di
         "size": result.get("size", len(data)),
         "purpose": "avatar",
         "is_deleted": False,
+        "face_detected": bool(face_info.get("has_face")),
+        "face_info": face_info,
     })
 
     public_url = f"/api/storage/files/{quote(storage_path, safe='')}"
-    return {"avatar_url": public_url, "storage_path": storage_path}
+    return {"avatar_url": public_url, "storage_path": storage_path, "face_check": face_info}
 
 
 @router.get("/files/{path:path}")
