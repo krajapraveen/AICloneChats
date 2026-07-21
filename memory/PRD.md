@@ -23,8 +23,15 @@ Build "CloneMe AI" — an AI clone chat MVP. Users create an AI version of thems
 
 ## Changelog (most recent first)
 
-
-
+### 2026-07-21 · Face-Detection Preflight (OpenCV) — prevents sadtalker RENDER_EXCEPTION
+- New `/app/backend/face_detect.py`: OpenCV Haar cascade (frontal + profile) face detection utility; graceful HEIC decode via pillow-heif fallback; never raises.
+- New `POST /api/clones/{clone_id}/validate-avatar` (owner-only): file-mode returns detection result without persisting; URL-mode re-runs on saved avatar_url and persists `face_detected` + `face_check` on the clone doc.
+- `POST /api/storage/upload-avatar` now returns `face_check` alongside `avatar_url` (soft signal — upload never blocked).
+- New `POST /api/admin/avatars/audit-faces?dry_run&only_missing`: admin sweep that persists `face_detected` + `face_check` on every clone with an avatar_url.
+- `POST /api/avatar-chat/send` hard-rejects with **HTTP 422 `no_face_in_avatar`** when `clone.face_detected === false`, **before credit charge** (credits preserved).
+- Frontend hybrid rollout (choice 1c): CloneEditor shows soft warning banner (`avatar-no-face-warning`) on faceless upload; VideoAvatarChat shows hard-block banner (`avatar-face-block-banner`) and disables send button (`avatar-send-btn` → "No face — blocked") when target clone is audited faceless. Un-audited clones keep working.
+- Added `opencv-python-headless==4.10.0.84` to `/app/backend/requirements.txt`.
+- Tests: 13/13 backend passing. Frontend Playwright flows verified.
 
 
 
